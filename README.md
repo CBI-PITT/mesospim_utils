@@ -53,3 +53,12 @@ Example:
 /CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl.py decon-dir /CBI_FastStore/mesospim/081924 --out-dir /CBI_FastStore/mesospim/081924/decon_no_denoise_no_sharp --queue-ims --num-parallel 0
 ```
 
+
+
+Other functions used by rl.py decon or can be used independently:
+
+```
+/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl.py --help
+```
+
+![methods-help](https://github.com/CBI-PITT/mesospim_utils/raw/refs/heads/main/images/methods-help.png)

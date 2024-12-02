@@ -403,7 +403,6 @@ def generate_psf_3d(size, scale, NA, RI, wavelength):
     return psf
     #return torch.tensor(psf, dtype=torch.float32)
 
-@app.command()
 def generate_psf_3d_v2(size: tuple[int,int,int]=(3,3,3), scale: tuple[float,float,float]=(1,1,1),
         na: float=0.2, ri: float=1.0, wavelength: int=488):
     """
