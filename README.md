@@ -26,6 +26,18 @@ pip install -e /dir/of/choice/mesospim_utils
 
 Richardson-Lucy deconvolution of mesospim .btf files. The library is designed to spin off all computations on the CBI SLURM cluster including deconvolution for each .btf file and finally conversion of the resulting files to Imaris. The scripts are intended to be used as commandline tools. 
 
+The PSF is automatically calculated using the metadata files generated for each .btf --> "image.btf_meta.txt"
+
+###### Nota Bene:
+
+* The script is tested and configured to work with the "lab" user (it can be installed for other users)
+* Deconvolutions currently are hardcoded to run on deneb nodes which contain p40 GPUs + 1.5TB RAM.
+
+* Imaris files currently are hardcoded to run on compute nodes which contain 24 CPUs and 96GB RAM.
+* Imaris files assume the wine is installed along with ImarisFileConverter
+
+
+
 ###### Usage example:
 
 ```bash
@@ -55,7 +67,7 @@ Example:
 
 
 
-Other functions used by rl.py decon or can be used independently:
+##### Other functions used by rl.py decon or can be used independently:
 
 ```
 /CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl.py --help
