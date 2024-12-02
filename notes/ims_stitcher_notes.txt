@@ -1,0 +1,149 @@
+"C:/Program Files/Bitplane/ImarisStitcher 10.2.0\ImarisStitchAlignPairwise.exe" -e C:\Users\awatson\AppData\Local\Temp\InputFile-47648-1.xml -o C:\Users\awatson\AppData\Local\Temp\IntermediateFile-47648-3.xml -s 4.243 -c 0 -b true --jobs 64 --memlimit 262064 --crash-reporter-handler-pipe \\.\pipe\crashpad_47648_YFPOJKPRVCZWFCHD
+
+
+
+InputFile-47648-1.xml:
+<ImageList>
+<Image MinX="0.000000" MinY="0.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile0_Ch561_Sh0.ims</Image>
+<Image MinX="0.000000" MinY="2880.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="6080.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile1_Ch561_Sh0.ims</Image>
+<Image MinX="0.000000" MinY="5760.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="8960.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile2_Ch561_Sh0.ims</Image>
+<Image MinX="0.000000" MinY="8640.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="11840.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile3_Ch561_Sh0.ims</Image>
+<Image MinX="0.000000" MinY="11520.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="14720.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile4_Ch561_Sh0.ims</Image>
+<Image MinX="0.000000" MinY="14400.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="17600.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile5_Ch561_Sh0.ims</Image>
+<Image MinX="0.000000" MinY="17280.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="20480.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile6_Ch561_Sh0.ims</Image>
+<Image MinX="0.000000" MinY="20160.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="23360.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile7_Ch561_Sh0.ims</Image>
+<Image MinX="0.000000" MinY="23040.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="26240.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile8_Ch561_Sh0.ims</Image>
+<Image MinX="0.000000" MinY="25920.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="29120.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile9_Ch561_Sh0.ims</Image>
+<Image MinX="2880.000000" MinY="0.000000" MinZ="0.000000" MaxX="6080.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile10_Ch561_Sh0.ims</Image>
+<Image MinX="2880.000000" MinY="2880.000000" MinZ="0.000000" MaxX="6080.000000" MaxY="6080.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile11_Ch561_Sh0.ims</Image>
+<Image MinX="2880.000000" MinY="5760.000000" MinZ="0.000000" MaxX="6080.000000" MaxY="8960.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile12_Ch561_Sh0.ims</Image>
+<Image MinX="2880.000000" MinY="8640.000000" MinZ="0.000000" MaxX="6080.000000" MaxY="11840.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile13_Ch561_Sh0.ims</Image>
+<Image MinX="2880.000000" MinY="11520.000000" MinZ="0.000000" MaxX="6080.000000" MaxY="14720.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile14_Ch561_Sh0.ims</Image>
+<Image MinX="2880.000000" MinY="14400.000000" MinZ="0.000000" MaxX="6080.000000" MaxY="17600.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile15_Ch561_Sh0.ims</Image>
+<Image MinX="2880.000000" MinY="17280.000000" MinZ="0.000000" MaxX="6080.000000" MaxY="20480.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile16_Ch561_Sh0.ims</Image>
+<Image MinX="2880.000000" MinY="20160.000000" MinZ="0.000000" MaxX="6080.000000" MaxY="23360.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile17_Ch561_Sh0.ims</Image>
+<Image MinX="2880.000000" MinY="23040.000000" MinZ="0.000000" MaxX="6080.000000" MaxY="26240.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile18_Ch561_Sh0.ims</Image>
+<Image MinX="2880.000000" MinY="25920.000000" MinZ="0.000000" MaxX="6080.000000" MaxY="29120.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile19_Ch561_Sh0.ims</Image>
+<Image MinX="5760.000000" MinY="0.000000" MinZ="0.000000" MaxX="8960.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile20_Ch561_Sh0.ims</Image>
+<Image MinX="5760.000000" MinY="2880.000000" MinZ="0.000000" MaxX="8960.000000" MaxY="6080.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile21_Ch561_Sh0.ims</Image>
+<Image MinX="5760.000000" MinY="5760.000000" MinZ="0.000000" MaxX="8960.000000" MaxY="8960.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile22_Ch561_Sh0.ims</Image>
+<Image MinX="5760.000000" MinY="8640.000000" MinZ="0.000000" MaxX="8960.000000" MaxY="11840.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile23_Ch561_Sh0.ims</Image>
+<Image MinX="5760.000000" MinY="11520.000000" MinZ="0.000000" MaxX="8960.000000" MaxY="14720.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile24_Ch561_Sh0.ims</Image>
+<Image MinX="5760.000000" MinY="14400.000000" MinZ="0.000000" MaxX="8960.000000" MaxY="17600.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile25_Ch561_Sh0.ims</Image>
+<Image MinX="5760.000000" MinY="17280.000000" MinZ="0.000000" MaxX="8960.000000" MaxY="20480.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile26_Ch561_Sh0.ims</Image>
+<Image MinX="5760.000000" MinY="20160.000000" MinZ="0.000000" MaxX="8960.000000" MaxY="23360.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile27_Ch561_Sh0.ims</Image>
+<Image MinX="5760.000000" MinY="23040.000000" MinZ="0.000000" MaxX="8960.000000" MaxY="26240.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile28_Ch561_Sh0.ims</Image>
+<Image MinX="5760.000000" MinY="25920.000000" MinZ="0.000000" MaxX="8960.000000" MaxY="29120.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile29_Ch561_Sh0.ims</Image>
+<Image MinX="8640.000000" MinY="0.000000" MinZ="0.000000" MaxX="11840.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile30_Ch561_Sh0.ims</Image>
+<Image MinX="8640.000000" MinY="2880.000000" MinZ="0.000000" MaxX="11840.000000" MaxY="6080.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile31_Ch561_Sh0.ims</Image>
+<Image MinX="8640.000000" MinY="5760.000000" MinZ="0.000000" MaxX="11840.000000" MaxY="8960.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile32_Ch561_Sh0.ims</Image>
+<Image MinX="8640.000000" MinY="8640.000000" MinZ="0.000000" MaxX="11840.000000" MaxY="11840.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile33_Ch561_Sh0.ims</Image>
+<Image MinX="8640.000000" MinY="11520.000000" MinZ="0.000000" MaxX="11840.000000" MaxY="14720.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile34_Ch561_Sh0.ims</Image>
+<Image MinX="8640.000000" MinY="14400.000000" MinZ="0.000000" MaxX="11840.000000" MaxY="17600.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile35_Ch561_Sh0.ims</Image>
+<Image MinX="8640.000000" MinY="17280.000000" MinZ="0.000000" MaxX="11840.000000" MaxY="20480.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile36_Ch561_Sh0.ims</Image>
+<Image MinX="8640.000000" MinY="20160.000000" MinZ="0.000000" MaxX="11840.000000" MaxY="23360.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile37_Ch561_Sh0.ims</Image>
+<Image MinX="8640.000000" MinY="23040.000000" MinZ="0.000000" MaxX="11840.000000" MaxY="26240.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile38_Ch561_Sh0.ims</Image>
+<Image MinX="8640.000000" MinY="25920.000000" MinZ="0.000000" MaxX="11840.000000" MaxY="29120.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile39_Ch561_Sh0.ims</Image>
+<Image MinX="11520.000000" MinY="0.000000" MinZ="0.000000" MaxX="14720.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile40_Ch561_Sh0.ims</Image>
+<Image MinX="11520.000000" MinY="2880.000000" MinZ="0.000000" MaxX="14720.000000" MaxY="6080.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile41_Ch561_Sh0.ims</Image>
+<Image MinX="11520.000000" MinY="5760.000000" MinZ="0.000000" MaxX="14720.000000" MaxY="8960.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile42_Ch561_Sh0.ims</Image>
+<Image MinX="11520.000000" MinY="8640.000000" MinZ="0.000000" MaxX="14720.000000" MaxY="11840.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile43_Ch561_Sh0.ims</Image>
+<Image MinX="11520.000000" MinY="11520.000000" MinZ="0.000000" MaxX="14720.000000" MaxY="14720.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile44_Ch561_Sh0.ims</Image>
+<Image MinX="11520.000000" MinY="14400.000000" MinZ="0.000000" MaxX="14720.000000" MaxY="17600.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile45_Ch561_Sh0.ims</Image>
+<Image MinX="11520.000000" MinY="17280.000000" MinZ="0.000000" MaxX="14720.000000" MaxY="20480.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile46_Ch561_Sh0.ims</Image>
+<Image MinX="11520.000000" MinY="20160.000000" MinZ="0.000000" MaxX="14720.000000" MaxY="23360.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile47_Ch561_Sh0.ims</Image>
+<Image MinX="11520.000000" MinY="23040.000000" MinZ="0.000000" MaxX="14720.000000" MaxY="26240.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile48_Ch561_Sh0.ims</Image>
+<Image MinX="11520.000000" MinY="25920.000000" MinZ="0.000000" MaxX="14720.000000" MaxY="29120.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile49_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="0.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile50_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="2880.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="6080.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile51_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="5760.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="8960.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile52_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="8640.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="11840.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile53_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="11520.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="14720.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile54_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="14400.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="17600.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile55_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="17280.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="20480.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile56_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="20160.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="23360.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile57_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="23040.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="26240.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile58_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="25920.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="29120.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile59_Ch561_Sh0.ims</Image>
+</ImageList>
+
+
+C:\Users\awatson\AppData\Local\Temp\IntermediateFile-47648-3.xml
+NO CONTENT (DIDNT EXIST)
+
+Saving the image process:
+"C:/Program Files/Bitplane/ImarisStitcher 10.2.0\ImarisStitchResample.exe" -e C:\Users\awatson\AppData\Local\Temp\InputFile-47648-6.xml -o Z:/mesospim/081924/decon/ims_files/montage.ims --fuseRule weighted-mean --color C:\Users\awatson\AppData\Local\Temp\ColorFile-47648-8.xml --jobs 64 --memlimit 65516 --compression eCompressionAlgorithmGzipLevel2 --crash-reporter-handler-pipe \\.\pipe\crashpad_47648_YFPOJKPRVCZWFCHD
+
+C:\Users\awatson\AppData\Local\Temp\InputFile-47648-6.xml
+<ImageList>
+<Image MinX="0.000000" MinY="0.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile0_Ch561_Sh0.ims</Image>
+<Image MinX="0.000000" MinY="2880.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="6080.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile1_Ch561_Sh0.ims</Image>
+<Image MinX="-38.239735" MinY="5689.659668" MinZ="16.900635" MaxX="3161.760254" MaxY="8889.660156" MaxZ="9516.900391">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile2_Ch561_Sh0.ims</Image>
+<Image MinX="-78.207642" MinY="8501.552734" MinZ="33.323910" MaxX="3121.792480" MaxY="11701.552734" MaxZ="9533.324219">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile3_Ch561_Sh0.ims</Image>
+<Image MinX="-117.096191" MinY="11323.958984" MinZ="52.868572" MaxX="3082.903809" MaxY="14523.958984" MaxZ="9552.868164">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile4_Ch561_Sh0.ims</Image>
+<Image MinX="-152.032959" MinY="14135.583008" MinZ="71.248955" MaxX="3047.967041" MaxY="17335.583984" MaxZ="9571.249023">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile5_Ch561_Sh0.ims</Image>
+<Image MinX="-190.006134" MinY="16948.689453" MinZ="86.338776" MaxX="3009.993896" MaxY="20148.689453" MaxZ="9586.338867">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile6_Ch561_Sh0.ims</Image>
+<Image MinX="-231.609665" MinY="19759.792969" MinZ="104.106491" MaxX="2968.390381" MaxY="22959.792969" MaxZ="9604.106445">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile7_Ch561_Sh0.ims</Image>
+<Image MinX="-272.838623" MinY="22577.316406" MinZ="121.708374" MaxX="2927.161377" MaxY="25777.316406" MaxZ="9621.708008">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile8_Ch561_Sh0.ims</Image>
+<Image MinX="-304.679626" MinY="25372.972656" MinZ="123.543373" MaxX="2895.320312" MaxY="28572.972656" MaxZ="9623.542969">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile9_Ch561_Sh0.ims</Image>
+<Image MinX="2840.834473" MinY="87.587761" MinZ="65.961357" MaxX="6040.834473" MaxY="3287.587646" MaxZ="9565.960938">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile10_Ch561_Sh0.ims</Image>
+<Image MinX="2811.533936" MinY="2905.552246" MinZ="69.392876" MaxX="6011.533691" MaxY="6105.552246" MaxZ="9569.392578">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile11_Ch561_Sh0.ims</Image>
+<Image MinX="2773.396973" MinY="5712.126465" MinZ="82.433060" MaxX="5973.396973" MaxY="8912.126953" MaxZ="9582.432617">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile12_Ch561_Sh0.ims</Image>
+<Image MinX="2734.965820" MinY="8520.041992" MinZ="99.411850" MaxX="5934.965820" MaxY="11720.041992" MaxZ="9599.412109">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile13_Ch561_Sh0.ims</Image>
+<Image MinX="2696.166504" MinY="11335.711914" MinZ="117.130562" MaxX="5896.166504" MaxY="14535.711914" MaxZ="9617.130859">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile14_Ch561_Sh0.ims</Image>
+<Image MinX="2658.336914" MinY="14150.615234" MinZ="134.173126" MaxX="5858.336914" MaxY="17350.615234" MaxZ="9634.172852">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile15_Ch561_Sh0.ims</Image>
+<Image MinX="2619.073486" MinY="16964.462891" MinZ="147.182190" MaxX="5819.073730" MaxY="20164.462891" MaxZ="9647.182617">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile16_Ch561_Sh0.ims</Image>
+<Image MinX="2578.336670" MinY="19776.808594" MinZ="164.322754" MaxX="5778.336426" MaxY="22976.808594" MaxZ="9664.322266">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile17_Ch561_Sh0.ims</Image>
+<Image MinX="2539.178955" MinY="22588.664062" MinZ="182.480911" MaxX="5739.179199" MaxY="25788.664062" MaxZ="9682.480469">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile18_Ch561_Sh0.ims</Image>
+<Image MinX="2501.420166" MinY="25398.085938" MinZ="200.355942" MaxX="5701.420410" MaxY="28598.085938" MaxZ="9700.355469">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile19_Ch561_Sh0.ims</Image>
+<Image MinX="5667.298340" MinY="108.478760" MinZ="107.945358" MaxX="8867.298828" MaxY="3308.478760" MaxZ="9607.945312">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile20_Ch561_Sh0.ims</Image>
+<Image MinX="5625.396973" MinY="2921.970947" MinZ="113.081154" MaxX="8825.396484" MaxY="6121.971191" MaxZ="9613.081055">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile21_Ch561_Sh0.ims</Image>
+<Image MinX="5585.993164" MinY="5731.059082" MinZ="123.450943" MaxX="8785.993164" MaxY="8931.059570" MaxZ="9623.451172">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile22_Ch561_Sh0.ims</Image>
+<Image MinX="5547.524902" MinY="8539.520508" MinZ="141.116211" MaxX="8747.525391" MaxY="11739.520508" MaxZ="9641.116211">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile23_Ch561_Sh0.ims</Image>
+<Image MinX="5508.991699" MinY="11352.524414" MinZ="160.688293" MaxX="8708.992188" MaxY="14552.524414" MaxZ="9660.688477">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile24_Ch561_Sh0.ims</Image>
+<Image MinX="5472.090332" MinY="14168.719727" MinZ="179.048019" MaxX="8672.090820" MaxY="17368.718750" MaxZ="9679.047852">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile25_Ch561_Sh0.ims</Image>
+<Image MinX="5432.858398" MinY="16982.841797" MinZ="187.049515" MaxX="8632.858398" MaxY="20182.841797" MaxZ="9687.049805">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile26_Ch561_Sh0.ims</Image>
+<Image MinX="5389.805664" MinY="19797.607422" MinZ="204.892014" MaxX="8589.805664" MaxY="22997.607422" MaxZ="9704.891602">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile27_Ch561_Sh0.ims</Image>
+<Image MinX="5351.308105" MinY="22608.750000" MinZ="223.736572" MaxX="8551.307617" MaxY="25808.750000" MaxZ="9723.736328">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile28_Ch561_Sh0.ims</Image>
+<Image MinX="5314.584961" MinY="25418.675781" MinZ="241.393448" MaxX="8514.584961" MaxY="28618.675781" MaxZ="9741.393555">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile29_Ch561_Sh0.ims</Image>
+<Image MinX="8479.106445" MinY="126.286461" MinZ="107.594482" MaxX="11679.106445" MaxY="3326.286377" MaxZ="9607.594727">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile30_Ch561_Sh0.ims</Image>
+<Image MinX="8437.219727" MinY="2940.415527" MinZ="111.658714" MaxX="11637.219727" MaxY="6140.415527" MaxZ="9611.659180">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile31_Ch561_Sh0.ims</Image>
+<Image MinX="8398.313477" MinY="5751.449219" MinZ="123.872002" MaxX="11598.313477" MaxY="8951.449219" MaxZ="9623.872070">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile32_Ch561_Sh0.ims</Image>
+<Image MinX="8359.532227" MinY="8559.590820" MinZ="140.400848" MaxX="11559.532227" MaxY="11759.590820" MaxZ="9640.400391">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile33_Ch561_Sh0.ims</Image>
+<Image MinX="8321.110352" MinY="11371.823242" MinZ="159.990372" MaxX="11521.110352" MaxY="14571.823242" MaxZ="9659.990234">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile34_Ch561_Sh0.ims</Image>
+<Image MinX="8284.326172" MinY="14188.115234" MinZ="178.371170" MaxX="11484.326172" MaxY="17388.115234" MaxZ="9678.371094">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile35_Ch561_Sh0.ims</Image>
+<Image MinX="8244.680664" MinY="17003.919922" MinZ="185.631973" MaxX="11444.680664" MaxY="20203.919922" MaxZ="9685.631836">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile36_Ch561_Sh0.ims</Image>
+<Image MinX="8202.098633" MinY="19819.767578" MinZ="203.140930" MaxX="11402.098633" MaxY="23019.767578" MaxZ="9703.140625">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile37_Ch561_Sh0.ims</Image>
+<Image MinX="8163.459961" MinY="22631.718750" MinZ="221.755112" MaxX="11363.459961" MaxY="25831.718750" MaxZ="9721.754883">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile38_Ch561_Sh0.ims</Image>
+<Image MinX="8128.493164" MinY="25441.009766" MinZ="239.786957" MaxX="11328.493164" MaxY="28641.009766" MaxZ="9739.787109">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile39_Ch561_Sh0.ims</Image>
+<Image MinX="11293.365234" MinY="142.376801" MinZ="106.788727" MaxX="14493.365234" MaxY="3342.376709" MaxZ="9606.789062">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile40_Ch561_Sh0.ims</Image>
+<Image MinX="11251.410156" MinY="2956.146973" MinZ="110.654396" MaxX="14451.410156" MaxY="6156.146973" MaxZ="9610.654297">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile41_Ch561_Sh0.ims</Image>
+<Image MinX="11212.054688" MinY="5767.741699" MinZ="122.584358" MaxX="14412.054688" MaxY="8967.741211" MaxZ="9622.583984">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile42_Ch561_Sh0.ims</Image>
+<Image MinX="11173.631836" MinY="8576.103516" MinZ="139.359467" MaxX="14373.631836" MaxY="11776.103516" MaxZ="9639.359375">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile43_Ch561_Sh0.ims</Image>
+<Image MinX="11135.323242" MinY="11388.357422" MinZ="159.037552" MaxX="14335.323242" MaxY="14588.357422" MaxZ="9659.037109">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile44_Ch561_Sh0.ims</Image>
+<Image MinX="11098.145508" MinY="14205.046875" MinZ="177.446075" MaxX="14298.145508" MaxY="17405.046875" MaxZ="9677.446289">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile45_Ch561_Sh0.ims</Image>
+<Image MinX="11058.441406" MinY="17022.767578" MinZ="183.599091" MaxX="14258.441406" MaxY="20222.767578" MaxZ="9683.598633">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile46_Ch561_Sh0.ims</Image>
+<Image MinX="11015.416016" MinY="19838.072266" MinZ="199.906235" MaxX="14215.416016" MaxY="23038.072266" MaxZ="9699.906250">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile47_Ch561_Sh0.ims</Image>
+<Image MinX="10977.748047" MinY="22650.896484" MinZ="219.318909" MaxX="14177.748047" MaxY="25850.896484" MaxZ="9719.319336">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile48_Ch561_Sh0.ims</Image>
+<Image MinX="10943.807617" MinY="25472.810547" MinZ="241.174911" MaxX="14143.807617" MaxY="28672.810547" MaxZ="9741.174805">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile49_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="0.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile50_Ch561_Sh0.ims</Image>
+<Image MinX="14066.015625" MinY="2972.865234" MinZ="111.923035" MaxX="17266.015625" MaxY="6172.865234" MaxZ="9611.922852">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile51_Ch561_Sh0.ims</Image>
+<Image MinX="14027.135742" MinY="5783.521484" MinZ="120.420670" MaxX="17227.134766" MaxY="8983.521484" MaxZ="9620.420898">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile52_Ch561_Sh0.ims</Image>
+<Image MinX="13988.701172" MinY="8592.564453" MinZ="138.448349" MaxX="17188.701172" MaxY="11792.564453" MaxZ="9638.448242">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile53_Ch561_Sh0.ims</Image>
+<Image MinX="13950.717773" MinY="11405.180664" MinZ="158.795914" MaxX="17150.718750" MaxY="14605.180664" MaxZ="9658.795898">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile54_Ch561_Sh0.ims</Image>
+<Image MinX="13914.061523" MinY="14222.076172" MinZ="176.818222" MaxX="17114.060547" MaxY="17422.076172" MaxZ="9676.818359">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile55_Ch561_Sh0.ims</Image>
+<Image MinX="13875.397461" MinY="17038.271484" MinZ="180.940598" MaxX="17075.398438" MaxY="20238.271484" MaxZ="9680.940430">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile56_Ch561_Sh0.ims</Image>
+<Image MinX="13838.508789" MinY="19856.117188" MinZ="197.902145" MaxX="17038.509766" MaxY="23056.117188" MaxZ="9697.902344">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile57_Ch561_Sh0.ims</Image>
+<Image MinX="14400.000000" MinY="23040.000000" MinZ="0.000000" MaxX="17600.000000" MaxY="26240.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile58_Ch561_Sh0.ims</Image>
+<Image MinX="14368.254883" MinY="25839.789062" MinZ="19.047001" MaxX="17568.255859" MaxY="29039.789062" MaxZ="9519.046875">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile59_Ch561_Sh0.ims</Image>
+</ImageList>
+
+
+--color C:\Users\awatson\AppData\Local\Temp\ColorFile-47648-8.xml
+<Channels>
+<Channel ChannelIndex="Channel 0" Selection="true" RangeMax="58380.5" RangeMin="127.998" GammaCorrection="1" Opacity="1" ColorMode="BaseColor" RangeMinB="3.40282e+38" RangeMaxB="3.40282e+38">
+<ColorTable/>
+<BaseColor>
+<Color Red="0" Green="1" Blue="0"/>
+</BaseColor>
+</Channel>
+</Channels>
