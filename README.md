@@ -48,7 +48,7 @@ The PSF is automatically calculated using the metadata files generated for each 
 
 ```bash
 dir_loc <required>:		location of the directory with mesospim files
---out-dir: 				optional directory for output files <defaults to </dir_loc/decon>
+--out-dir:				optional directory for output files <defaults to </dir_loc/decon>
 --out-file-type:		extension of output files
 --file-type:			extension of input files <currently only supports .btf>
 --queue-ims:			After decon convert to ims file using SLURM nodes <default NO>
