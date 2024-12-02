@@ -34,3 +34,22 @@ Richardson-Lucy deconvolution of mesospim .btf files. The library is designed to
 
 ![decon-dir-help](https://github.com/CBI-PITT/mesospim_utils/raw/refs/heads/main/images/decon-dir-help.png)
 
+```bash
+dir_loc <required>:		location of the directory with mesospim files
+--out-dir: 				optional directory for output files <defaults to </dir_loc/decon>
+--out-file-type:		extension of output files
+--file-type:			extension of input files <currently only supports .btf>
+--queue-ims:			After decon convert to ims file using SLURM nodes <default NO>
+--sharpen:				unsharp filter applied to each decon <default NO>
+--denoise-sigma:		Pre gaussian filter before decon to reduce noise <default None>
+--num-parallel:			Decon SLURM jobs to run in parallel. 0 is unlimited. <default 0>
+```
+
+
+
+Example:
+
+```bash
+/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl.py decon-dir /CBI_FastStore/mesospim/081924 --out-dir /CBI_FastStore/mesospim/081924/decon_no_denoise_no_sharp --queue-ims --num-parallel 0
+```
+
