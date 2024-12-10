@@ -4,5 +4,5 @@ from setuptools import setup
 
 
 # https://github.com/pypa/setuptools_scm
-use_scm = {"write_to": "holis_tools/_version.py"}
+use_scm = {"write_to": "mesospim_utils/_version.py"}
 setup(use_scm_version=use_scm)

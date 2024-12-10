@@ -19,13 +19,13 @@ import typer
 from pathlib import Path
 import subprocess
 from typing import Union
-import os
-import sys
 
 import numpy as np
 import tifffile
 import skimage
 from skimage import img_as_float32, img_as_uint
+
+from psf import get_psf
 
 #######################################
 # CHANGE THESE CONSTANTS IF NECESSARY #
@@ -58,6 +58,11 @@ def convert_ims(file: str, res: tuple[float,float,float]=(1,1,1)):
     res_z, res_y, res_x = res
 
     file = Path(file)
+
+    ext = file.suffix
+    inputformat = None
+    if ext == '.tif' or ext == '.tiff' or ext == '.btf':
+        inputformat = 'TiffSeries'
     
     out_file = file.parent / 'ims_files' / (file.stem + '.ims')
     out_file.parent.mkdir(parents=True, exist_ok=True)
@@ -88,7 +93,7 @@ def convert_ims(file: str, res: tuple[float,float,float]=(1,1,1)):
         f.write(line)
     
     # Main ims converter command
-    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file)}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" -il "{path_to_wine_mappings(layout_path)}" --logprogress --nthreads {SLURM_CPUS} --compression 6 -ps {RAM*1024} -of Imaris5 -a'
+    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file)}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" -il "{path_to_wine_mappings(layout_path)}" --logprogress --nthreads {SLURM_CPUS} --compression 6 -ps {RAM*1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
     
     # BASH script if/then statements to rename the .ims.part file to .ims
     lines = lines + f'\n\nif [ -f "{out_file}.part" ]; then\n  mv "{out_file}.part" "{out_file}"\n  echo "File renamed to {out_file}"\nelse\n  echo "File {out_file} does not exist."\nfi'
@@ -104,40 +109,17 @@ def ims_dir(dir_loc: str, file_type: str='.tif', res: tuple[float,float,float]=(
     '''Convert all files in a directory to Imaris Files [executed on SLURM]'''
     path = Path(dir_loc)
     file_list = path.glob('*' + file_type)
-    for p in file_list:
-        convert_ims(p, res=res)
 
-
-def decon_dir_OLD(dir_loc: str, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
-              queue_ims: bool=False, sharpen: bool=False, denoise_sigma: float=None):
-    '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
-    import subprocess
-    path = Path(dir_loc)
-    if out_dir:
-        out_dir = Path(out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        out_dir = path / 'decon'
-    log_dir = out_dir / 'logs'
-    log_dir.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon"]
-    file_list = path.glob('*' + file_type)
-    #print(list(file_list))
     for p in file_list:
-        to_run = cmd + [f'-o {log_dir / (p.stem + ".txt")}']
-        to_run = to_run + [f'--wrap="{ENV_PYTHON_LOC} {LOC_OF_THIS_SCRIPT} decon']
-        to_run = to_run + [p.as_posix()] 
-        to_run = to_run + [f'--out-location {out_dir / (p.stem + out_file_type)}']
-        to_run = to_run + [f'{" --queue-ims" if queue_ims else ""}']
-        to_run = to_run + [f'{" --sharpen" if sharpen else ""}']
-        to_run = to_run + [f'{" --denoise-sigma {denoise_sigma}" if denoise_sigma else ""}']
-        to_run = to_run + ['"']
-        print(to_run)
-        subprocess.run(' '.join(to_run), shell=True)
+        #convert_ims(p, res=res)
+        convert_ims_multi_color([p], res=res)
 
 @app.command()
 def decon_dir(dir_loc: str, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
-              queue_ims: bool=False, sharpen: bool=False, denoise_sigma: float=None, num_parallel: int=4):
+              queue_ims: bool=False, denoise_sigma: float=None, sharpen: bool=False,
+              half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=20, frames_per_chunk: int=75,
+              num_parallel: int=8
+              ):
     '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
     import subprocess
     path = Path(dir_loc)
@@ -151,26 +133,31 @@ def decon_dir(dir_loc: str, out_dir: str=None, out_file_type: str='.tif', file_t
     file_list = list(path.glob('*' + file_type))
     num_files = len(file_list)
 
-    SBATCH_ARG = '#SBATCH {}'
+    SBATCH_ARG = '#SBATCH {}\n'
     to_run = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon", f'-o {log_dir} / %A_%a.log', f'--array=0-{num_files-1}']
     commands = "#!/bin/bash\n"
-    commands += SBATCH_ARG.format('-p gpu\n')
-    commands += SBATCH_ARG.format('--gres=gpu:1\n')
-    commands += SBATCH_ARG.format('-J decon\n')
-    commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log\n')
-    commands += SBATCH_ARG.format(f'--array=0-{num_files-1}{"%" + num_parallel if num_parallel>0 else ""}\n\n')
+    commands += SBATCH_ARG.format('-p gpu')
+    commands += SBATCH_ARG.format('--gres=gpu:1')
+    commands += SBATCH_ARG.format('-J decon')
+    commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
+    commands += SBATCH_ARG.format(f'--array=0-{num_files-1}{"%" + str(num_parallel) if num_parallel>0 else ""}')
+    commands += "\n"
 
     commands += "commands=("
     #Build each command
     for p in file_list:
         commands += '\n\t'
         commands += '"'
-        commands += f'{ENV_PYTHON_LOC} {LOC_OF_THIS_SCRIPT} decon '
-        commands += f'{p.as_posix()} '
-        commands += f'--out-location {out_dir / (p.stem + out_file_type)}'
+        commands += f'{ENV_PYTHON_LOC} {LOC_OF_THIS_SCRIPT} decon'
+        commands += f' {p.as_posix()}'
+        commands += f' --out-location {out_dir / (p.stem + out_file_type)}'
         commands += f'{" --queue-ims" if queue_ims else ""}'
         commands += f'{" --sharpen" if sharpen else ""}'
-        commands += f'{" --denoise-sigma {denoise_sigma}" if denoise_sigma else ""}'
+        commands += f'{f" --denoise-sigma {denoise_sigma}" if denoise_sigma else ""}'
+        commands += f'{" --half-precision" if half_precision else " --no-half-precision"}'
+        commands += f' --psf-shape {psf_shape[0]} {psf_shape[1]} {psf_shape[2]}'
+        commands += f' --iterations {iterations}'
+        commands += f' --frames-per-chunk {frames_per_chunk}'
         commands += '"'
     commands += '\n)\n\n'
     commands += 'echo "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"\n'
@@ -180,22 +167,29 @@ def decon_dir(dir_loc: str, out_dir: str=None, out_file_type: str='.tif', file_t
     with open(file_to_run, 'w') as f:
         f.write(commands)
 
-    subprocess.run(f'sbatch {file_to_run}', shell=True)
+    output = subprocess.run(f'sbatch {file_to_run}', shell=True, capture_output=True)
+    prefix_len = len(b'Submitted batch job ')
+    job_number = int(output.stdout[prefix_len:-1])
+    print(f'SBATCH Job #: {job_number}')
+
 
 @app.command()
 def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,float,float]=None,
           emission_wavelength: int=None, na: float=None, ri: float=None,
           start_index: int=None, stop_index: int=None, save_pre_post: bool=False, queue_ims: bool=False,
-          denoise_sigma: float=None, sharpen: bool=False):
+          denoise_sigma: float=None, sharpen: bool=False, half_precision: bool=False,
+          psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=20, frames_per_chunk: int=75
+          ):
     '''Deconvolution of a file using the richardson-lucy method'''
 
     start_time = time_report(start_time=None, to_print=True)
 
-    FRAMES_PER_DECON = 50
-    ITERATIONS = 20
-    PSF_SHAPE = (7,7,7) #Max size decreased automatically based on threshold value in enerate_psf_3d_v3 method
+    FRAMES_PER_DECON = frames_per_chunk
+    ITERATIONS = iterations
+    PSF_SHAPE = psf_shape
     #ARRAY_PADDING = [[int((x*2)+1) for z in [1,1]] for x in PSF_SHAPE]
     SIGMA = denoise_sigma
+    TMP_EXT = '.TMP'
     
     if not isinstance(file_location,Path):
         file_location = Path(file_location)
@@ -203,16 +197,19 @@ def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,
     
     if not out_location:
         print('Making out_location')
-        out_location = file_location.parent / 'decon' / ('DECON_' + file_location.stem + '.tif')
+        out_location = file_location.parent / 'decon' / ('DECON_' + file_location.name)
 
     if not isinstance(out_location, Path):
         out_location = Path(out_location)
     print(f'Output File: {out_location}')
     # exit()
     out_location.parent.mkdir(parents=True, exist_ok=True)
+    final_out_location = out_location
+    # Make out location a .TMP file
+    out_location = out_location.parent / (out_location.stem + TMP_EXT)
 
     if save_pre_post:
-        pre_location = out_location.parent / ('PRE_' + out_location.stem + '.tif')
+        pre_location = out_location.parent / ('PRE_' + out_location.stem + TMP_EXT)
         pre_location.parent.mkdir(parents=True, exist_ok=True)
     
     if not resolution:
@@ -220,10 +217,20 @@ def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,
     
     if '.btf' in str(file_location):
         print('Is mesospim big tiff file')
-        
+
+        # Imaging parameters to be passes to psf
         na = 0.2
-        ri = 1.0
-        
+        sample_ri = 1.33 #Kidney sample in water
+        objective_immersion_ri_design = 1.000293 # Air
+        objective_immersion_ri_actual = 1.000293 # Air
+        objective_working_distance = 45 * 1000 #in microns
+        coverslip_ri_design = 1.000293 # objective design
+        coverslip_ri_actual = 1.515 # during experiment
+        coverslip_thickness_actual = 1 * 1000 # in microns
+        coverslip_thickness_design = 0
+
+        psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
+
         # Extract imaging parameter from metadata file if it exists
         meta_file = file_location.with_name(file_location.name + '_meta.txt')
         print(meta_file)
@@ -244,17 +251,19 @@ def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,
                 z_res = float(z_res)
                 
     
-    assert all( (na, ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
+    assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
 
     print(f'--- INPUT_LOCATION: {file_location}')
-    print(f'--- OUT_LOCATION: {out_location}')
-    print(f'--- Depth of chunks per run: {FRAMES_PER_DECON}')
+    print(f'--- OUT_LOCATION_TMP: {out_location}')
+    print(f'--- OUT_LOCATION_FINAL: {final_out_location}')
+    print(f'--- Depth of frames per run: {FRAMES_PER_DECON}')
     print(f'--- Iterations: {ITERATIONS}')
     print(f'--- NA: {na}')
-    print(f'--- RI: {ri}')
+    print(f'--- RI: {sample_ri}')
     print(f'--- Emission Wavelength: {emission_wavelength}')
     print(f'--- Lateral Resolution: {xy_res}')
     print(f'--- Z Steps: {z_res}')
+    print(f'--- PSF Model: {psf_model}')
 
     if '.btf' in str(file_location):
         print('Reading file')
@@ -267,7 +276,31 @@ def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,
     print('Generating PSF')
     #psf = generate_psf_3d(PSF_SHAPE, (z_res,y_res,x_res), na, ri, emission_wavelength)
     #psf = generate_psf_3d_v2(PSF_SHAPE, (z_res, y_res, x_res), na, ri, emission_wavelength)
-    psf = generate_psf_3d_v3(PSF_SHAPE, (z_res, y_res, x_res), na, ri, emission_wavelength)
+    #psf = generate_psf_3d_v3(PSF_SHAPE, (z_res, y_res, x_res), na, ri, emission_wavelength)
+    psf = get_psf(
+        z = PSF_SHAPE[0],
+        nx = PSF_SHAPE[1],
+        dxy = x_res,
+        dz = z_res,
+        NA = na,
+        ns = sample_ri,
+        ni = objective_immersion_ri_actual, # Immersion in air
+        ni0 = objective_immersion_ri_design, # Air Obj
+        wvl = emission_wavelength/1000,
+        ti0 = objective_working_distance,
+        tg = coverslip_thickness_actual, # coverslip thickness, experimental value (microns)
+        tg0 = coverslip_thickness_design, # coverslip thickness, design value (microns)
+        ng = coverslip_ri_actual, # coverslip refractive index, experimental value
+        ng0 = coverslip_ri_design, # coverslip refractive index, design value
+        model=psf_model, #Must be one of 'vectorial', 'scalar', 'gaussian'.
+        normalize=True,
+    )
+    ## Python library for psf generation
+    # https://github.com/tlambert03/PSFmodels
+
+    psf_image = out_location.parent / 'psf.tif'
+    if not psf_image.is_file():
+        save_image(psf_image, psf)
 
     # Pad array based on psf size
     ARRAY_PADDING = [[int((x * 2) + 1) for z in [1, 1]] for x in psf.shape]
@@ -279,8 +312,13 @@ def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,
     import torch
     import torch.nn.functional as F
     import torchvision.transforms as T
+    import torch.nn as nn
 
-    psf = torch.tensor(psf, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    if half_precision:
+        psf = psf.astype(np.float16)
+        psf = torch.tensor(psf, dtype=torch.float16).unsqueeze(0).unsqueeze(0)
+    else:
+        psf = torch.tensor(psf, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
     print(f'--- PSF_SHAPE: {psf.shape}')
 
     start_z = 0
@@ -289,9 +327,13 @@ def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,
     ideal_overlap_btm = ARRAY_PADDING[0][1]
     
     canvas = np.zeros_like(stack)
-    
+
+    FRAMES_PER_DECON = FRAMES_PER_DECON - ideal_overlap_top - ideal_overlap_btm
+
     num_decon_chunks = len(range(0,stack.shape[0],FRAMES_PER_DECON))
     for idx, current in enumerate(range(0,stack.shape[0],FRAMES_PER_DECON)):
+        chunk_start_time = time_report(start_time=None)
+
         max_frames_above = current
         max_frames_below = stack.shape[0] - current
         
@@ -307,11 +349,12 @@ def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,
         to_decon = np.expand_dims(to_decon,0)
         to_decon = np.expand_dims(to_decon,0)
         to_decon = img_as_float32(to_decon)
+        if half_precision:
+            to_decon = to_decon.astype(np.float16)
         to_decon = torch.from_numpy(to_decon).cuda()
         #print(f"Prior Mean: {to_decon.mean()}, MIN: {to_decon.min()}, MAX: {to_decon.max()}")
         to_decon = richardson_lucy_3d(to_decon, psf, iterations=ITERATIONS, sigma=SIGMA)
 
-        torch.cuda.empty_cache()
         if sharpen:
             print('Unsharpening')
             to_decon = unsharp(to_decon, amount=2, sigma=2)
@@ -328,6 +371,12 @@ def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,
         canvas[current:stop_z] = to_decon
 
         torch.cuda.empty_cache()
+
+        chunk_total_time = time_report(start_time=chunk_start_time, to_print=False)
+        print(f'Chunk {idx+1} of {num_decon_chunks}: {round(chunk_total_time, 2)} minutes')
+
+        accumulated_time = time_report(start_time=start_time, to_print=False)
+        print(f'Accumulated Time: {round(accumulated_time, 2)} minutes')
     
     print('Deconvolution complete')
     
@@ -335,13 +384,22 @@ def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,
     canvas = canvas[ARRAY_PADDING[0][0]:-ARRAY_PADDING[0][1], ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1],ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
 
     save_image(out_location, canvas)
+    if out_location.is_file():
+        print(f'Renaming File: {out_location.name} to {final_out_location.name}')
+        out_location.rename(final_out_location)
     
     if save_pre_post:
         stack = stack[ARRAY_PADDING[0][0]:-ARRAY_PADDING[0][1], ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1],ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
         save_image(pre_location, stack)
+        if pre_location.is_file():
+            new_name = pre_location.parent / (pre_location.stem + '.tif')
+            print(f'Renaming File: {pre_location.name} to {new_name.name}')
+            pre_location.rename(new_name)
+
 
     if queue_ims:
-        convert_ims(out_location, res=(z_res, y_res, x_res))
+        #convert_ims(out_location, res=(z_res, y_res, x_res))
+        convert_ims_multi_color(out_location, res=(z_res, y_res, x_res))
 
     time_report(start_time=start_time, to_print=True)
 
@@ -360,174 +418,52 @@ def read_mesospim_btf(file_location: Union[str, Path], frame_start: int=None, fr
     #    stack = np.stack(tuple((x.asarray()[0] for x in tif.series[frame_start:frame_stop])))
     #    return stack
 
+def get_rl_model(psf, iterations=20, sigma=None):
+    import torch
+    import torch.nn.functional as F
+    import torch.nn as nn
+    class rl(nn.Module):
+        def __init__(self, psf, iterations=20, sigma=None):
+            super(rl, self).__init__()
+            self.iterations = iterations
+            if sigma and sigma > 0:
+                print('Preparing PSF with smoothing kernel')
+                psf[:, :] = T.functional.gaussian_blur(psf[0, 0], kernel_size=psf.shape[-2:],
+                                                       sigma=(sigma, sigma))
+            psf_flipped = torch.flip(psf, dims=(2, 3, 4))
+            self.psf = nn.Parameter(psf, requires_grad=False)
+            self.psf_flipped = nn.Parameter(psf_flipped, requires_grad=False)
 
+        def forward(self, input_data):
+            if sigma and sigma > 0:
+                print('Preparing Input Data with smoothing kernel to reduce noise')
+                input_data[:, :] = T.functional.gaussian_blur(input_data[0, 0], kernel_size=self.psf.shape[-2:],
+                                                          sigma=(sigma, sigma))
+            convolved = input_data.clone()
+            relative_blur = input_data.clone()
+            correction = input_data.clone()
+            estimate = input_data.clone()
 
-def generate_psf_3d(size, scale, NA, RI, wavelength):
-    """
-    Generate a 3D PSF based on optical parameters.
-    
-    Args:
-        size (tuple): Shape of the PSF (D, H, W).
-        scale (tuple): Scale of voxels in microns (z, y, x).
-        NA (float): Numerical aperture of the system.
-        RI (float): Refractive index of the medium.
-        wavelength (float): Wavelength of light in microns.
+            print('Beginning deconvolution')
+            with torch.no_grad():
+                for i in range(self.iterations):
+                    # Convolve estimate with PSF
+                    convolved[:] = F.conv3d(estimate, self.psf, padding='same')
 
-    Returns:
-        torch.Tensor: PSF with the given parameters.
-    """
-    z, y, x = size
-    z_scale, y_scale, x_scale = scale
+                    # Calculate the ratio of input data to the convolved data
+                    relative_blur[:] = input_data / (convolved + 1e-12)
 
-    # Calculate diffraction-limited resolution
-    resolution_xy = 0.61 * wavelength / NA
-    resolution_z = 2 * wavelength / (NA**2)
+                    # Convolve the relative blur with the flipped PSF
+                    correction[:] = F.conv3d(relative_blur, self.psf_flipped, padding='same')
 
-    # Create coordinate grids
-    z_range = np.linspace(-(z // 2) * z_scale, (z // 2) * z_scale, z)
-    y_range = np.linspace(-(y // 2) * y_scale, (y // 2) * y_scale, y)
-    x_range = np.linspace(-(x // 2) * x_scale, (x // 2) * x_scale, x)
-    zz, yy, xx = np.meshgrid(z_range+1, y_range+1, x_range+1, indexing="ij")
+                    # Update the estimate
+                    estimate *= correction
 
-    # Generate Gaussian approximation of the PSF
-    psf = np.exp(
-        -((xx**2 + yy**2) / (2 * resolution_xy**2) + (zz**2) / (2 * resolution_z**2))
-    )
+                    print(f'Iteration {i+1} of {iterations}, Max: {estimate.max()}')
 
-    # Normalize PSF
-    psf /= psf.sum()
-    
-    print(f'PSF SHAPE: {psf.shape}')
-    print(psf)
+            return estimate
 
-    return psf
-    #return torch.tensor(psf, dtype=torch.float32)
-
-def generate_psf_3d_v2(size: tuple[int,int,int]=(3,3,3), scale: tuple[float,float,float]=(1,1,1),
-        na: float=0.2, ri: float=1.0, wavelength: int=488):
-    """
-    size, scale, NA, RI, wavelength
-    Estimate the 3D PSF for a microscopy system.
-
-    Parameters:
-    - na: Numerical Aperture (unitless)
-    - wavelength: Emission wavelength (in nanometers)
-    - resolution_xy: Pixel size in the xy-plane (in microns)
-    - resolution_z: Pixel size in the z-dimension (in microns)
-    - size: Tuple indicating the shape of the PSF (z, y, x)
-
-    Returns:
-    - psf: 3D PSF array
-    """
-
-    resolution_z, resolution_xy, _ = scale
-
-    # Convert from nm to um
-    wavelength /= 1000
-
-    # Adjust na and wavelength for RI
-    na = min(na, ri)
-    wavelength = wavelength / ri
-
-    # Compute FWHM in microns
-    fwhm_xy = 0.61 * wavelength / na
-    fwhm_z = 2 * wavelength / (na ** 2)
-
-    # Convert FWHM to standard deviation in voxels
-    sigma_xy = fwhm_xy / (2 * np.sqrt(2 * np.log(2))) / resolution_xy
-    sigma_z = fwhm_z / (2 * np.sqrt(2 * np.log(2))) / resolution_z
-
-    # Create a 3D Gaussian kernel
-    z, y, x = size
-    z_range = np.linspace(-(z // 2), z // 2, z)
-    y_range = np.linspace(-(y // 2), y // 2, y)
-    x_range = np.linspace(-(x // 2), x // 2, x)
-    zz, yy, xx = np.meshgrid(z_range, y_range, x_range, indexing="ij")
-
-    psf = np.exp(
-        -((xx / sigma_xy) ** 2 + (yy / sigma_xy) ** 2 + (zz / sigma_z) ** 2) / 2
-    )
-
-    #psf /= psf.sum() # Normalize PSF (More accepted version)
-    psf /= psf.max()  # Normalize PSF
-    print(f'PSF SHAPE: {psf.shape}')
-    #print(psf)
-    for ii in psf[0,0]:
-        print('\n\n')
-    return psf
-
-def generate_psf_3d_v3(size: tuple[int,int,int]=(3,3,3), scale: tuple[float,float,float]=(1,1,1),
-        na: float=0.2, ri: float=1.0, wavelength: int=488):
-    """
-    Auto adjust size of PSF based on threshold
-    size, scale, NA, RI, wavelength
-    Estimate the 3D PSF for a microscopy system.
-
-    Parameters:
-    - na: Numerical Aperture (unitless)
-    - wavelength: Emission wavelength (in nanometers)
-    - resolution_xy: Pixel size in the xy-plane (in microns)
-    - resolution_z: Pixel size in the z-dimension (in microns)
-    - size: Tuple indicating the shape of the PSF (z, y, x)
-
-    Returns:
-    - psf: 3D PSF array
-    """
-
-    resolution_z, resolution_y, resolution_x = scale
-
-    # Convert from nm to um
-    wavelength /= 1000
-
-    # Adjust na and wavelength for RI
-    na = min(na, ri)
-    wavelength = wavelength / ri
-
-    # Compute FWHM in microns
-    fwhm_xy = 0.61 * wavelength / na
-    fwhm_z = 2 * wavelength / (na ** 2)
-
-    # Convert FWHM to standard deviation in voxels
-    sigma_y = fwhm_xy / (2 * np.sqrt(2 * np.log(2))) / resolution_y
-    sigma_x = fwhm_xy / (2 * np.sqrt(2 * np.log(2))) / resolution_x
-    sigma_z = fwhm_z / (2 * np.sqrt(2 * np.log(2))) / resolution_z
-
-    # Create a 3D Gaussian kernel
-    z, y, x = size
-
-    z_range = np.linspace(-(z // 2), z // 2, z)
-    y_range = np.linspace(-(y // 2), y // 2, y)
-    x_range = np.linspace(-(x // 2), x // 2, x)
-    # print(z_range)
-    # print(y_range)
-    # print(x_range)
-    zz, yy, xx = np.meshgrid(z_range, y_range, x_range, indexing="ij")
-
-    psf = np.exp(
-        -((xx / sigma_x) ** 2 + (yy / sigma_y) ** 2 + (zz / sigma_z) ** 2) / 2
-    )
-
-    #psf /= psf.sum() # Normalize PSF (More accepted version)
-    psf /= psf.max()  # Normalize PSF
-    print(f'PSF SHAPE: {psf.shape}')
-    #print(psf)
-    THRESHOLD = 0.0001
-    while (psf[0]<THRESHOLD).all() and (psf[-1]<THRESHOLD).all():
-        psf = psf[1:]
-        psf = psf[:-1]
-    while (psf[:,0]<THRESHOLD).all() and (psf[:,-1]<THRESHOLD).all():
-        psf = psf[:,1:]
-        psf = psf[:,:-1]
-    while (psf[:,:,0]<THRESHOLD).all() and (psf[:,:,-1]<THRESHOLD).all():
-        psf = psf[:,:,1:]
-        psf = psf[:,:,:-1]
-
-    for ii in psf:
-        #print(ii)
-        print(np.round(ii, 4))
-        print('\n')
-    print(psf.shape)
-    return psf
+    return rl(psf, iterations=iterations, sigma=sigma)
 
 def richardson_lucy_3d(input_data, psf, iterations=50, sigma=None):
     """
@@ -544,58 +480,64 @@ def richardson_lucy_3d(input_data, psf, iterations=50, sigma=None):
     import torch
     import torch.nn.functional as F
     import torchvision.transforms as T
+    import torch.nn as nn
 
     # Ensure data and PSF are on the same device
     print('Loading data onto GPU')
     input_data = input_data.to('cuda')
     psf = psf.to('cuda')
 
-    # Noise reduction
-    if sigma and sigma > 0:
-        print('Smoothing data and PSF to reduce noise')
-        #gblur = T.GaussianBlur(kernel_size=(5, 5), sigma=sigma)
-        #gblur = T.GaussianBlur(kernel_size=psf.shape[-2:], sigma=sigma)
-        # input_data[:,:] = gblur(input_data[0,0])
-        # psf[:,:] = gblur(psf[0,0])
+    print(f'CUDA Input image dtype: {input_data.dtype}')
+    print(f'CUDA PSF dtype: {psf.dtype}')
 
-        input_data[:,:] = T.functional.gaussian_blur(input_data[0,0], kernel_size=psf.shape[-2:], sigma=(sigma, sigma))
-        psf[:, :] = T.functional.gaussian_blur(psf[0,0], kernel_size=psf.shape[-2:], sigma=(sigma, sigma))
-    
-    # Flip the PSF for convolution
-    psf_flipped = torch.flip(psf, dims=(2, 3, 4))
+    with torch.no_grad():
+        # Noise reduction
+        if sigma and sigma > 0:
+            print('Smoothing data and PSF to reduce noise')
+            #gblur = T.GaussianBlur(kernel_size=(5, 5), sigma=sigma)
+            #gblur = T.GaussianBlur(kernel_size=psf.shape[-2:], sigma=sigma)
+            # input_data[:,:] = gblur(input_data[0,0])
+            # psf[:,:] = gblur(psf[0,0])
 
-    # Initialize the estimate with the input data
-    #input_data = pad_reflect(input_data, padding_depth=tuple(psf.shape)[-1]*2)
-    convolved = input_data.clone()
-    relative_blur = convolved.clone()
-    correction = relative_blur.clone()
-    estimate = correction.clone()
-    #estimate = torch.full_like(correction,0.5)
-    
-    print('Beginning deconvolution')
-    #print(f"Iteration {0}/{iterations}, Correction Mean: {correction.mean().item()}, MIN: {estimate.min().item()}, MAX: {estimate.max().item()}")
-    start_time = time_report(start_time=None, units='minutes')
-    for i in range(iterations):
-        itter_start = time_report(start_time=None, units='minutes')
-        # Convolve estimate with PSF
-        convolved[:] = F.conv3d(estimate, psf, padding='same')
-        #convolved[:] = F.conv3d(estimate, psf, padding_mode='reflect')
+            input_data[:,:] = T.functional.gaussian_blur(input_data[0,0], kernel_size=psf.shape[-2:], sigma=(sigma, sigma))
+            psf[:, :] = T.functional.gaussian_blur(psf[0,0], kernel_size=psf.shape[-2:], sigma=(sigma, sigma))
 
-        # Calculate the ratio of input data to the convolved data
-        relative_blur[:] = input_data / (convolved + 1e-12)
+        # Flip the PSF for convolution
+        psf_flipped = torch.flip(psf, dims=(2, 3, 4))
 
-        # Convolve the relative blur with the flipped PSF
-        correction[:] = F.conv3d(relative_blur, psf_flipped, padding='same')
-        #correction[:] = F.conv3d(relative_blur, psf_flipped, padding_mode='reflect')
+        # Initialize the estimate with the input data
+        #input_data = pad_reflect(input_data, padding_depth=tuple(psf.shape)[-1]*2)
+        convolved = input_data.clone()
+        relative_blur = input_data.clone()
+        #correction = relative_blur.clone()
+        estimate = input_data.clone()
+        #estimate = torch.full_like(correction,0.5)
 
-        # Update the estimate
-        estimate *= correction
+        print('Beginning deconvolution')
+        #print(f"Iteration {0}/{iterations}, Correction Mean: {correction.mean().item()}, MIN: {estimate.min().item()}, MAX: {estimate.max().item()}")
+        start_time = time_report(start_time=None, units='minutes')
+        for i in range(iterations):
+            itter_start = time_report(start_time=None, units='minutes')
+            # Convolve estimate with PSF
+            convolved[:] = F.conv3d(estimate, psf, padding='same')
 
-        # Print progress
-        if i % 1 == 0:
-            torch.cuda.synchronize()
-            #print(f"Iteration {i+1}/{iterations}, Time: {round(time_report(start_time=itter_start, to_print=False), 2)/60} Sec, MIN: {estimate.min().item()}, MAX: {estimate.max().item()}")
-            print(f"Iteration {i+1}/{iterations}, Time: {round(time_report(start_time=itter_start, to_print=False), 2)/60} Sec")
+            # Calculate the ratio of input data to the convolved data
+            convolved += 1e-12
+            relative_blur[:] = input_data / convolved
+
+            # Convolve the relative blur with the flipped PSF
+            #correction[:] = F.conv3d(relative_blur, psf_flipped, padding='same')
+            relative_blur[:] = F.conv3d(relative_blur, psf_flipped, padding='same')
+
+            # Update the estimate
+            #estimate *= correction
+            estimate *= relative_blur
+
+            # Print progress
+            if i % 1 == 0:
+                torch.cuda.synchronize()
+                #print(f"Iteration {i+1}/{iterations}, Time: {round(time_report(start_time=itter_start, to_print=False), 2)/60} Sec, MIN: {estimate.min().item()}, MAX: {estimate.max().item()}")
+                print(f"Iteration {i+1}/{iterations}, Time: {round(time_report(start_time=itter_start, to_print=False), 2)/60} Sec")
 
     # estimate = normalize_array(estimate, input_data.min(), input_data.max())
     # estimate = unpad(estimate, padding_depth=tuple(psf.shape)[-1]*2)
@@ -675,6 +617,88 @@ def save_image(file_name, array):
     #     photometric='minisblack',
     #     metadata={'axes': 'ZYX'},
     # )
+
+
+@app.command()
+def convert_ims_multi_color_dir(dir_loc: Path, file_type: str='.tif', res: tuple[float,float,float]=(1,1,1)):
+    '''Convert all files in a directory to Imaris Files [executed on SLURM]'''
+    from natsort import natsorted
+
+    if not isinstance(dir_loc,Path):
+        path = Path(dir_loc)
+    else:
+        path = dir_loc
+    file_list = path.glob('*' + file_type)
+    file_list = [x.as_posix() for x in file_list]
+
+    idx = 0
+    tiles = []
+    while idx is not None:
+        to_find = f'_Tile{idx}_'
+        current_tile = []
+        for i in file_list:
+            if to_find in i:
+                current_tile.append(i)
+        if len(current_tile) > 0:
+            tiles.append(current_tile)
+            idx += 1
+        else:
+            idx = None
+    print(tiles)
+    tiles = [natsorted(x) for x in tiles]
+
+    for ii in tiles:
+        convert_ims_multi_color(ii, res=res)
+
+
+@app.command()
+def convert_ims_multi_color(file: list[str], res: tuple[float, float, float] = (1, 1, 1)):
+    '''Convert a single file to ims format and spin off the process on slurm compute node [executed on SLURM]'''
+
+    SLURM_PARTITION = 'compute'
+    SLURM_CPUS = 24
+    SLURM_JOB_LABEL = 'ims_conv'
+    RAM = 64  # G
+    res_z, res_y, res_x = res
+
+    if not isinstance(file, list):
+        file = [file]
+
+    file = [Path(x) for x in file if not isinstance(x,Path)]
+
+    ext = file[0].suffix
+    inputformat = None
+    if ext == '.tif' or ext == '.tiff' or ext == '.btf':
+        inputformat = 'TiffSeries'
+
+    out_file = file[0].parent / 'ims_files' / (file[0].stem + '.ims')
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    layout_path = out_file.parent / 'ims_convert_layouts' / (out_file.stem + '_layout.txt')
+    layout_path.parent.mkdir(parents=True, exist_ok=True)
+
+    log_location = out_file.parent / 'ims_convert_logs' / (out_file.stem + '.txt')
+    log_location.parent.mkdir(parents=True, exist_ok=True)
+
+    line = f'<FileSeriesLayout>'
+    for c, f in enumerate(file):
+        line += f'\n<ImageIndex name="{path_to_wine_mappings(f)}" x="0" y="0" z="0" c="{c}" t="0"/>'
+    line += '</FileSeriesLayout>'
+
+    with layout_path.open("w") as f:
+        f.write(line)
+
+    # Main ims converter command
+    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file[0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" -il "{path_to_wine_mappings(layout_path)}" --logprogress --nthreads {SLURM_CPUS} --compression 6 -ps {RAM * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
+
+    # BASH script if/then statements to rename the .ims.part file to .ims
+    lines = lines + f'\n\nif [ -f "{out_file}.part" ]; then\n  mv "{out_file}.part" "{out_file}"\n  echo "File renamed to {out_file}"\nelse\n  echo "File {out_file} does not exist."\nfi'
+
+    # Sbatch command wrapping the
+    sbatch_cmd = f"sbatch -p {SLURM_PARTITION} -n {SLURM_CPUS} --mem={RAM}G -J {SLURM_JOB_LABEL} -o {log_location} --wrap='{lines}'"
+    subprocess.run(sbatch_cmd, shell=True)
+    print(lines)
+    print(sbatch_cmd)
 
 # Example Usage
 if __name__ == "__main__":
