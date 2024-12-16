@@ -85,6 +85,9 @@ def get_psf(
         The PSF array with dtype np.float64 and shape (len(zv), nx, nx)
 
     **DEFAULTS are optimized for CBI MesoSPIM
+
+    Library from:
+    https://github.com/tlambert03/PSFmodels
     """
     import psfmodels as psfm
     psf = psfm.make_psf(
@@ -288,6 +291,5 @@ def generate_psf_3d_v3(size: tuple[int, int, int] = (3, 3, 3), scale: tuple[floa
 
 
 
-# Example Usage
 if __name__ == "__main__":
     app()
