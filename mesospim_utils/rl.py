@@ -116,7 +116,7 @@ def convert_ims_dir_mesospim_tiles(dir_loc: Path, file_type: str='.btf', res: tu
     '''
     Convert all files in a directory to Imaris Files [executed on SLURM]
     The function assumes this is mesospim data.
-    Tiles are grouped usnig sorted by color using the function
+    Tiles are grouped and sorted by color using the function
     nested_list_tile_files_sorted_by_color
 
     names are expected to be as follows: _Tile{NUMBER}_ with a number representing laser line
@@ -152,9 +152,9 @@ def ims_dir(dir_loc: str, file_type: str = '.tif', res: tuple[float, float, floa
 
 
 @app.command()
-def decon_dir(dir_loc: str, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
+def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
               queue_ims: bool=False, denoise_sigma: float=None, sharpen: bool=False,
-              half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=110,
+              half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=100,
               num_parallel: int=8
               ):
     '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
@@ -189,6 +189,7 @@ def decon_dir(dir_loc: str, out_dir: str=None, out_file_type: str='.tif', file_t
         commands += '"'
         commands += f'{ENV_PYTHON_LOC} {LOC_OF_THIS_SCRIPT} decon'
         commands += f' {p.as_posix()}'
+        commands += f' {refractive_index}'
         commands += f' --out-location {out_dir / (p.stem + out_file_type)}'
         #commands += f'{" --queue-ims" if queue_ims else ""}'
         commands += f'{" --sharpen" if sharpen else ""}'
@@ -212,7 +213,7 @@ def decon_dir(dir_loc: str, out_dir: str=None, out_file_type: str='.tif', file_t
         except:
             pass
 
-        ims_auto_queue = f'\n\t"sbatch --dependency=afterok:$SLURM_JOB_ID -J ims_queue --kill-on-invalid-dep=yes --wrap=\''
+        ims_auto_queue = f'\n\t"sbatch -p compute -n 1 --mem 5G --dependency=afterok:$SLURM_JOB_ID -J ims_queue --kill-on-invalid-dep=yes --wrap=\''
         ims_auto_queue += f'{ENV_PYTHON_LOC} {LOC_OF_THIS_SCRIPT} convert-ims-dir-mesospim-tiles '
         ims_auto_queue += f'{out_dir} '
         ims_auto_queue += f'--file-type {out_file_type} '
@@ -231,226 +232,6 @@ def decon_dir(dir_loc: str, out_dir: str=None, out_file_type: str='.tif', file_t
     prefix_len = len(b'Submitted batch job ')
     job_number = int(output.stdout[prefix_len:-1])
     print(f'SBATCH Job #: {job_number}')
-
-@app.command()
-def decon(file_location: Path, out_location: Path=None, resolution: tuple[float,float,float]=None,
-          emission_wavelength: int=None, na: float=None, ri: float=None,
-          start_index: int=None, stop_index: int=None, save_pre_post: bool=False, queue_ims: bool=False,
-          denoise_sigma: float=None, sharpen: bool=False, half_precision: bool=False,
-          psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=20, frames_per_chunk: int=75
-          ):
-    '''Deconvolution of a file using the richardson-lucy method'''
-
-    start_time = time_report(start_time=None, to_print=True)
-
-    FRAMES_PER_DECON = frames_per_chunk
-    ITERATIONS = iterations
-    PSF_SHAPE = psf_shape
-    #ARRAY_PADDING = [[int((x*2)+1) for z in [1,1]] for x in PSF_SHAPE]
-    SIGMA = denoise_sigma
-    TMP_EXT = '.TMP'
-    
-    if not isinstance(file_location,Path):
-        file_location = Path(file_location)
-    print(f'Input File: {file_location}')
-    
-    if not out_location:
-        print('Making out_location')
-        out_location = file_location.parent / 'decon' / ('DECON_' + file_location.name)
-
-    if not isinstance(out_location, Path):
-        out_location = Path(out_location)
-    print(f'Output File: {out_location}')
-    # exit()
-    out_location.parent.mkdir(parents=True, exist_ok=True)
-    final_out_location = out_location
-    # Make out location a .TMP file
-    out_location = out_location.parent / (out_location.stem + TMP_EXT)
-
-    if save_pre_post:
-        pre_location = out_location.parent / ('PRE_' + out_location.stem + TMP_EXT)
-        pre_location.parent.mkdir(parents=True, exist_ok=True)
-    
-    if not resolution:
-        z_res = y_res = x_res = None
-    
-    if '.btf' in str(file_location):
-        print('Is mesospim big tiff file')
-
-        # Imaging parameters to be passes to psf
-        na = 0.2
-        sample_ri = 1.47 #CUBIC
-        objective_immersion_ri_design = 1.000293 # Air
-        objective_immersion_ri_actual = 1.000293 # Air
-        objective_working_distance = 45 * 1000 #in microns
-        coverslip_ri_design = 1.000293 # objective design
-        coverslip_ri_actual = 1.515 # during experiment
-        coverslip_thickness_actual = 1 * 1000 # in microns
-        coverslip_thickness_design = 0
-
-        psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
-
-        # Extract imaging parameter from metadata file if it exists
-        meta_file = file_location.with_name(file_location.name + '_meta.txt')
-        meta_dict = mesospim_meta_data(meta_file)
-
-        emission_wavelength = meta_dict.get('emission_wavelength')
-        x_res = meta_dict.get('x_res')
-        y_res = meta_dict.get('y_res')
-        z_res = meta_dict.get('z_res')
-
-
-    assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
-
-    print(f'--- INPUT_LOCATION: {file_location}')
-    print(f'--- OUT_LOCATION_TMP: {out_location}')
-    print(f'--- OUT_LOCATION_FINAL: {final_out_location}')
-    print(f'--- Depth of frames per run: {FRAMES_PER_DECON}')
-    print(f'--- Iterations: {ITERATIONS}')
-    print(f'--- NA: {na}')
-    print(f'--- RI: {sample_ri}')
-    print(f'--- Emission Wavelength: {emission_wavelength}')
-    print(f'--- Lateral Resolution: X: {x_res}, Y: {y_res}')
-    print(f'--- Z Steps: {z_res}')
-    print(f'--- PSF Model: {psf_model}')
-
-    if '.btf' in str(file_location):
-        # print('Opening File as mesospim_btf_helper')
-        # stack = mesospim_btf_helper(file_location)
-        print('Reading file')
-        stack = read_mesospim_btf(file_location, frame_start=start_index, frame_stop=stop_index)
-
-    assert 'stack' in locals(), 'Image file has not been loaded, perhaps it is an unsupported format'
-
-    print(f'FILE_SHAPE: {stack.shape}')
-    
-    print('Generating PSF')
-    #psf = generate_psf_3d(PSF_SHAPE, (z_res,y_res,x_res), na, ri, emission_wavelength)
-    #psf = generate_psf_3d_v2(PSF_SHAPE, (z_res, y_res, x_res), na, ri, emission_wavelength)
-    #psf = generate_psf_3d_v3(PSF_SHAPE, (z_res, y_res, x_res), na, ri, emission_wavelength)
-    psf = get_psf(
-        z = PSF_SHAPE[0],
-        nx = PSF_SHAPE[1],
-        dxy = x_res,
-        dz = z_res,
-        NA = na,
-        ns = sample_ri,
-        ni = objective_immersion_ri_actual, # Immersion in air
-        ni0 = objective_immersion_ri_design, # Air Obj
-        wvl = emission_wavelength/1000,
-        ti0 = objective_working_distance,
-        tg = coverslip_thickness_actual, # coverslip thickness, experimental value (microns)
-        tg0 = coverslip_thickness_design, # coverslip thickness, design value (microns)
-        ng = coverslip_ri_actual, # coverslip refractive index, experimental value
-        ng0 = coverslip_ri_design, # coverslip refractive index, design value
-        model=psf_model, #Must be one of 'vectorial', 'scalar', 'gaussian'.
-        normalize=True,
-    )
-
-    psf_image = out_location.parent / 'psf.tif'
-    if not psf_image.is_file():
-        save_image(psf_image, psf)
-
-    # Pad array based on psf size
-    ARRAY_PADDING = [[int((x * 2) + 1) for z in [1, 1]] for x in psf.shape]
-    stack = np.pad(stack, ARRAY_PADDING, mode='reflect')
-    print(f'PADDED_SHAPE: {stack.shape}')
-
-    # Import pytorch dependencies
-    print('Importing pytorch dependencies')
-    import torch
-    import torch.nn.functional as F
-    import torchvision.transforms as T
-    import torch.nn as nn
-
-    if half_precision:
-        psf = psf.astype(np.float16)
-        psf = torch.tensor(psf, dtype=torch.float16).unsqueeze(0).unsqueeze(0)
-    else:
-        psf = torch.tensor(psf, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
-    print(f'--- PSF_SHAPE: {psf.shape}')
-
-    start_z = 0
-    stop_z = 0
-    ideal_overlap_top = ARRAY_PADDING[0][0]
-    ideal_overlap_btm = ARRAY_PADDING[0][1]
-    
-    canvas = np.zeros_like(stack)
-
-    FRAMES_PER_DECON = FRAMES_PER_DECON - ideal_overlap_top - ideal_overlap_btm
-
-    num_decon_chunks = len(range(0,stack.shape[0],FRAMES_PER_DECON))
-    for idx, current in enumerate(range(0,stack.shape[0],FRAMES_PER_DECON)):
-        chunk_start_time = time_report(start_time=None)
-
-        max_frames_above = current
-        max_frames_below = stack.shape[0] - current
-        
-        start_z = current - (ideal_overlap_top if max_frames_above > ideal_overlap_top else max_frames_above)
-        start_chunk_idx = current-start_z
-        stop_z = current + (ideal_overlap_btm if max_frames_below > ideal_overlap_btm else max_frames_below)
-        new_end = stop_z + FRAMES_PER_DECON
-        stop_z = new_end if new_end < stack.shape[0] else stack.shape[0]
-        print(f'START: {start_z}, STOP: {stop_z}')
-        print(f'Processing chunk {idx+1} of {num_decon_chunks}')
-        
-        to_decon = stack[start_z:stop_z]
-        to_decon = np.expand_dims(to_decon,0)
-        to_decon = np.expand_dims(to_decon,0)
-        to_decon = img_as_float32(to_decon)
-        if half_precision:
-            to_decon = to_decon.astype(np.float16)
-        to_decon = torch.from_numpy(to_decon).cuda()
-        #print(f"Prior Mean: {to_decon.mean()}, MIN: {to_decon.min()}, MAX: {to_decon.max()}")
-        to_decon = richardson_lucy_3d(to_decon, psf, iterations=ITERATIONS, sigma=SIGMA)
-
-        if sharpen:
-            print('Unsharpening')
-            to_decon = unsharp(to_decon, amount=2, sigma=2)
-        
-        to_decon = to_decon.cpu()
-        to_decon = to_decon.numpy()
-
-        to_decon = np.clip(to_decon, 0, 1)
-        to_decon = img_as_uint(to_decon)
-        to_decon = to_decon[0,0]
-
-        to_decon = to_decon[start_chunk_idx:]
-
-        canvas[current:stop_z] = to_decon
-
-        torch.cuda.empty_cache()
-
-        chunk_total_time = time_report(start_time=chunk_start_time, to_print=False)
-        print(f'Chunk {idx+1} of {num_decon_chunks}: {round(chunk_total_time, 2)} minutes')
-
-        accumulated_time = time_report(start_time=start_time, to_print=False)
-        print(f'Accumulated Time: {round(accumulated_time, 2)} minutes')
-    
-    print('Deconvolution complete')
-    
-    # unpad canavs
-    canvas = canvas[ARRAY_PADDING[0][0]:-ARRAY_PADDING[0][1], ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1],ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
-
-    save_image(out_location, canvas)
-    if out_location.is_file():
-        print(f'Renaming File: {out_location.name} to {final_out_location.name}')
-        out_location.rename(final_out_location)
-    
-    if save_pre_post:
-        stack = stack[ARRAY_PADDING[0][0]:-ARRAY_PADDING[0][1], ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1],ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
-        save_image(pre_location, stack)
-        if pre_location.is_file():
-            new_name = pre_location.parent / (pre_location.stem + '.tif')
-            print(f'Renaming File: {pre_location.name} to {new_name.name}')
-            pre_location.rename(new_name)
-
-
-    if queue_ims:
-        #convert_ims(out_location, res=(z_res, y_res, x_res))
-        convert_ims(out_location, res=(z_res, y_res, x_res))
-
-    time_report(start_time=start_time, to_print=True)
 
 
 def get_rl_model(psf, iterations=20, sigma=None):
@@ -548,13 +329,27 @@ def richardson_lucy_3d(input_data, psf, iterations=50, sigma=None):
         estimate = input_data.clone()
         #estimate = torch.full_like(correction,0.5)
 
+        def conv3d_with_reflect_pad(image,psf):
+            _,_,z,y,x = psf.shape
+            pad = [x,x,y,y,z,z] #Assume 5D tensor, pad only the z,y,x dims in x,y,z order (reversed)
+            #print(f'PAD: {pad}')
+            pad = [(x-1)//2 for x in pad]
+            # print(f'PAD: {pad}')
+            # print(f'SHAPE ORIG = {image.shape}')
+            image = F.pad(image, pad, mode='reflect')
+            # print(f'SHAPE PAD = {image.shape}')
+            image = F.conv3d(image, psf, padding=0) #padding 0 is 'no padding' will return reduced array which will equal the origional input size.
+            # print(f'SHAPE OUT = {out.shape}')
+            return image
+
         print('Beginning deconvolution')
         #print(f"Iteration {0}/{iterations}, Correction Mean: {correction.mean().item()}, MIN: {estimate.min().item()}, MAX: {estimate.max().item()}")
         start_time = time_report(start_time=None, units='minutes')
         for i in range(iterations):
             itter_start = time_report(start_time=None, units='minutes')
             # Convolve estimate with PSF
-            convolved[:] = F.conv3d(estimate, psf, padding='same')
+            #convolved[:] = F.conv3d(estimate, psf, padding='same')
+            convolved[:] = conv3d_with_reflect_pad(estimate, psf)
 
             # Calculate the ratio of input data to the convolved data
             convolved += 1e-12
@@ -562,7 +357,8 @@ def richardson_lucy_3d(input_data, psf, iterations=50, sigma=None):
 
             # Convolve the relative blur with the flipped PSF
             #correction[:] = F.conv3d(relative_blur, psf_flipped, padding='same')
-            relative_blur[:] = F.conv3d(relative_blur, psf_flipped, padding='same')
+            #relative_blur[:] = F.conv3d(relative_blur, psf_flipped, padding='same')
+            relative_blur[:] = conv3d_with_reflect_pad(relative_blur, psf_flipped)
 
             # Update the estimate
             #estimate *= correction
@@ -572,7 +368,7 @@ def richardson_lucy_3d(input_data, psf, iterations=50, sigma=None):
             if i % 1 == 0:
                 torch.cuda.synchronize()
                 #print(f"Iteration {i+1}/{iterations}, Time: {round(time_report(start_time=itter_start, to_print=False), 2)/60} Sec, MIN: {estimate.min().item()}, MAX: {estimate.max().item()}")
-                print(f"Iteration {i+1}/{iterations}, Time: {round(time_report(start_time=itter_start, to_print=False), 2)/60} Sec")
+                print(f"Iteration {i+1}/{iterations}, Time: {round(time_report(start_time=itter_start, to_print=False)/60, 2)} Sec")
 
     # estimate = normalize_array(estimate, input_data.min(), input_data.max())
     # estimate = unpad(estimate, padding_depth=tuple(psf.shape)[-1]*2)
@@ -608,15 +404,15 @@ def read_mesospim_btf(file_location: Union[str, Path], frame_start: int = None, 
     #    stack = np.stack(tuple((x.asarray()[0] for x in tif.series[frame_start:frame_stop])))
     #    return stack
 
+
 from dask import delayed
 import dask.array as da
 class mesospim_btf_helper:
 
     def __init__(self,path: Union[str, Path]):
         self.path = path if isinstance(path,Path) else Path(path)
-        self.tif = tifffile.TiffFile(self.path)
-        self.sample_data = self.tif.series[0]
-        #print(tif.series.count())
+        self.tif = tifffile.TiffFile(self.path, mode='r')
+        self.sample_data = self.tif.series[0].asarray()
         self.zdim = len(self.tif.series)
 
         self.build_lazy_array()
@@ -628,7 +424,10 @@ class mesospim_btf_helper:
         delayed_arrays = [da.from_delayed(x, shape=self.sample_data.shape, dtype=self.sample_data.dtype)[0] for x in delayed_image_reads]
         self.lazy_array = da.stack(delayed_arrays)
         print(self.lazy_array.shape)
-        print(self.lazy_array[0])
+        print(self.lazy_array)
+
+    def get_z_plane(self,z_plane: int):
+        return self.tif.series[z_plane].asarray()
 
     @property
     def shape(self):
@@ -653,12 +452,12 @@ class mesospim_btf_helper:
     @property
     def ndim(self):
         return self.lazy_array.ndim
-    def get_z_plane(self,z_plane: int):
-        return self.tif.series[z_plane].asarray()
 
     def __del__(self):
+        del self.lazy_array
         self.tif.close()
         del self.tif
+
 
 def mesospim_meta_data(meta_file: Path):
     # Extract imaging metadata from mesospim metadata file
@@ -805,6 +604,244 @@ def nested_list_tile_files_sorted_by_color(dir_loc: Path, file_type: str='.tif')
     tiles = [natsorted(x) for x in tiles]
     return tiles
 
+@app.command()
+def decon(file_location: Path, refractive_index: float, out_location: Path=None, resolution: tuple[float,float,float]=None,
+          emission_wavelength: int=None, na: float=None, ri: float=None,
+          start_index: int=None, stop_index: int=None, save_pre_post: bool=False, queue_ims: bool=False,
+          denoise_sigma: float=None, sharpen: bool=False, half_precision: bool=False,
+          psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=20, frames_per_chunk: int=75
+          ):
+    '''Deconvolution of a file using the richardson-lucy method'''
+
+    start_time = time_report(start_time=None, to_print=True)
+
+    FRAMES_PER_DECON = frames_per_chunk
+    ITERATIONS = iterations
+    PSF_SHAPE = psf_shape
+    #ARRAY_PADDING = [[int((x*2)+1) for z in [1,1]] for x in PSF_SHAPE]
+    SIGMA = denoise_sigma
+    TMP_EXT = '.TMP'
+
+    if not isinstance(file_location,Path):
+        file_location = Path(file_location)
+    print(f'Input File: {file_location}')
+
+    if not out_location:
+        print('Making out_location')
+        out_location = file_location.parent / 'decon' / ('DECON_' + file_location.name)
+
+    if not isinstance(out_location, Path):
+        out_location = Path(out_location)
+    print(f'Output File: {out_location}')
+    # exit()
+    out_location.parent.mkdir(parents=True, exist_ok=True)
+    final_out_location = out_location
+    # Make out location a .TMP file
+    out_location = out_location.parent / (out_location.stem + TMP_EXT)
+
+    if save_pre_post:
+        pre_location = out_location.parent / ('PRE_' + out_location.stem + TMP_EXT)
+        pre_location.parent.mkdir(parents=True, exist_ok=True)
+
+    if not resolution:
+        z_res = y_res = x_res = None
+
+    if '.btf' in str(file_location):
+        print('Is mesospim big tiff file')
+
+        # Imaging parameters to be passes to psf
+        na = 0.2
+        # sample_ri = 1.47 #CUBIC
+        sample_ri = refractive_index
+        objective_immersion_ri_design = 1.000293 # Air
+        objective_immersion_ri_actual = 1.000293 # Air
+        objective_working_distance = 45 * 1000 #in microns
+        coverslip_ri_design = 1.000293 # objective design
+        coverslip_ri_actual = 1.515 # during experiment
+        coverslip_thickness_actual = 1 * 1000 # in microns
+        coverslip_thickness_design = 0
+
+        psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
+
+        # Extract imaging parameter from metadata file if it exists
+        meta_file = file_location.with_name(file_location.name + '_meta.txt')
+        meta_dict = mesospim_meta_data(meta_file)
+
+        emission_wavelength = meta_dict.get('emission_wavelength')
+        x_res = meta_dict.get('x_res')
+        y_res = meta_dict.get('y_res')
+        z_res = meta_dict.get('z_res')
+
+
+    assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
+
+    print(f'--- INPUT_LOCATION: {file_location}')
+    print(f'--- OUT_LOCATION_TMP: {out_location}')
+    print(f'--- OUT_LOCATION_FINAL: {final_out_location}')
+    print(f'--- Depth of frames per run: {FRAMES_PER_DECON}')
+    print(f'--- Iterations: {ITERATIONS}')
+    print(f'--- NA: {na}')
+    print(f'--- RI: {sample_ri}')
+    print(f'--- Emission Wavelength: {emission_wavelength}')
+    print(f'--- Lateral Resolution: X: {x_res}, Y: {y_res}')
+    print(f'--- Z Steps: {z_res}')
+    print(f'--- PSF Model: {psf_model}')
+
+    if '.btf' in str(file_location):
+        print('Opening File as mesospim_btf_helper')
+        stack = mesospim_btf_helper(file_location)
+        stack = stack.lazy_array
+        stack = stack[start_index:stop_index]
+        # print('Reading file')
+        # stack = read_mesospim_btf(file_location, frame_start=start_index, frame_stop=stop_index)
+
+    assert 'stack' in locals(), 'Image file has not been loaded, perhaps it is an unsupported format'
+
+    print(f'FILE_SHAPE: {stack.shape}')
+
+    print('Generating PSF')
+    #psf = generate_psf_3d(PSF_SHAPE, (z_res,y_res,x_res), na, ri, emission_wavelength)
+    #psf = generate_psf_3d_v2(PSF_SHAPE, (z_res, y_res, x_res), na, ri, emission_wavelength)
+    #psf = generate_psf_3d_v3(PSF_SHAPE, (z_res, y_res, x_res), na, ri, emission_wavelength)
+    psf = get_psf(
+        z = PSF_SHAPE[0],
+        nx = PSF_SHAPE[1],
+        dxy = x_res,
+        dz = z_res,
+        NA = na,
+        ns = sample_ri,
+        ni = objective_immersion_ri_actual, # Immersion in air
+        ni0 = objective_immersion_ri_design, # Air Obj
+        wvl = emission_wavelength/1000,
+        ti0 = objective_working_distance,
+        tg = coverslip_thickness_actual, # coverslip thickness, experimental value (microns)
+        tg0 = coverslip_thickness_design, # coverslip thickness, design value (microns)
+        ng = coverslip_ri_actual, # coverslip refractive index, experimental value
+        ng0 = coverslip_ri_design, # coverslip refractive index, design value
+        model=psf_model, #Must be one of 'vectorial', 'scalar', 'gaussian'.
+        normalize=True,
+    )
+
+    psf_image = out_location.parent / 'psf.tif'
+    if not psf_image.is_file():
+        save_image(psf_image, psf)
+
+    # Pad array based on psf size
+    ARRAY_PADDING = [[int((x * 2) + 1) for z in [1, 1]] for x in psf.shape]
+    stack = np.pad(stack, ARRAY_PADDING, mode='reflect')
+    print(f'PADDED_SHAPE: {stack.shape}')
+
+    # Import pytorch dependencies
+    print('Importing pytorch dependencies')
+    import torch
+    import torch.nn.functional as F
+    import torchvision.transforms as T
+    import torch.nn as nn
+
+    if half_precision:
+        psf = psf.astype(np.float16)
+        psf = torch.tensor(psf, dtype=torch.float16).unsqueeze(0).unsqueeze(0)
+    else:
+        psf = torch.tensor(psf, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    print(f'--- PSF_SHAPE: {psf.shape}')
+
+    start_z = 0
+    stop_z = 0
+    ideal_overlap_top = ARRAY_PADDING[0][0]
+    ideal_overlap_btm = ARRAY_PADDING[0][1]
+
+    canvas = np.zeros(stack.shape, dtype=stack.dtype)
+
+    FRAMES_PER_DECON = FRAMES_PER_DECON - ideal_overlap_top - ideal_overlap_btm
+
+    num_decon_chunks = len(range(0,stack.shape[0],FRAMES_PER_DECON))
+    for idx, current in enumerate(range(0,stack.shape[0],FRAMES_PER_DECON)):
+        chunk_start_time = time_report(start_time=None)
+
+        max_frames_above = current
+        max_frames_below = stack.shape[0] - current
+
+        start_z = current - (ideal_overlap_top if max_frames_above > ideal_overlap_top else max_frames_above)
+        start_chunk_idx = current-start_z
+        stop_z = current + (ideal_overlap_btm if max_frames_below > ideal_overlap_btm else max_frames_below)
+        new_end = stop_z + FRAMES_PER_DECON
+        stop_z = new_end if new_end < stack.shape[0] else stack.shape[0]
+        print(f'START: {start_z}, STOP: {stop_z}')
+        print(f'Processing chunk {idx+1} of {num_decon_chunks}')
+
+        # Reading in parallel show funky mix-ups with zlayers and image shift. This is attempt at loading 1 plane a time.
+        to_decon_shape = stack[start_z:stop_z].shape
+        to_decon = np.zeros(to_decon_shape, dtype=stack.dtype)
+        print('Reading next chunk')
+        for img_idx, img in enumerate(stack[start_z:stop_z]):
+            to_decon[img_idx] = img.compute()
+        # to_decon = stack[start_z:stop_z]
+        # to_decon = to_decon.compute()
+        to_decon = np.expand_dims(to_decon,0)
+        to_decon = np.expand_dims(to_decon,0)
+        to_decon = img_as_float32(to_decon)
+        if half_precision:
+            to_decon = to_decon.astype(np.float16)
+        to_decon = torch.from_numpy(to_decon).cuda()
+        #print(f"Prior Mean: {to_decon.mean()}, MIN: {to_decon.min()}, MAX: {to_decon.max()}")
+        to_decon = richardson_lucy_3d(to_decon, psf, iterations=ITERATIONS, sigma=SIGMA)
+
+        if sharpen:
+            print('Unsharpening')
+            to_decon = unsharp(to_decon, amount=2, sigma=2)
+
+        to_decon = to_decon.cpu()
+        to_decon = to_decon.numpy()
+
+        to_decon = np.clip(to_decon, 0, 1)
+        to_decon = img_as_uint(to_decon)
+        to_decon = to_decon[0,0]
+
+        to_decon = to_decon[start_chunk_idx:]
+
+        canvas[current:stop_z] = to_decon
+
+        torch.cuda.empty_cache()
+
+        chunk_total_time = time_report(start_time=chunk_start_time, to_print=False)
+        print(f'Chunk {idx+1} of {num_decon_chunks}: {round(chunk_total_time, 2)} minutes')
+
+        accumulated_time = time_report(start_time=start_time, to_print=False)
+        print(f'Accumulated Time: {round(accumulated_time, 2)} minutes')
+
+    print('Deconvolution complete')
+
+    # unpad canavs
+    canvas = canvas[ARRAY_PADDING[0][0]:-ARRAY_PADDING[0][1], ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1],ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
+
+    print(f'Saving Deconvolved output: {out_location}')
+    #save_image(out_location, canvas)
+    with tifffile.TiffWriter(out_location, bigtiff=True) as tif:
+        for img in canvas:
+            tif.write(img[np.newaxis, ...], contiguous=False)
+
+    if out_location.is_file():
+        print(f'Renaming File: {out_location.name} to {final_out_location.name}')
+        out_location.rename(final_out_location)
+
+    if save_pre_post:
+        stack = stack[ARRAY_PADDING[0][0]:-ARRAY_PADDING[0][1], ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1],
+                ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
+        print(f'Saving Pre-Decon image: {pre_location}')
+        with tifffile.TiffWriter(pre_location, bigtiff=True) as tif:
+            for img in stack:
+                tif.write(img[np.newaxis, ...], contiguous=False)
+        if pre_location.is_file():
+            new_name = pre_location.parent / (pre_location.stem + '.tif')
+            print(f'Renaming File: {pre_location.name} to {new_name.name}')
+            pre_location.rename(new_name)
+
+
+    if queue_ims:
+        #convert_ims(out_location, res=(z_res, y_res, x_res))
+        convert_ims(out_location, res=(z_res, y_res, x_res))
+
+    time_report(start_time=start_time, to_print=True)
 
 if __name__ == "__main__":
     app()
