@@ -1,0 +1,357 @@
+
+'''
+
+Build stitcher image list
+
+image_template = "<Image MinX="0.000000" MinY="0.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile0_Ch561_Sh0.ims</Image>"
+
+<ImageList>
+<Image MinX="0.000000" MinY="0.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile0_Ch561_Sh0.ims</Image>
+
+pixel_size_x X and Y
+percent_overlap
+
+MinX: Origin 0.0000
+Each new tile = pixel_size_x - (pixel_size_x*percent_overlap)
+'''
+
+location = r"I:\Acquire\MesoSPIM\zhang-l\4CL19\012425"
+dir_with_ims_files = r"I:\Acquire\MesoSPIM\zhang-l\4CL19\012425\ims_files"
+
+location = r"Z:\Acquire\MesoSPIM\cakir-i\4CL16\020425"
+dir_with_ims_files = r"Z:\Acquire\MesoSPIM\cakir-i\4CL16\020425\ims_files"
+
+#location = r"Z:\tmp\mesospim"
+
+# Std lib imports
+from pathlib import Path
+from pprint import pprint as print
+import subprocess
+import xml.etree.ElementTree as ET
+
+# external package imports
+from imaris_ims_file_reader.ims import ims
+
+## Local imports
+from metadata import collect_all_metadata
+from utils import sort_list_of_paths_by_tile_number
+from utils import map_wavelength_to_RGB
+from utils import get_num_processors
+from utils import get_ram_mb
+from string_templates import WIN_ALIGN_BAT, WIN_RESAMPLE_BAT, COLOR_RECORD_TEMPLATE
+
+
+def determine_grid_size(data):
+    """
+    Determines the grid size based on unique x_pos and y_pos values.
+    Args:
+        data (list of dict): List of dictionaries containing 'x_pos' and 'y_pos'.
+
+    Returns:
+        tuple: (number of unique x_pos, number of unique y_pos)
+    """
+    # Extract unique x_pos and y_pos values
+    x_positions = {entry["x_pos"] for entry in data}
+    y_positions = {entry["y_pos"] for entry in data}
+
+    # Calculate the grid size
+    grid_size_x = len(x_positions)
+    grid_size_y = len(y_positions)
+
+    print(f'{grid_size_x}X, {grid_size_y}Y')
+    return grid_size_x, grid_size_y
+
+def build_align_input(metadata_by_channel: dict, dir_with_ims_files: Path, overlap=0.10):
+    if not isinstance(dir_with_ims_files, Path):
+        dir_with_ims_files = Path(dir_with_ims_files)
+
+    assert dir_with_ims_files.is_dir(), 'Path is not a directory'
+    ims_files = list(dir_with_ims_files.glob('*Tile*.ims'))
+    assert len(ims_files) >= 1, 'There are no Imaris files in this path'
+
+    ims_files = sort_list_of_paths_by_tile_number(ims_files)
+    print(ims_files)
+
+    first_channel = list(metadata_by_channel.keys())[0]
+    sample_tile = metadata_by_channel[first_channel][0]
+    x_pixels = sample_tile['x_pixels'] * sample_tile['x_res']
+    y_pixels = sample_tile['y_pixels'] * sample_tile['y_res']
+    z_pixels = sample_tile['z_planes'] * sample_tile['z_res']
+
+    grid_x, grid_y = determine_grid_size(metadata_by_channel[first_channel])
+
+    print(f'Tile Size: {x_pixels}x, {y_pixels}y, {z_pixels}z')
+    print(f'Grid Size: {grid_x}x, {grid_y}y')
+
+    ## Build input file for alignment:
+    template = '<Image MinX="{}" MinY="{}" MinZ="{}" MaxX="{}" MaxY="{}" MaxZ="{}">{}</Image>\n'
+    input = f'<ImageList>\n'
+
+    MinX = 0.0
+    MinZ = 0.0
+    MaxX = float(x_pixels)
+    MaxZ = float(z_pixels)
+    file_idx = 0
+    for x in range(grid_x):
+        MinY = 0.0
+        MaxY = float(y_pixels)
+        for y in range(grid_y):
+            new = f'<Image MinX="{MinX:.6f}" MinY="{MinY:.6f}" MinZ="{MinZ:.6f}" MaxX="{MaxX:.6f}" MaxY="{MaxY:.6f}" MaxZ="{MaxZ:.6f}">{ims_files[file_idx]}</Image>\n'
+            MinY = MinY + (y_pixels * (1-overlap))
+            MaxY = MinY + y_pixels
+            input = input + new
+            file_idx += 1
+        MinX = MinX + (x_pixels * (1-overlap))
+        MaxX = MinX + x_pixels
+    input = input + '</ImageList>'
+
+    print(input)
+
+    align_input_file = dir_with_ims_files / 'align_input.xml'
+    align_output_file = dir_with_ims_files / 'align_output.xml'
+    align_bat_file = dir_with_ims_files / 'align.bat'
+    with open(align_input_file,'w') as f:
+        f.write(input)
+
+    align_bat = WIN_ALIGN_BAT.format(align_input_file,align_output_file)
+    with open(align_bat_file, 'w') as f:
+        f.write(align_bat)
+
+    return align_bat_file, align_output_file
+
+def run_bat(bat_file):
+    subprocess.run([bat_file], shell=True, check=True)
+    return True
+
+
+def parse_align_output(align_output_file):
+
+    tree = ET.parse(align_output_file)
+    root = tree.getroot()
+
+    # Extract ImageExtendsList
+    image_extends_list = []
+
+    for image_extends in root.findall(".//ImageExtendsList/ImageExtends"):
+        image_data = {
+            "Image": image_extends.attrib["Image"],
+            "ExtendMin": dict(zip(["x", "y", "z"], map(float, image_extends.attrib["ExtendMin"].split()))),
+            "ExtendMax": dict(zip(["x", "y", "z"], map(float, image_extends.attrib["ExtendMax"].split()))),
+        }
+        image_extends_list.append(image_data)
+
+    print(image_extends_list)
+
+    # Extract PairwiseAlignmentList
+    pairwise_alignment_list = []
+
+    for pairwise_alignment in root.findall(".//PairwiseAlignmentList/PairwiseAlignment"):
+        alignment_data = {
+            "Correlation": float(pairwise_alignment.attrib["Correlation"]),
+            "ImageB": pairwise_alignment.attrib["ImageB"],
+            "ImageA": pairwise_alignment.attrib["ImageA"],
+            "Translation": dict(zip(["x", "y", "z"], map(float, pairwise_alignment.attrib["Translation"].split()))),
+        }
+        pairwise_alignment_list.append(alignment_data)
+    print(pairwise_alignment_list)
+
+    return image_extends_list, pairwise_alignment_list
+
+def get_moving_tile(pairwise_alignment_list, tile_num, return_highest_correlation=False, get_average_translation=True):
+    moving_tiles = []
+    for entry in pairwise_alignment_list:
+        tile_name = f'Tile{int(tile_num)}_'
+        if tile_name in entry.get('ImageB'):
+            moving_tiles.append(entry)
+    print(moving_tiles)
+
+    # Short circuit, if no matching tiles for ImageB, Extract ImageA name to return file_name
+    if len(moving_tiles) == 0:
+        print("No Alignments for this Tile")
+        moving_tiles = []
+        for entry in pairwise_alignment_list:
+            tile_name = f'Tile{int(tile_num)}_'
+            if tile_name in entry.get('ImageA'):
+                moving_tiles.append(entry)
+        print(moving_tiles[0].get('ImageA'))
+        return None, moving_tiles[0].get('ImageA')
+
+
+    if return_highest_correlation and not get_average_translation:
+        highest_index = 0
+        for idx, tile in enumerate(moving_tiles):
+            if tile.get('Correlation') > moving_tiles[highest_index].get('Correlation'):
+                highest_index = idx
+        moving_tiles = [moving_tiles[highest_index]]
+        #print(moving_tiles)
+
+    # Build a weighted average translation based on correlation
+    if get_average_translation:
+        num_aligns = len(moving_tiles)
+        sum_correlation = sum([x.get('Correlation') for x in moving_tiles])
+        avg_coorelation = sum([x.get('Correlation')*(x.get('Correlation')/sum_correlation) for x in moving_tiles])
+        print(f'Sum: {sum_correlation}, avg: {avg_coorelation}')
+
+        x, y, z = 0,0,0
+        for data in moving_tiles:
+            translation = data.get('Translation')
+            x += translation.get('x') * (data.get('Correlation') / sum_correlation)
+            y += translation.get('y') * (data.get('Correlation') / sum_correlation)
+            z += translation.get('z') * (data.get('Correlation') / sum_correlation)
+
+        alignment_data = {
+            "Correlation": avg_coorelation,
+            "AverageAlign": True,
+            "ImageB": data["ImageB"],
+            "ImageA": [x["ImageA"] for x in moving_tiles],
+            "Translation": {'x': x, 'y': y, 'z': z},
+        }
+        print(alignment_data)
+        moving_tiles = alignment_data
+
+    return moving_tiles, moving_tiles.get('ImageB')
+
+
+def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel, grid_x, grid_y, overlap=0.10, montage_name='montage.ims'):
+
+    anchor_image = image_extends_list[0]
+    ExtendMax = anchor_image.get('ExtendMax')
+
+    x_pixels = ExtendMax.get('x')
+    y_pixels = ExtendMax.get('y')
+    z_pixels = ExtendMax.get('z')
+
+    print(f'Tile Size: {x_pixels}x, {y_pixels}y, {z_pixels}z')
+    print(f'Grid Size 273: {grid_x}x, {grid_y}y')
+
+    #moving_tiles = get_moving_tile(pairwise_alignment_list, 16, return_highest_correlation=True)
+
+    ## Build input file for alignment:
+    template = '<Image MinX="{}" MinY="{}" MinZ="{}" MaxX="{}" MaxY="{}" MaxZ="{}">{}</Image>\n'
+    input = f'<ImageList>\n'
+
+    MinX = 0.0
+    MinZ = 0.0
+    MaxX = float(x_pixels)
+    MaxZ = float(z_pixels)
+    file_idx = 0
+    for _ in range(grid_x):
+        MinY = 0.0
+        MaxY = float(y_pixels)
+        for _ in range(grid_y):
+
+            moving_tiles, file_name = get_moving_tile(pairwise_alignment_list, file_idx, return_highest_correlation=False, get_average_translation=True)
+            print(f'{moving_tiles=}  : {file_name=}')
+
+            if moving_tiles and moving_tiles.get('Correlation') > 0.8:
+                translation = moving_tiles.get('Translation')
+                MinX += translation.get('x')
+                MaxX += translation.get('x')
+                MinY += translation.get('y')
+                MaxY += translation.get('y')
+                MinZ += translation.get('z')
+                MaxZ += translation.get('z')
+
+            new = f'<Image MinX="{MinX:.6f}" MinY="{MinY:.6f}" MinZ="{MinZ:.6f}" MaxX="{MaxX:.6f}" MaxY="{MaxY:.6f}" MaxZ="{MaxZ:.6f}">{file_name}</Image>\n'
+            print(new)
+            MinY = MinY + (y_pixels * (1-overlap))
+            MaxY = MinY + y_pixels
+            input = input + new
+            file_idx += 1
+        MinX = MinX + (x_pixels * (1-overlap))
+        MaxX = MinX + x_pixels
+    input = input + '</ImageList>'
+
+    output_folder = Path(file_name).parent
+    resample_input_file_name = output_folder / 'resample_input.xml'
+
+    with open(resample_input_file_name, 'w') as f:
+        f.write(input)
+
+    resample_bat_file = output_folder / 'resample.bat'
+    output_resample_file = output_folder / montage_name
+
+    color_file = create_color_file(image_extends_list, metadata_by_channel)
+    resample_bat = WIN_RESAMPLE_BAT.format(resample_input_file_name, output_resample_file, color_file, get_num_processors(), get_ram_mb()//2)
+    with open(resample_bat_file, 'w') as f:
+        f.write(resample_bat)
+
+    print(input)
+    print(resample_bat)
+    return resample_bat_file
+
+
+def create_color_file(image_extends_list, metadata_by_channel):
+
+    COLOR_RECORD_TEMPLATE = '''<Channel ChannelIndex="Channel {}" Selection="true" RangeMax="{}" RangeMin="{}" GammaCorrection="1" Opacity="1" ColorMode="BaseColor" RangeMinB="3.40282e+38" RangeMaxB="3.40282e+38">
+    <ColorTable/>
+    <BaseColor>
+    <Color Red="{}" Green="{}" Blue="{}"/>
+    </BaseColor>
+    </Channel>\n'''
+
+    color_file = image_extends_list[0].get('Image')
+    color_file = Path(color_file).parent / 'resample_color_file.xml'
+
+    # Open all ims files and gran the hist_max and hist_min, take an average and use it for the colors
+    histo_max = [0]
+    histo_min = [0]
+    num_ims_files = len(image_extends_list)
+    for entry in image_extends_list:
+        imaris_obj = ims(entry.get('Image'))
+        metadata_dict = imaris_obj.metaData
+        channels = imaris_obj.Channels
+        resolution_levels = imaris_obj.ResolutionLevels
+        if len(histo_max) != imaris_obj.Channels:
+            histo_max = histo_max * channels
+            histo_min = histo_min * channels
+        del(imaris_obj)
+
+        for ch in range(channels):
+            sum_hist_max = sum([value for key,value in metadata_dict.items() if (key[-1] == 'HistogramMax' and key[2] == ch)])
+            mean_hist_max = sum_hist_max / resolution_levels
+            histo_max[ch] += mean_hist_max
+
+            sum_hist_min = sum([value for key, value in metadata_dict.items() if (key[-1] == 'HistogramMin' and key[2] == ch)])
+            mean_hist_max = sum_hist_min / resolution_levels
+            histo_min[ch] += mean_hist_max
+
+    for ch in range(channels):
+        histo_max[ch] /= num_ims_files
+        histo_min[ch] /= num_ims_files
+    histo_max = [int(x) for x in histo_max]
+    histo_min = [int(x) for x in histo_min]
+    print(f'HistogrmaMax: {histo_max}')
+    print(f'HistogrmaMin: {histo_min}')
+
+    wavelengths = list(metadata_by_channel.keys())
+    wavelengths = [int(x) for x in wavelengths]
+
+    # Build the channel xml
+    text = '<Channels>\n'
+    for ch in range(channels):
+        rgb = map_wavelength_to_RGB(wavelengths[ch])
+        text = text + COLOR_RECORD_TEMPLATE.format(ch, histo_max[ch], histo_min[ch], rgb[0], rgb[1], rgb[2])
+    text = text + '</Channels>'
+    print(text)
+
+    with open(color_file, 'w') as f:
+        f.write(text)
+
+    return color_file
+
+
+
+if __name__ == "__main__":
+
+    metadata_by_channel = collect_all_metadata(location, save_json_path=dir_with_ims_files + r'\mesospim_metadata.json')
+    print(metadata_by_channel)
+    grid_x, grid_y = determine_grid_size(metadata_by_channel['488'])
+    print(f'Grid Size 348: {grid_x}x, {grid_y}y')
+    align_bat_file, align_output_file = build_align_input(metadata_by_channel, dir_with_ims_files)
+    #run_bat(align_bat_file)
+    image_extends_list, pairwise_alignment_list = parse_align_output(align_output_file)
+    moving_tiles, file_name = get_moving_tile(pairwise_alignment_list, 5, return_highest_correlation=False, get_average_translation=True)
+    resample_bat_file = build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel, grid_x=grid_x, grid_y=grid_y, overlap=0.10, montage_name='TEST_OUT2.ims')
+    run_bat(resample_bat_file)
+

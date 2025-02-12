@@ -1,3 +1,8 @@
+# Package specific
+*slurm-*.out
+test_psf
+notes
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
