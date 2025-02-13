@@ -32,11 +32,14 @@ def sort_list_of_paths_by_tile_number(list_of_paths, pattern=r"_Tile(\d+)_"):
     return [Path(x) for x in files]
 
 def dict_to_json_file(my_dict:dict, file_name:Path):
+    '''
+    Write dictionary to JSON ensure all Path objects are converted to posix style string
+    '''
 
     class PathEncoder(json.JSONEncoder):
         def default(self, obj):
             if isinstance(obj, Path):
-                return str(obj)
+                return str(obj).as_posix()
             return super().default(obj)
 
     if not isinstance(file_name, Path):
@@ -46,16 +49,22 @@ def dict_to_json_file(my_dict:dict, file_name:Path):
     with open(file_name, "w") as json_file:
         json.dump(my_dict, json_file, indent=4, cls=PathEncoder)  # indent=4 makes it more readable
 
-def read_json_file_to_dict(file_name:Path):
+def json_file_to_dict(file_name:Path):
+    '''
+    Read JSON and convert all path like strings to Path obj
+    '''
     # Read JSON file
     with open(file_name, "r") as json_file:
         data = json.load(json_file)
     data = convert_paths(data)
+    data = convert_str_to_nums(data)
     return data
 
 
-# Function to recursively convert path-like strings to Path obj in a nested dictionary
 def convert_paths(obj):
+    '''
+    Recursively convert path-like strings to Path obj in a nested dictionary
+    '''
     if isinstance(obj, dict):
         return {k: convert_paths(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -64,8 +73,54 @@ def convert_paths(obj):
         return Path(obj)
     return obj
 
+
+def convert_paths_to_posix(obj):
+    '''
+    Function to recursively convert Path objects to posix path strings in a nested dictionary
+    '''
+    if isinstance(obj, dict):
+        return {k: convert_paths_to_posix(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_paths_to_posix(v) for v in obj]
+    elif isinstance(obj, Path):  # Heuristic check for paths
+        return obj.as_posix()
+    return obj
+
+def convert_str_to_nums(obj):
+    '''
+    Function to recursively convert string objects to int or float
+    '''
+    if isinstance(obj, dict):
+        return {k: convert_str_to_nums(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_str_to_nums(v) for v in obj]
+    elif isinstance(obj, str):  # Heuristic check for paths
+        try:
+            return int(obj)
+        except ValueError:
+            try:
+                return float(obj)
+            except ValueError:
+                pass
+    return obj
+
+
 def get_num_processors():
+    '''
+    Returns the number of cpus on system
+    '''
     return os.cpu_count()
 
 def get_ram_mb():
+    '''
+    Returns total RAM in MB on system
+    '''
     return psutil.virtual_memory().total // 1024 // 1024
+
+def ensure_path(file_name: Path):
+    '''
+    Returns a Path object of the input file_name
+    '''
+    if not isinstance(file_name, Path):
+        return Path(file_name)
+    return file_name

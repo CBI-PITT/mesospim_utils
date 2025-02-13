@@ -1,3 +1,5 @@
+METADATA_FILENAME = 'mesospim_metadata.json'
+
 EMISSION_MAP = {
     #Mapping common names to emission wavelengths, only used if wavelength is not explicitly stated in metadata file
     "gfp": 525,

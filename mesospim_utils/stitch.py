@@ -1,18 +1,7 @@
 
 '''
-
-Build stitcher image list
-
-image_template = "<Image MinX="0.000000" MinY="0.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile0_Ch561_Sh0.ims</Image>"
-
-<ImageList>
-<Image MinX="0.000000" MinY="0.000000" MinZ="0.000000" MaxX="3200.000000" MaxY="3200.000000" MaxZ="9500.000000">Z:/mesospim/081924/decon/ims_files/KIDNEY_Tile0_Ch561_Sh0.ims</Image>
-
-pixel_size_x X and Y
-percent_overlap
-
-MinX: Origin 0.0000
-Each new tile = pixel_size_x - (pixel_size_x*percent_overlap)
+Stitch a mesospim dataset after conversion of all tiles to ims file.
+Uses the ImarisStitcher and currently requires it to be install on a Windows computer
 '''
 
 location = r"I:\Acquire\MesoSPIM\zhang-l\4CL19\012425"
@@ -21,7 +10,9 @@ dir_with_ims_files = r"I:\Acquire\MesoSPIM\zhang-l\4CL19\012425\ims_files"
 location = r"Z:\Acquire\MesoSPIM\cakir-i\4CL16\020425"
 dir_with_ims_files = r"Z:\Acquire\MesoSPIM\cakir-i\4CL16\020425\ims_files"
 
-#location = r"Z:\tmp\mesospim"
+location = r"Z:\tmp\mesospim\kidney"
+dir_with_ims_files = r"Z:\tmp\mesospim\kidney\decon\ims_files"
+
 
 # Std lib imports
 from pathlib import Path
@@ -31,6 +22,7 @@ import xml.etree.ElementTree as ET
 
 # external package imports
 from imaris_ims_file_reader.ims import ims
+import typer
 
 ## Local imports
 from metadata import collect_all_metadata
@@ -38,10 +30,11 @@ from utils import sort_list_of_paths_by_tile_number
 from utils import map_wavelength_to_RGB
 from utils import get_num_processors
 from utils import get_ram_mb
+from utils import ensure_path
 from string_templates import WIN_ALIGN_BAT, WIN_RESAMPLE_BAT, COLOR_RECORD_TEMPLATE
 
 
-def determine_grid_size(data):
+def determine_grid_size(metadata_by_channel):
     """
     Determines the grid size based on unique x_pos and y_pos values.
     Args:
@@ -50,6 +43,10 @@ def determine_grid_size(data):
     Returns:
         tuple: (number of unique x_pos, number of unique y_pos)
     """
+    for _,value in metadata_by_channel.items():
+        data = value
+        break
+
     # Extract unique x_pos and y_pos values
     x_positions = {entry["x_pos"] for entry in data}
     y_positions = {entry["y_pos"] for entry in data}
@@ -78,7 +75,7 @@ def build_align_input(metadata_by_channel: dict, dir_with_ims_files: Path, overl
     y_pixels = sample_tile['y_pixels'] * sample_tile['y_res']
     z_pixels = sample_tile['z_planes'] * sample_tile['z_res']
 
-    grid_x, grid_y = determine_grid_size(metadata_by_channel[first_channel])
+    grid_x, grid_y = determine_grid_size(metadata_by_channel)
 
     print(f'Tile Size: {x_pixels}x, {y_pixels}y, {z_pixels}z')
     print(f'Grid Size: {grid_x}x, {grid_y}y')
@@ -319,6 +316,10 @@ def create_color_file(image_extends_list, metadata_by_channel):
     for ch in range(channels):
         histo_max[ch] /= num_ims_files
         histo_min[ch] /= num_ims_files
+
+    # Reduce the histo_max to 75% to increase the contrast for better presentation
+    histo_max = [x*0.75 for x in histo_max]
+
     histo_max = [int(x) for x in histo_max]
     histo_min = [int(x) for x in histo_min]
     print(f'HistogrmaMax: {histo_max}')
@@ -342,16 +343,56 @@ def create_color_file(image_extends_list, metadata_by_channel):
 
 
 
-if __name__ == "__main__":
 
-    metadata_by_channel = collect_all_metadata(location, save_json_path=dir_with_ims_files + r'\mesospim_metadata.json')
-    print(metadata_by_channel)
-    grid_x, grid_y = determine_grid_size(metadata_by_channel['488'])
-    print(f'Grid Size 348: {grid_x}x, {grid_y}y')
-    align_bat_file, align_output_file = build_align_input(metadata_by_channel, dir_with_ims_files)
-    #run_bat(align_bat_file)
+app = typer.Typer()
+@app.command()
+def stitch_as_assemble(directory_with_mesospim_metadata: Path, directory_with_ims_files_to_stitch: Path = None,
+                       overlap: float = 0.10, name_of_montage_file: str = 'montage.ims',
+                       skip_align: bool = False, skip_resample: bool = False, build_scripts_only: bool = False):
+    '''
+    Align and assemble MesoSPIM data
+    directory_with_ims_files_to_stitch: should be provided otherwise it will default to the relative path /ims_files
+    '''
+
+    directory_with_mesospim_metadata = ensure_path(directory_with_mesospim_metadata)
+    if directory_with_ims_files_to_stitch:
+        directory_with_ims_files_to_stitch = ensure_path(directory_with_ims_files_to_stitch)
+    else:
+        directory_with_mesospim_metadata = directory_with_mesospim_metadata.parent / 'ims_files'
+
+    # Collect all metadata from MesoSPIM acquisition directory and save to mesospim_metadata.json in the ims file dir
+    metadata_by_channel = collect_all_metadata(directory_with_mesospim_metadata, save_json_path=dir_with_ims_files + r'\mesospim_metadata.json')
+
+    # Build files for calculating the alignment
+    align_bat_file, align_output_file = build_align_input(metadata_by_channel, directory_with_ims_files_to_stitch)
+
+    # Run alignment
+    if not skip_align or not build_scripts_only:
+        run_bat(align_bat_file)
+
+    # Build files for resample
     image_extends_list, pairwise_alignment_list = parse_align_output(align_output_file)
-    moving_tiles, file_name = get_moving_tile(pairwise_alignment_list, 5, return_highest_correlation=False, get_average_translation=True)
-    resample_bat_file = build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel, grid_x=grid_x, grid_y=grid_y, overlap=0.10, montage_name='TEST_OUT2.ims')
-    run_bat(resample_bat_file)
+    grid_x, grid_y = determine_grid_size(metadata_by_channel)
+    resample_bat_file = build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel,
+                                             grid_x=grid_x, grid_y=grid_y, overlap=overlap,
+                                             montage_name=name_of_montage_file)
+
+    # Run resample to build montage
+    if not skip_resample or not build_scripts_only:
+        run_bat(resample_bat_file)
+
+
+
+if __name__ == "__main__":
+    app()
+    # metadata_by_channel = collect_all_metadata(location, save_json_path=dir_with_ims_files + r'\mesospim_metadata.json')
+    # print(metadata_by_channel)
+    # grid_x, grid_y = determine_grid_size(metadata_by_channel)
+    # print(f'Grid Size 348: {grid_x}x, {grid_y}y')
+    # align_bat_file, align_output_file = build_align_input(metadata_by_channel, dir_with_ims_files)
+    # run_bat(align_bat_file)
+    # image_extends_list, pairwise_alignment_list = parse_align_output(align_output_file)
+    # moving_tiles, file_name = get_moving_tile(pairwise_alignment_list, 5, return_highest_correlation=False, get_average_translation=True)
+    # resample_bat_file = build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel, grid_x=grid_x, grid_y=grid_y, overlap=0.10, montage_name='TEST_OUT2.ims')
+    # run_bat(resample_bat_file)
 
