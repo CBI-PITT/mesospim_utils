@@ -3,6 +3,7 @@ from pathlib import Path
 import json
 import os
 import psutil
+from collections import namedtuple
 
 from constants import EMISSION_TO_RGB
 
@@ -14,17 +15,20 @@ def map_wavelength_to_RGB(wavelength):
     Ranges are color maps are defined in the EMISSION_TO_RGB object
     '''
 
+    RGB = namedtuple('RGB', ['R', 'G', 'B'])
+    default = RGB(R=0.5, G=0.5, B=0.5)
+
     if wavelength is None:
         # Default to white
-        return (0.5, 0.5, 0.5)
+        return default
 
     for key, item in EMISSION_TO_RGB.items():
         low, high = [int(x) for x in key.split('-')]
         if wavelength >= low and wavelength < high:
-            return item
+            return RGB(*item)
 
     # Default to white
-    return (0.5, 0.5, 0.5)
+    return default
 
 def sort_list_of_paths_by_tile_number(list_of_paths, pattern=r"_Tile(\d+)_"):
     files = [str(x) for x in list_of_paths]
@@ -69,7 +73,7 @@ def convert_paths(obj):
         return {k: convert_paths(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [convert_paths(v) for v in obj]
-    elif isinstance(obj, str) and ("/" in obj or "\\" in obj):  # Heuristic check for paths
+    elif isinstance(obj, str) and (':' in obj) and ("/" in obj or "\\" in obj):  # Heuristic check for paths
         return Path(obj)
     return obj
 

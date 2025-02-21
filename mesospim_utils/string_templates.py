@@ -14,7 +14,7 @@ echo Working directory set to: %CD%
  -e "{'{}'}"^
  -o "{'{}'}"^
  -s 4.243^
- -c 0^
+ -c {'{}'}^
  -b true^
  --jobs 64^
  --memlimit 262064'''
