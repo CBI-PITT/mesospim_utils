@@ -16,7 +16,8 @@ dir_with_ims_files = r"Z:\tmp\mesospim\kidney\decon\ims_files"
 
 # Std lib imports
 from pathlib import Path
-from pprint import pprint as print
+#from pprint import pprint as print
+from datetime import datetime
 import subprocess
 import xml.etree.ElementTree as ET
 
@@ -29,7 +30,6 @@ from metadata2 import collect_all_metadata
 from utils import sort_list_of_paths_by_tile_number
 from utils import map_wavelength_to_RGB
 from utils import get_num_processors
-from utils import get_ram_mb
 from utils import ensure_path
 from string_templates import WIN_ALIGN_BAT, WIN_RESAMPLE_BAT, COLOR_RECORD_TEMPLATE
 
@@ -396,7 +396,7 @@ def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_b
     output_resample_file = output_folder / montage_name
 
     color_file = create_color_file(image_extends_list, metadata_by_channel)
-    resample_bat = WIN_RESAMPLE_BAT.format(resample_input_file_name, output_resample_file, color_file, get_num_processors(), get_ram_mb()//2)
+    resample_bat = WIN_RESAMPLE_BAT.format(resample_input_file_name, output_resample_file, color_file, get_num_processors())
     with open(resample_bat_file, 'w') as f:
         f.write(resample_bat)
 
@@ -477,7 +477,7 @@ def get_grid_size_from_metadata_by_channel(metadata_by_channel):
 
 app = typer.Typer()
 @app.command()
-def stitch_as_assemble(directory_with_mesospim_metadata: Path, directory_with_ims_files_to_stitch: Path = None,
+def stitch_and_assemble(directory_with_mesospim_metadata: Path, directory_with_ims_files_to_stitch: Path = None,
                        name_of_montage_file: str = 'montage.ims',
                        skip_align: bool = False, skip_resample: bool = False, build_scripts_only: bool = False):
     '''
@@ -515,27 +515,150 @@ def stitch_as_assemble(directory_with_mesospim_metadata: Path, directory_with_im
 
 
 
+
+from constants import SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED as listen_path
+from time import sleep
+
+from string_templates import WIN_ALIGN_BAT, WIN_RESAMPLE_BAT, COLOR_RECORD_TEMPLATE
+from constants import CORRELATION_THRESHOLD_FOR_ALIGNMENT
+
+auto_stitch_json_message = {
+    'directory_with_mesospim_metadata': None,
+    'directory_with_ims_files_to_stitch': None,
+    'name_of_montage_file': None,
+    'skip_align': False,
+    'skip_resample': False,
+    'build_scripts_only': False,
+    'job_info': {
+        'number': None,
+        'started': None,
+        'ended': None,
+        'errored': None,
+        'error_message': None,
+        'traceback': None,
+    }
+}
+
+auto_stitch_json_message = {
+    'directory_with_mesospim_metadata': Path(r'Z:\tmp\mesospim\kidney'),
+    'directory_with_ims_files_to_stitch': Path(r'Z:\tmp\mesospim\kidney\decon\ims_files'),
+    'name_of_montage_file': None,
+    'skip_align': False,
+    'skip_resample': False,
+    'build_scripts_only': False,
+    'job_info': {
+        'number': None,
+        'started': None,
+        'ended': None,
+        'errored': None,
+        'error_message': None,
+        'traceback': None,
+    }
+}
+from utils import dict_to_json_file, json_file_to_dict
+import traceback
+@app.command()
+def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_between_checks: int=30,
+               running_path='running', complete_path='complete', error_path='error'):
+    '''
+    A program that runs in windows with ImarisStitcher installed and looks for jobs files to run stitching
+    '''
+
+    dict_to_json_file(auto_stitch_json_message, listen_path / 'test.json')
+
+    running_path = listen_path / running_path
+    complete_path = listen_path / complete_path
+    error_path = listen_path / error_path
+
+    # Create the subdirectories if they don't exist
+    running_path.mkdir(parents=True, exist_ok=True)
+    complete_path.mkdir(parents=True, exist_ok=True)
+    error_path.mkdir(parents=True, exist_ok=True)
+
+    while True:
+        print(listen_path)
+        list_of_job_files = list(listen_path.glob('*.json'))
+        if len(list_of_job_files) == 0:
+            print(f'No jobs found')
+        else:
+            print(list_of_job_files)
+            current_location_of_message = list_of_job_files[0]
+            message = json_file_to_dict(current_location_of_message)
+            print(f'Running the following stitch job: {message}')
+
+            # Make names of files
+            running_location = running_path / current_location_of_message.name
+            data_dir_file_name = message['directory_with_ims_files_to_stitch'] / current_location_of_message.name
+            err_location = error_path / current_location_of_message.name
+            complete_location = complete_path / current_location_of_message.name
+
+            # Copy json to 'running' folder
+            current_location_of_message.rename(running_location)
+            current_location_of_message = running_location
+
+            # Add start time stamp and rewrite to disk
+            message['job_info']['started'] = datetime.now()
+            dict_to_json_file(message, current_location_of_message)
+            dict_to_json_file(message, data_dir_file_name)
+
+            error=False
+            try:
+                # Prepare parameters to be passed to alignment program
+                to_run = message.copy()
+                del to_run['job_info']
+
+                ## RUN
+                stitch_and_assemble(**to_run)
+                # sleep(5)
+                #float('abc')
+                # float('123')
+
+                # Fill in processing details
+                message['job_info']['ended'] = datetime.now()
+                message['job_info']['errored'] = False
+            except Exception as e:
+                message['job_info']['errored'] = datetime.now()
+                message['job_info']['error_message'] = str(e)
+                message['job_info']['traceback'] = traceback.format_exc()
+                error = True
+
+            # Save to disk in completed directory and in directory_with_ims_files_to_stitch
+            dict_to_json_file(message, current_location_of_message)
+            dict_to_json_file(message,  data_dir_file_name)
+
+            if error:
+                current_location_of_message.rename(err_location)
+            else:
+                current_location_of_message.rename(complete_location)
+
+        print(f'Waiting {seconds_between_checks} seconds before checking again')
+        sleep(seconds_between_checks)
+
+
+
+
+
 if __name__ == "__main__":
-    #app()
-
-    locations = [
-        r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\021225',
-        r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\020725',
-        r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\020625',
-
-    ]
-
-    ims_locations = [
-        r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\021225\ims_files',
-        r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\020725\ims_files',
-        r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\020625\ims_files',
-        
-    ]
-
-    name_of_montage_file = 'montage_auto_2_channel.ims'
-
-    for l,i in zip(locations, ims_locations):
-        stitch_as_assemble(l, i, name_of_montage_file=name_of_montage_file)
+    app()
+    #
+    # locations = [
+    #     r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\021225',
+    #     r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\020725',
+    #     r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\020625',
+    #
+    # ]
+    #
+    # ims_locations = [
+    #     r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\021225\ims_files',
+    #     r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\020725\ims_files',
+    #     r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\020625\ims_files',
+    #
+    # ]
+    #
+    # name_of_montage_file = 'montage_auto_2_channel.ims'
+    #
+    # for l,i in zip(locations, ims_locations):
+    #     stitch_as_assemble(l, i, name_of_montage_file=name_of_montage_file)
 
 
     # metadata_by_channel = collect_all_metadata(location, save_json_path=dir_with_ims_files + r'\mesospim_metadata.json')

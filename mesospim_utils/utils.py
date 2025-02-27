@@ -4,6 +4,7 @@ import json
 import os
 import psutil
 from collections import namedtuple
+from datetime import datetime
 
 from constants import EMISSION_TO_RGB
 
@@ -43,7 +44,9 @@ def dict_to_json_file(my_dict:dict, file_name:Path):
     class PathEncoder(json.JSONEncoder):
         def default(self, obj):
             if isinstance(obj, Path):
-                return str(obj).as_posix()
+                return obj.as_posix()
+            if isinstance(obj, datetime):
+                return obj.isoformat()  # Or use str(obj) or a custom format with obj.strftime(...)
             return super().default(obj)
 
     if not isinstance(file_name, Path):
@@ -60,10 +63,14 @@ def json_file_to_dict(file_name:Path):
     # Read JSON file
     with open(file_name, "r") as json_file:
         data = json.load(json_file)
-    data = convert_paths(data)
-    data = convert_str_to_nums(data)
+    # data = convert_paths(data)
+    # data = convert_str_to_nums(data)
+    data = recursive_convert_to_useable_objects(data)
     return data
 
+############################################################################
+###### Recursive functions to convert strings to useful objects ############
+############################################################################
 
 def convert_paths(obj):
     '''
@@ -77,17 +84,19 @@ def convert_paths(obj):
         return Path(obj)
     return obj
 
-
-def convert_paths_to_posix(obj):
+def convert_datetimes(obj):
     '''
     Function to recursively convert Path objects to posix path strings in a nested dictionary
     '''
     if isinstance(obj, dict):
-        return {k: convert_paths_to_posix(v) for k, v in obj.items()}
+        return {k: convert_datetimes(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [convert_paths_to_posix(v) for v in obj]
-    elif isinstance(obj, Path):  # Heuristic check for paths
-        return obj.as_posix()
+        return [convert_datetimes(v) for v in obj]
+    elif isinstance(obj, str):
+        try:
+            return datetime.fromisoformat(obj)
+        except ValueError:
+            pass
     return obj
 
 def convert_str_to_nums(obj):
@@ -108,6 +117,33 @@ def convert_str_to_nums(obj):
                 pass
     return obj
 
+def recursive_convert_to_useable_objects(obj):
+    '''
+    Function to recursively convert json strings to relevant objects
+    i.e. int, float, Path, datetime
+
+    It is inefficient at is serially calls separate recursive operations, but it works
+    '''
+    obj = convert_paths(obj)
+    obj = convert_datetimes(obj)
+    obj = convert_str_to_nums(obj)
+    return obj
+
+
+
+
+def convert_paths_to_posix(obj):
+    '''
+    Function to recursively convert Path objects to posix path strings in a nested dictionary
+    Mostly used when
+    '''
+    if isinstance(obj, dict):
+        return {k: convert_paths_to_posix(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_paths_to_posix(v) for v in obj]
+    elif isinstance(obj, Path):  # Heuristic check for paths
+        return obj.as_posix()
+    return obj
 
 def get_num_processors():
     '''

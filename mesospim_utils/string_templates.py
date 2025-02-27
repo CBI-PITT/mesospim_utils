@@ -1,4 +1,10 @@
-PATH_TO_IMARIS_STITCHER_FOLDER = r"C:\Program Files\Bitplane\ImarisStitcher 10.2.0"
+
+from constants import PATH_TO_IMARIS_STITCHER_FOLDER
+
+from constants import PERCENT_OF_RAM_FOR_PROCESSING
+from utils import get_ram_mb
+
+memlimit_for_processing = int(get_ram_mb() * PERCENT_OF_RAM_FOR_PROCESSING)
 
 WIN_ALIGN_BAT = f'''@echo off
 set "PATH={PATH_TO_IMARIS_STITCHER_FOLDER};%PATH%"
@@ -17,7 +23,7 @@ echo Working directory set to: %CD%
  -c {'{}'}^
  -b true^
  --jobs 64^
- --memlimit 262064'''
+ --memlimit {memlimit_for_processing}'''
 
 WIN_RESAMPLE_BAT = f'''@echo off
 set "PATH={PATH_TO_IMARIS_STITCHER_FOLDER};%PATH%"
@@ -35,7 +41,7 @@ echo Working directory set to: %CD%
  --fuseRule weighted-mean^
  --color "{'{}'}"^
  --jobs {'{}'}^
- --memlimit {'{}'}^
+ --memlimit {memlimit_for_processing}^
  --compression eCompressionAlgorithmGzipLevel2'''
 
 # WIN_ALIGN_BAT = '''@echo off
@@ -83,3 +89,4 @@ COLOR_RECORD_TEMPLATE = '''<Channel ChannelIndex="Channel {}" Selection="true" R
 <Color Red="{}" Green="{}" Blue="{}"/>
 </BaseColor>
 </Channel>'''
+
