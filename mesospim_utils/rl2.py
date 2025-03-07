@@ -156,7 +156,7 @@ def ims_dir(dir_loc: str, file_type: str = '.tif', res: tuple[float, float, floa
 def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
               queue_ims: bool=False, denoise_sigma: float=None, sharpen: bool=False,
               half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=100,
-              num_parallel: int=8
+              num_parallel: int=8, run_slurm=True
               ):
     '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
     import subprocess
@@ -228,10 +228,14 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     with open(file_to_run, 'w') as f:
         f.write(commands)
 
-    output = subprocess.run(f'sbatch {file_to_run}', shell=True, capture_output=True)
-    prefix_len = len(b'Submitted batch job ')
-    job_number = int(output.stdout[prefix_len:-1])
-    print(f'SBATCH Job #: {job_number}')
+    if run_slurm:
+        output = subprocess.run(f'sbatch {file_to_run}', shell=True, capture_output=True)
+        prefix_len = len(b'Submitted batch job ')
+        job_number = int(output.stdout[prefix_len:-1])
+        print(f'SBATCH Job #: {job_number}')
+    else:
+        # Return the name of the sbatch script that was created.
+        return file_to_run
 
 
 def get_rl_model(psf, iterations=20, sigma=None):

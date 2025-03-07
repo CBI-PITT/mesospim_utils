@@ -20,6 +20,8 @@ from pathlib import Path
 from datetime import datetime
 import subprocess
 import xml.etree.ElementTree as ET
+import traceback
+from time import sleep
 
 # external package imports
 from imaris_ims_file_reader.ims import ims
@@ -31,75 +33,12 @@ from utils import sort_list_of_paths_by_tile_number
 from utils import map_wavelength_to_RGB
 from utils import get_num_processors
 from utils import ensure_path
+from utils import dict_to_json_file, json_file_to_dict
 from string_templates import WIN_ALIGN_BAT, WIN_RESAMPLE_BAT, COLOR_RECORD_TEMPLATE
 
 from constants import CORRELATION_THRESHOLD_FOR_ALIGNMENT
+from constants import SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED as listen_path
 
-def annotate_metadata(metadata_by_channel):
-
-    #Grid Size
-    x,y = determine_grid_size(metadata_by_channel)
-    for color in metadata_by_channel:
-        color['grid_size'] = (x,y)
-
-# def build_align_input(metadata_by_channel: dict, dir_with_ims_files: Path, overlap=0.10):
-#     if not isinstance(dir_with_ims_files, Path):
-#         dir_with_ims_files = Path(dir_with_ims_files)
-#
-#     assert dir_with_ims_files.is_dir(), 'Path is not a directory'
-#     ims_files = list(dir_with_ims_files.glob('*Tile*.ims'))
-#     assert len(ims_files) >= 1, 'There are no Imaris files in this path'
-#
-#     ims_files = sort_list_of_paths_by_tile_number(ims_files)
-#     print(ims_files)
-#
-#     first_channel = list(metadata_by_channel.keys())[0]
-#     sample_tile = metadata_by_channel[first_channel][0]
-#
-#     resolution = sample_tile['tile_size_um']
-#     # x_pixels = sample_tile['CAMERA PARAMETERS']['x_pixels'] * sample_tile['POSITION']['x_res']
-#     # y_pixels = sample_tile['CAMERA PARAMETERS']['y_pixels'] * sample_tile['POSITION']['y_res']
-#     # z_pixels = sample_tile['POSITION']['z_planes'] * sample_tile['POSITION']['z_res']
-#
-#     grid_x, grid_y = sample_tile['grid_size']
-#
-#     # print(f'Tile Size: {resolution.x}x, {resolution.y}y, {resolution.z}z')
-#     # print(f'Grid Size: {grid_x}x, {grid_y}y')
-#
-#     ## Build input file for alignment:
-#     input = f'<ImageList>\n'
-#
-#     MinX = 0.0
-#     MinZ = 0.0
-#     MaxX = float(resolution.x)
-#     MaxZ = float(resolution.z)
-#     file_idx = 0
-#     for x in range(grid_x):
-#         MinY = 0.0
-#         MaxY = float(resolution.y)
-#         for y in range(grid_y):
-#             new = f'<Image MinX="{MinX:.6f}" MinY="{MinY:.6f}" MinZ="{MinZ:.6f}" MaxX="{MaxX:.6f}" MaxY="{MaxY:.6f}" MaxZ="{MaxZ:.6f}">{ims_files[file_idx]}</Image>\n'
-#             MinY = MinY + (resolution.y * (1-overlap))
-#             MaxY = MinY + resolution.y
-#             input = input + new
-#             file_idx += 1
-#         MinX = MinX + (resolution.x * (1-overlap))
-#         MaxX = MinX + resolution.x
-#     input = input + '</ImageList>'
-#
-#     print(input)
-#
-#     align_input_file = dir_with_ims_files / 'align_input.xml'
-#     align_output_file = dir_with_ims_files / 'align_output.xml'
-#     align_bat_file = dir_with_ims_files / 'align.bat'
-#     with open(align_input_file,'w') as f:
-#         f.write(input)
-#
-#     align_bat = WIN_ALIGN_BAT.format(align_input_file,align_output_file)
-#     with open(align_bat_file, 'w') as f:
-#         f.write(align_bat)
-#
-#     return align_bat_file, align_output_file
 
 
 def build_align_inputs(metadata_by_channel: dict, dir_with_ims_files: Path, overlap=0.10):
@@ -211,62 +150,6 @@ def parse_align_outputs(align_output_file_list):
         pairwise_alignment_list_final.append(pairwise_alignment_list)
 
     return image_extends_list_final, pairwise_alignment_list_final
-
-# def get_moving_tile(pairwise_alignment_list, tile_num, return_highest_correlation=False, get_average_translation=True):
-#     moving_tiles = []
-#
-#     for entry in pairwise_alignment_list:
-#         tile_name = f'Tile{int(tile_num)}_'
-#         if tile_name in entry.get('ImageB'):
-#             moving_tiles.append(entry)
-#     print(moving_tiles)
-#
-#     # Short circuit, if no matching tiles for ImageB, Extract ImageA name to return file_name
-#     if len(moving_tiles) == 0:
-#         print("No Alignments for this Tile")
-#         moving_tiles = []
-#         for entry in pairwise_alignment_list:
-#             tile_name = f'Tile{int(tile_num)}_'
-#             if tile_name in entry.get('ImageA'):
-#                 moving_tiles.append(entry)
-#         print(moving_tiles[0].get('ImageA'))
-#         return None, moving_tiles[0].get('ImageA')
-#
-#
-#     if return_highest_correlation and not get_average_translation:
-#         highest_index = 0
-#         for idx, tile in enumerate(moving_tiles):
-#             if tile.get('Correlation') > moving_tiles[highest_index].get('Correlation'):
-#                 highest_index = idx
-#         moving_tiles = [moving_tiles[highest_index]]
-#         #print(moving_tiles)
-#
-#     # Build a weighted average translation based on correlation
-#     if get_average_translation:
-#         num_aligns = len(moving_tiles)
-#         sum_correlation = sum([x.get('Correlation') for x in moving_tiles])
-#         avg_coorelation = sum([x.get('Correlation')*(x.get('Correlation')/sum_correlation) for x in moving_tiles])
-#         print(f'Sum: {sum_correlation}, avg: {avg_coorelation}')
-#
-#         x, y, z = 0,0,0
-#         for data in moving_tiles:
-#             translation = data.get('Translation')
-#             x += translation.get('x') * (data.get('Correlation') / sum_correlation)
-#             y += translation.get('y') * (data.get('Correlation') / sum_correlation)
-#             z += translation.get('z') * (data.get('Correlation') / sum_correlation)
-#
-#         alignment_data = {
-#             "Correlation": avg_coorelation,
-#             "AverageAlign": True,
-#             "ImageB": data["ImageB"],
-#             "ImageA": [x["ImageA"] for x in moving_tiles],
-#             "Translation": {'x': x, 'y': y, 'z': z},
-#         }
-#         print(alignment_data)
-#         moving_tiles = alignment_data
-#
-#     return moving_tiles, moving_tiles.get('ImageB')
-
 
 
 def get_moving_tile(pairwise_alignment_list, tile_num, return_highest_correlation=False, get_average_translation=True):
@@ -514,14 +397,6 @@ def stitch_and_assemble(directory_with_mesospim_metadata: Path, directory_with_i
         run_bat(resample_bat_file)
 
 
-
-
-from constants import SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED as listen_path
-from time import sleep
-
-from string_templates import WIN_ALIGN_BAT, WIN_RESAMPLE_BAT, COLOR_RECORD_TEMPLATE
-from constants import CORRELATION_THRESHOLD_FOR_ALIGNMENT
-
 auto_stitch_json_message = {
     'directory_with_mesospim_metadata': None,
     'directory_with_ims_files_to_stitch': None,
@@ -539,31 +414,45 @@ auto_stitch_json_message = {
     }
 }
 
-auto_stitch_json_message = {
-    'directory_with_mesospim_metadata': Path(r'Z:\tmp\mesospim\kidney'),
-    'directory_with_ims_files_to_stitch': Path(r'Z:\tmp\mesospim\kidney\decon\ims_files'),
-    'name_of_montage_file': None,
-    'skip_align': False,
-    'skip_resample': False,
-    'build_scripts_only': False,
-    'job_info': {
-        'number': None,
-        'started': None,
-        'ended': None,
-        'errored': None,
-        'error_message': None,
-        'traceback': None,
-    }
-}
-from utils import dict_to_json_file, json_file_to_dict
-import traceback
+# auto_stitch_json_message = {
+#     'directory_with_mesospim_metadata': Path(r'Z:\tmp\mesospim\kidney'),
+#     'directory_with_ims_files_to_stitch': Path(r'Z:\tmp\mesospim\kidney\decon\ims_files'),
+#     'name_of_montage_file': 'TEST_AUTO_MONTAGE.ims',
+#     'skip_align': False,
+#     'skip_resample': False,
+#     'build_scripts_only': False,
+#     'job_info': {
+#         'number': None,
+#         'started': None,
+#         'ended': None,
+#         'errored': None,
+#         'error_message': None,
+#         'traceback': None,
+#     }
+# }
+@app.command()
+def write_auto_stitch_message(metadata_location: Path, ims_files_location: Path, job_number: int, name_of_montage_file: str='auto_test_montage.ims',
+                              skip_align: bool=False, skip_resample: bool=False, build_scripts_only: bool=False):
+
+    message = auto_stitch_json_message
+    message['directory_with_mesospim_metadata'] = metadata_location
+    message['directory_with_ims_files_to_stitch'] = ims_files_location
+    message['name_of_montage_file'] = name_of_montage_file
+    message['skip_align'] = skip_align
+    message['skip_resample'] = skip_resample
+    message['build_scripts_only'] = build_scripts_only
+    message['job_info']['number'] = job_number
+    dict_to_json_file(message, Path(listen_path) / f'{job_number}.json')
+
+
 @app.command()
 def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_between_checks: int=30,
-               running_path='running', complete_path='complete', error_path='error'):
+               running_path: str='running', complete_path: str='complete', error_path: str='error'):
     '''
     A program that runs in windows with ImarisStitcher installed and looks for jobs files to run stitching
     '''
 
+    ## For testing - write a message to disk at start.
     dict_to_json_file(auto_stitch_json_message, listen_path / 'test.json')
 
     running_path = listen_path / running_path
@@ -571,38 +460,42 @@ def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_betwee
     error_path = listen_path / error_path
 
     # Create the subdirectories if they don't exist
+    error_path.mkdir(parents=True, exist_ok=True)
     running_path.mkdir(parents=True, exist_ok=True)
     complete_path.mkdir(parents=True, exist_ok=True)
-    error_path.mkdir(parents=True, exist_ok=True)
+
 
     while True:
         print(listen_path)
         list_of_job_files = list(listen_path.glob('*.json'))
+
         if len(list_of_job_files) == 0:
             print(f'No jobs found')
+
         else:
-            print(list_of_job_files)
-            current_location_of_message = list_of_job_files[0]
-            message = json_file_to_dict(current_location_of_message)
-            print(f'Running the following stitch job: {message}')
-
-            # Make names of files
-            running_location = running_path / current_location_of_message.name
-            data_dir_file_name = message['directory_with_ims_files_to_stitch'] / current_location_of_message.name
-            err_location = error_path / current_location_of_message.name
-            complete_location = complete_path / current_location_of_message.name
-
-            # Copy json to 'running' folder
-            current_location_of_message.rename(running_location)
-            current_location_of_message = running_location
-
-            # Add start time stamp and rewrite to disk
-            message['job_info']['started'] = datetime.now()
-            dict_to_json_file(message, current_location_of_message)
-            dict_to_json_file(message, data_dir_file_name)
-
-            error=False
             try:
+                error = False
+                print(list_of_job_files)
+                current_location_of_message = list_of_job_files[0]
+                message = json_file_to_dict(current_location_of_message)
+                print(f'Running the following stitch job: {message}')
+
+                # Make names of files
+                err_location = error_path / current_location_of_message.name
+                running_location = running_path / current_location_of_message.name
+                complete_location = complete_path / current_location_of_message.name
+                data_dir_file_name = message['directory_with_ims_files_to_stitch'] / current_location_of_message.name
+
+
+                # Copy json to 'running' folder
+                current_location_of_message.replace(running_location)
+                current_location_of_message = running_location
+
+                # Add start time stamp and rewrite to disk
+                message['job_info']['started'] = datetime.now()
+                dict_to_json_file(message, current_location_of_message)
+                dict_to_json_file(message, data_dir_file_name)
+
                 # Prepare parameters to be passed to alignment program
                 to_run = message.copy()
                 del to_run['job_info']
@@ -616,20 +509,26 @@ def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_betwee
                 # Fill in processing details
                 message['job_info']['ended'] = datetime.now()
                 message['job_info']['errored'] = False
+
             except Exception as e:
+                error = True
                 message['job_info']['errored'] = datetime.now()
                 message['job_info']['error_message'] = str(e)
                 message['job_info']['traceback'] = traceback.format_exc()
-                error = True
+                print(traceback.format_exc())
 
             # Save to disk in completed directory and in directory_with_ims_files_to_stitch
             dict_to_json_file(message, current_location_of_message)
-            dict_to_json_file(message,  data_dir_file_name)
+
+            try:
+                dict_to_json_file(message, data_dir_file_name)
+            except:
+                pass
 
             if error:
-                current_location_of_message.rename(err_location)
+                current_location_of_message.replace(err_location)
             else:
-                current_location_of_message.rename(complete_location)
+                current_location_of_message.replace(complete_location)
 
         print(f'Waiting {seconds_between_checks} seconds before checking again')
         sleep(seconds_between_checks)

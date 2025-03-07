@@ -1,14 +1,15 @@
 
 
-## Change this path for any specific
+## Change this path for any specific installation of ImarisStitcher
 PATH_TO_IMARIS_STITCHER_FOLDER = r"C:\Program Files\Bitplane\ImarisStitcher 10.2.0"
+
 SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = r"Z:\tmp\stitch_jobs"
 
 METADATA_FILENAME = 'mesospim_metadata.json'
 
-CORRELATION_THRESHOLD_FOR_ALIGNMENT = 0.5
+CORRELATION_THRESHOLD_FOR_ALIGNMENT = 0.85
 
-PERCENT_OF_RAM_FOR_PROCESSING = 0.5
+FRACTION_OF_RAM_FOR_PROCESSING = 0.5
 
 EMISSION_MAP = {
     #Mapping common names to emission wavelengths, only used if wavelength is not explicitly stated in metadata file
