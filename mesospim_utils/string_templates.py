@@ -42,7 +42,7 @@ echo Working directory set to: %CD%
  --color "{'{}'}"^
  --jobs {'{}'}^
  --memlimit {memlimit_for_processing}^
- --compression eCompressionAlgorithmGzipLevel2'''
+ --compression eCompressionAlgorithmGzipLevel6'''
 
 
 COLOR_RECORD_TEMPLATE = '''<Channel ChannelIndex="Channel {}" Selection="true" RangeMax="{}" RangeMin="{}" GammaCorrection="1" Opacity="1" ColorMode="BaseColor" RangeMinB="3.40282e+38" RangeMaxB="3.40282e+38">

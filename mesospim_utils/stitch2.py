@@ -107,7 +107,8 @@ def build_align_inputs(metadata_by_channel: dict, dir_with_ims_files: Path, over
     return align_bat_file_list, align_output_file_list
 
 def run_bat(bat_file):
-    subprocess.run([bat_file], shell=True, check=True)
+    IDLE_PRIORITY_CLASS = subprocess.IDLE_PRIORITY_CLASS # 0x00000040
+    subprocess.run([bat_file], shell=True, check=True, creationflags=IDLE_PRIORITY_CLASS)
     return True
 
 
@@ -453,7 +454,7 @@ def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_betwee
     '''
 
     ## For testing - write a message to disk at start.
-    dict_to_json_file(auto_stitch_json_message, listen_path / 'test.json')
+    # dict_to_json_file(auto_stitch_json_message, listen_path / 'test.json')
 
     running_path = listen_path / running_path
     complete_path = listen_path / complete_path
