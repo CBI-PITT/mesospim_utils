@@ -2,6 +2,7 @@
 from constants import PATH_TO_IMARIS_STITCHER_FOLDER
 
 from constants import FRACTION_OF_RAM_FOR_PROCESSING
+from constants import IMS_CONVERTER_COMPRESSION_LEVEL
 from utils import get_ram_mb
 
 memlimit_for_processing = int(get_ram_mb() * FRACTION_OF_RAM_FOR_PROCESSING)
@@ -42,7 +43,7 @@ echo Working directory set to: %CD%
  --color "{'{}'}"^
  --jobs {'{}'}^
  --memlimit {memlimit_for_processing}^
- --compression eCompressionAlgorithmGzipLevel6'''
+ --compression eCompressionAlgorithmGzipLevel{IMS_CONVERTER_COMPRESSION_LEVEL}'''
 
 
 COLOR_RECORD_TEMPLATE = '''<Channel ChannelIndex="Channel {}" Selection="true" RangeMax="{}" RangeMin="{}" GammaCorrection="1" Opacity="1" ColorMode="BaseColor" RangeMinB="3.40282e+38" RangeMaxB="3.40282e+38">

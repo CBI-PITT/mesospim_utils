@@ -164,3 +164,14 @@ def ensure_path(file_name: Path):
     if not isinstance(file_name, Path):
         return Path(file_name)
     return file_name
+
+def path_to_wine_mappings(path: Path) -> Path:
+    '''Convert a linux path to wine (windows) paths using MAPPINGS defined at top of script'''
+    from constants import WINE_MAPPINGS
+    if isinstance(path, Path):
+        path = path.as_posix()
+    for key in WINE_MAPPINGS:
+        path = path.replace(key,WINE_MAPPINGS[key])
+    path = path.replace('/','\\')
+    print(path)
+    return Path(path)
