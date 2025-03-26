@@ -7,6 +7,7 @@ ENV_PYTHON_LOC = '/h20/home/lab/miniconda3/envs/mesospim_dev/bin/python'
 ####  DECON rl.py constants ###
 #######################################################################################################################
 
+DECON_SCRIPT = '/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl3.py'
 DECON_SLURM_PARTITION = 'gpu' #multiple partitions can be specified with comma separation part1,par2
 DECON_SLURM_CPUS = None  # Number of CPUs (int), None=SLURM partition Default
 DECON_SLURM_JOB_LABEL = 'decon'
@@ -14,6 +15,7 @@ DECON_SLURM_RAM_MB = None # Value in gigabytes, None will be SLURM partition def
 DECON_GRES = 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1" or None
 DECON_PARALLEL_JOBS = 16 # Number of jobs that will run in parallel, only applicable to array submissions
 
+DECON_DEFAULT_OUTPUT_DIR = 'decon'
 SLURM_PARAMETERS_DECON = {
     'PARTITION': 'gpu', #multiple partitions can be specified with comma separation part1,par2
     'CPUS': None,
@@ -21,6 +23,7 @@ SLURM_PARAMETERS_DECON = {
     'RAM_GB': None,
     'GRES': 'gpu:1', # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 16,
+    'NICE': 0,
 }
 
 #######################################################################################################################
@@ -46,12 +49,13 @@ SLURM_GRES = None # Specific exactly as it would be in slurm eg. "gpu:1" or None
 SLURM_PARALLEL_JOBS = 8 # Number of jobs that will run in parallel, only applicable to array submissions
 
 SLURM_PARAMETERS_IMARIS_CONVERTER = {
-    'PARTITION': 'compute,gpu', #multiple partitions can be specified with comma separation part1,par2
+    'PARTITION': 'compute', #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 24,
     'JOB_LABEL': 'ims_test_conv',
     'RAM_GB': 64,
     'GRES': None, # Specific exactly as it would be in slurm eg. "gpu:1" or None
-    'PARALLEL_JOBS': 8,
+    'PARALLEL_JOBS': 50,
+    'NICE': 0,
 }
 
 
@@ -64,6 +68,7 @@ SLURM_PARAMETERS_IMARIS_CONVERTER = {
 PATH_TO_IMARIS_STITCHER_FOLDER = r"C:\Program Files\Bitplane\ImarisStitcher 10.2.0"
 
 SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = r"Z:\tmp\stitch_jobs"
+SHARED_LINUX_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = r"/CBI_FastStore/tmp/stitch_jobs"
 
 METADATA_FILENAME = 'mesospim_metadata.json'
 

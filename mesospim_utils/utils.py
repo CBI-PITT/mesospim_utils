@@ -72,6 +72,7 @@ def json_file_to_dict(file_name:Path):
 ###### Recursive functions to convert strings to useful objects ############
 ############################################################################
 
+## todo: may only work for windows paths
 def convert_paths(obj):
     '''
     Recursively convert path-like strings to Path obj in a nested dictionary

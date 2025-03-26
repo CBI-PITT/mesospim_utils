@@ -22,6 +22,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 import traceback
 from time import sleep
+import os
 
 # external package imports
 from imaris_ims_file_reader.ims import ims
@@ -34,10 +35,16 @@ from utils import map_wavelength_to_RGB
 from utils import get_num_processors
 from utils import ensure_path
 from utils import dict_to_json_file, json_file_to_dict
+from utils import path_to_wine_mappings
 from string_templates import WIN_ALIGN_BAT, WIN_RESAMPLE_BAT, COLOR_RECORD_TEMPLATE
 
 from constants import CORRELATION_THRESHOLD_FOR_ALIGNMENT
-from constants import SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED as listen_path
+from constants import SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED, SHARED_LINUX_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED
+
+if os.name == 'nt':
+    from constants import SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED as listen_path
+elif os.name == 'posix':
+    from constants import SHARED_LINUX_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED as listen_path
 
 
 
@@ -436,8 +443,8 @@ def write_auto_stitch_message(metadata_location: Path, ims_files_location: Path,
                               skip_align: bool=False, skip_resample: bool=False, build_scripts_only: bool=False):
 
     message = auto_stitch_json_message
-    message['directory_with_mesospim_metadata'] = metadata_location
-    message['directory_with_ims_files_to_stitch'] = ims_files_location
+    message['directory_with_mesospim_metadata'] = path_to_wine_mappings(metadata_location) if not os.name == 'nt' else metadata_location
+    message['directory_with_ims_files_to_stitch'] = path_to_wine_mappings(ims_files_location) if not os.name == 'nt' else ims_files_location
     message['name_of_montage_file'] = name_of_montage_file
     message['skip_align'] = skip_align
     message['skip_resample'] = skip_resample

@@ -26,7 +26,14 @@ import skimage
 from skimage import img_as_float32, img_as_uint
 
 from psf import get_psf
-from metadata2 import collect_all_metadata
+from metadata2 import collect_all_metadata, get_ch_entry_for_file_name, get_entry_for_file_name
+
+from constants import ENV_PYTHON_LOC
+from constants import DECON_SCRIPT as LOC_OF_THIS_SCRIPT
+
+
+ims_conv_module_name = Path(LOC_OF_THIS_SCRIPT).parent / 'slurm.py'
+
 
 app = typer.Typer()
 
@@ -66,7 +73,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     for p in file_list:
         commands += '\n\t'
         commands += '"'
-        commands += f'{ENV_PYTHON_LOC} {LOC_OF_THIS_SCRIPT} decon'
+        commands += f'{ENV_PYTHON_LOC} -u {LOC_OF_THIS_SCRIPT} decon'
         commands += f' {p.as_posix()}'
         commands += f' {refractive_index}'
         commands += f' --out-location {out_dir / (p.stem + out_file_type)}'
@@ -84,15 +91,15 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         res = (1,1,1)
         try:
             meta_dir = file_list[0].parent
-            meta_dict = mesospim_meta_data(meta_dir)
-            ch0 = meta_dict.keys()[0]
-            x_res, y_res, z_res  = meta_dict[ch0][0].get('resolution')
+            meta_entry = get_entry_for_file_name(meta_dir, file_list[0].name)
+            x_res, y_res, z_res  = meta_entry.get('resolution')
             res = (z_res,y_res,x_res)
         except:
             pass
 
-        ims_auto_queue = f'\n\t"sbatch -p compute -n 1 --mem 5G --dependency=afterok:$SLURM_JOB_ID -J ims_queue --kill-on-invalid-dep=yes --wrap=\''
-        ims_auto_queue += f'{ENV_PYTHON_LOC} {LOC_OF_THIS_SCRIPT} convert-ims-dir-mesospim-tiles '
+        ims_auto_queue = f'\n\t"sbatch -p compute -n 1 --mem 5G -o {log_dir}/%A.log --dependency=afterok:$SLURM_JOB_ID -J ims_queue --kill-on-invalid-dep=yes --wrap=\''
+        # ims_auto_queue += f'{ENV_PYTHON_LOC} -u {ims_conv_module_name} convert-ims-dir-mesospim-tiles '
+        ims_auto_queue += f'{ENV_PYTHON_LOC} -u {ims_conv_module_name} convert-ims-dir-mesospim-tiles-slurm-array '
         ims_auto_queue += f'{out_dir} '
         ims_auto_queue += f'--file-type {out_file_type} '
         ims_auto_queue += f'--res {res[0]} {res[1]} {res[2]}\'"'
@@ -298,8 +305,10 @@ class mesospim_btf_helper:
         self.zdim = len(self.tif.series)
 
         self.build_lazy_array()
+
     def __getitem__(self, item):
         return self.lazy_array[item].compute()
+
     def build_lazy_array(self):
         print('Building Array')
         delayed_image_reads = [delayed(self.get_z_plane)(x) for x in range(self.zdim)]
@@ -468,13 +477,16 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
 
         # Extract imaging parameter from metadata file if it exists
-        meta_dir = file_list[0].parent
+        meta_dir = file_location.parent
         meta_dict = mesospim_meta_data(meta_dir)
-        ch0 = meta_dict.keys()[0]
-        x_res, y_res, z_res = meta_dict[ch0][0].get('resolution')
+        file_name = file_location.name
+        meta_entry = get_entry_for_file_name(meta_dict,file_name)
+        # ch, file_idx = get_ch_entry_for_file_name(meta_dict,file_location.name)
+        # ch0 = list(meta_dict.keys())[file_idx]
+        x_res, y_res, z_res = meta_entry.get('resolution')
         res = (z_res, y_res, x_res)
 
-        emission_wavelength = meta_dict[ch0].get('emission_wavelength')
+        emission_wavelength = meta_entry.get('emission_wavelength')
 
 
     assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'

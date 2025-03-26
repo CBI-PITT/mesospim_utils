@@ -31,11 +31,11 @@ from metadata2 import collect_all_metadata
 #######################################
 # CHANGE THESE CONSTANTS IF NECESSARY #
 #######################################
-ENV_PYTHON_LOC = '/h20/home/lab/miniconda3/envs/decon/bin/python'
+ENV_PYTHON_LOC = '/h20/home/lab/miniconda3/envs/mesospim_dev/bin/python'
 # Append -u so unbuffered outputs scroll in realtime to slurm out files
 ENV_PYTHON_LOC = f'{ENV_PYTHON_LOC} -u'
 
-LOC_OF_THIS_SCRIPT = '/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl.py'
+LOC_OF_THIS_SCRIPT = '/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl2.py'
 
 WINE_INSTALL_LOC = '/h20/home/lab/src/wine/wine64'
 IMARIS_CONVERTER_LOC = '/h20/home/lab/src/ImarisFileConverter 10.2.0/ImarisConvert.exe'
@@ -575,7 +575,8 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
           emission_wavelength: int=None, na: float=None, ri: float=None,
           start_index: int=None, stop_index: int=None, save_pre_post: bool=False, queue_ims: bool=False,
           denoise_sigma: float=None, sharpen: bool=False, half_precision: bool=False,
-          psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=20, frames_per_chunk: int=75
+          psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=20, frames_per_chunk: int=75,
+          mesospim_metadata_dir: Path=None
           ):
     '''Deconvolution of a file using the richardson-lucy method'''
 
@@ -630,13 +631,19 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
 
         # Extract imaging parameter from metadata file if it exists
-        meta_dir = file_list[0].parent
+        if mesospim_metadata_dir:
+            meta_dir = mesospim_metadata_dir
+        else:
+            meta_dir = file_location.parent
+        # meta_dir = file_list[0].parent
         meta_dict = mesospim_meta_data(meta_dir)
-        ch0 = meta_dict.keys()[0]
-        x_res, y_res, z_res = meta_dict[ch0][0].get('resolution')
+        ch0 = list(meta_dict.keys())[0]
+        ch0_list_dicts = meta_dict[ch0]
+        ch0_first_entry = ch0_list_dicts[0]
+        x_res, y_res, z_res = ch0_first_entry.get('resolution')
         res = (z_res, y_res, x_res)
 
-        emission_wavelength = meta_dict[ch0].get('emission_wavelength')
+        emission_wavelength = ch0_first_entry.get('emission_wavelength')
 
 
     assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'

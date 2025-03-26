@@ -116,6 +116,7 @@ def annotate_metadata(metadata_by_channel):
             entry['resolution'] = determine_xyz_resolution(entry)
             entry['tile_shape'] = determine_tile_shape(entry)
             entry['tile_size_um'] = determine_tile_size_um(entry)
+            entry['file_name'] = entry.get('Metadata for file').name
 
     return metadata_by_channel
 
@@ -292,14 +293,44 @@ def recreate_files_from_meta_dict(meta_list_from_json, output_directory):
         with open(meta_file_name, 'w') as f:
             f.write(file_content[:-1]) # Write contents after stripping the final \n
 
+def get_ch_entry_for_file_name(meta_dict, file_name):
+    '''
+    Given the meta_dict created by fn collect_all_metadata()
+    And the file_name: /{dir1}/{dir2}/.../{file_name}
+
+    return the channel key and index of the specific metadata record
+
+    If the file_name is not found, then return (None,None)
+    '''
+    for ch in meta_dict:
+        for idx,entry in enumerate(meta_dict[ch]):
+            if file_name.lower() == entry.get('file_name').lower():
+                return ch,idx
+    return None, None
+
+def get_entry_for_file_name(meta_dict, file_name):
+    '''
+    Given the meta_dict created by fn collect_all_metadata()
+    And the file_name: /{dir1}/{dir2}/.../{file_name}
+
+    return specific meta_data dict record for the given file_name
+
+    If the file_name is not found, then return (None,None)
+    '''
+    ch, idx = get_ch_entry_for_file_name(meta_dict, file_name)
+    if ch is not None and idx is not None:
+        return meta_dict[ch][idx]
+    return None
 
 if __name__ == "__main__":
 
-    input_directory = r"Z:\tmp\mesospim\meta_test_data"  # Change to the folder where the files are stored
+    input_directory = r"/CBI_FastStore/tmp/mesospim/knee"  # Change to the folder where the files are stored
     output_json = fr"Z:\tmp\mesospim\meta_test_data\{METADATA_FILENAME}"
     output_directory = r"Z:\tmp\mesospim\meta_test_data\recreated_files"
 
-    meta_list = collect_all_metadata(input_directory, prepare=True)
+    from pprint import pprint as print
+    meta_dict = collect_all_metadata(input_directory, prepare=True)
+    print(meta_dict)
     # annotate_metadata(meta_list)
 
     # # Step 1: Save parsed data to JSON
