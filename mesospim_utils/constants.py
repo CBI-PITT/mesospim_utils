@@ -3,6 +3,19 @@ from pathlib import Path
 LOCATION_OF_MESOSPIM_UTILS_INSTALL = '/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils'
 ENV_PYTHON_LOC = '/h20/home/lab/miniconda3/envs/mesospim_dev/bin/python'
 
+# Dependencies are tasks that run a short process that spins off other processes
+# This is used to coordinate between DECON, IMARIS conversion
+SLURM_PARAMETERS_FOR_DEPENDENCIES = {
+    'PARTITION': 'compute,gpu', #multiple partitions can be specified with comma separation part1,par2
+    'CPUS': 1,
+    'JOB_LABEL': 'dependency',
+    'RAM_GB': 4,
+    'GRES': None, # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'PARALLEL_JOBS': 1,
+    'NICE': 0,
+    'TIME_LIMIT': '0-00:02:00', # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+}
+
 #######################################################################################################################
 ####  DECON rl.py constants ###
 #######################################################################################################################
@@ -24,6 +37,7 @@ SLURM_PARAMETERS_DECON = {
     'GRES': 'gpu:1', # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 16,
     'NICE': 0,
+    'TIME_LIMIT': None, # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
 }
 
 #######################################################################################################################
@@ -56,6 +70,7 @@ SLURM_PARAMETERS_IMARIS_CONVERTER = {
     'GRES': None, # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 50,
     'NICE': 0,
+    'TIME_LIMIT': None, # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
 }
 
 
@@ -63,6 +78,11 @@ SLURM_PARAMETERS_IMARIS_CONVERTER = {
 ####  Imaris Stitcher constants ###
 #######################################################################################################################
 
+# Drive mappings for linux directories in wine for ims file conversions
+WINDOWS_MAPPINGS = { #linux_path:windows_mapped_drive_letter:
+'/h20':'i:',
+'/CBI_FastStore':'z:',
+}
 
 ## Change this path for any specific installation of ImarisStitcher
 PATH_TO_IMARIS_STITCHER_FOLDER = r"C:\Program Files\Bitplane\ImarisStitcher 10.2.0"

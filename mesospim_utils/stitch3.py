@@ -35,7 +35,7 @@ from utils import map_wavelength_to_RGB
 from utils import get_num_processors
 from utils import ensure_path
 from utils import dict_to_json_file, json_file_to_dict
-from utils import path_to_wine_mappings
+from utils import path_to_windows_mappings
 from string_templates import WIN_ALIGN_BAT, WIN_RESAMPLE_BAT, COLOR_RECORD_TEMPLATE
 
 from constants import CORRELATION_THRESHOLD_FOR_ALIGNMENT
@@ -66,14 +66,9 @@ def build_align_inputs(metadata_by_channel: dict, dir_with_ims_files: Path, over
         sample_tile = metadata_by_channel[channel_data][0]
 
         resolution = sample_tile['tile_size_um']
-        # x_pixels = sample_tile['CAMERA PARAMETERS']['x_pixels'] * sample_tile['POSITION']['x_res']
-        # y_pixels = sample_tile['CAMERA PARAMETERS']['y_pixels'] * sample_tile['POSITION']['y_res']
-        # z_pixels = sample_tile['POSITION']['z_planes'] * sample_tile['POSITION']['z_res']
 
         grid_x, grid_y = sample_tile['grid_size']
 
-        # print(f'Tile Size: {resolution.x}x, {resolution.y}y, {resolution.z}z')
-        # print(f'Grid Size: {grid_x}x, {grid_y}y')
 
         ## Build input file for alignment:
         input = f'<ImageList>\n'
@@ -422,29 +417,13 @@ auto_stitch_json_message = {
     }
 }
 
-# auto_stitch_json_message = {
-#     'directory_with_mesospim_metadata': Path(r'Z:\tmp\mesospim\kidney'),
-#     'directory_with_ims_files_to_stitch': Path(r'Z:\tmp\mesospim\kidney\decon\ims_files'),
-#     'name_of_montage_file': 'TEST_AUTO_MONTAGE.ims',
-#     'skip_align': False,
-#     'skip_resample': False,
-#     'build_scripts_only': False,
-#     'job_info': {
-#         'number': None,
-#         'started': None,
-#         'ended': None,
-#         'errored': None,
-#         'error_message': None,
-#         'traceback': None,
-#     }
-# }
 @app.command()
 def write_auto_stitch_message(metadata_location: Path, ims_files_location: Path, job_number: int, name_of_montage_file: str='auto_test_montage.ims',
                               skip_align: bool=False, skip_resample: bool=False, build_scripts_only: bool=False):
 
     message = auto_stitch_json_message
-    message['directory_with_mesospim_metadata'] = path_to_wine_mappings(metadata_location) if not os.name == 'nt' else metadata_location
-    message['directory_with_ims_files_to_stitch'] = path_to_wine_mappings(ims_files_location) if not os.name == 'nt' else ims_files_location
+    message['directory_with_mesospim_metadata'] = path_to_windows_mappings(metadata_location) if not os.name == 'nt' else metadata_location
+    message['directory_with_ims_files_to_stitch'] = path_to_windows_mappings(ims_files_location) if not os.name == 'nt' else ims_files_location
     message['name_of_montage_file'] = name_of_montage_file
     message['skip_align'] = skip_align
     message['skip_resample'] = skip_resample

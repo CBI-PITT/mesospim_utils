@@ -69,7 +69,8 @@ def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1),
     if ext == '.tif' or ext == '.tiff' or ext == '.btf':
         inputformat = 'TiffSeries'
 
-    out_file = file[0].parent / 'ims_files' / (file[0].stem + '.ims')
+    out_dir = file[0].parent / 'ims_files'
+    out_file = out_dir / (file[0].stem + '.ims')
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
     layout_path = out_file.parent / 'ims_convert_layouts' / (out_file.stem + '_layout.txt')
@@ -96,7 +97,7 @@ def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1),
         print('Running Conversion')
         subprocess.run(f'#!/bin/bash\n\n{lines}', shell=True, capture_output=True)
     else:
-        return lines, log_location #This will be a str bash script that can be executed separately to do the conversion
+        return lines, log_location, out_dir #This will be a str bash script that can be executed separately to do the conversion
 
 @app.command()
 def convert_ims_dir_mesospim_tiles(dir_loc: Path, file_type: str='.btf', res: tuple[float,float,float]=(1,1,1),

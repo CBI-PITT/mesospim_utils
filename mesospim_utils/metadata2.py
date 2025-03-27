@@ -117,8 +117,31 @@ def annotate_metadata(metadata_by_channel):
             entry['tile_shape'] = determine_tile_shape(entry)
             entry['tile_size_um'] = determine_tile_size_um(entry)
             entry['file_name'] = entry.get('Metadata for file').name
+            entry['refractive_index'] = determine_refractive_index_from_ETL_file_name(entry)
 
     return metadata_by_channel
+
+def determine_refractive_index_from_ETL_file_name(metadata_entry):
+    '''
+    Assumes that refractive index is embedded in the etl cgf filename as:
+    *_RI_{float_RI}_*.csv
+    This function extracts the 'float_RI' value
+    '''
+    # print(list(metadata_entry.keys()))
+    etl_file_name = metadata_entry["ETL PARAMETERS"]["ETL CFG File"]
+    # print(etl_file_name)
+    etl_file_name = str(etl_file_name.name)
+    # print(etl_file_name)
+    split_ri = etl_file_name.split('_RI_')[-1]
+    # print(split_ri)
+    split_ri = split_ri.split('_')[0]
+    # print(split_ri)
+    try:
+        ri = float(split_ri)
+        return ri
+    except Exception:
+        print('No RI found in the ETL cfg file')
+        return None
 
 def determine_tile_size_um(metadata_entry):
     shape = determine_tile_shape(metadata_entry)
@@ -292,6 +315,14 @@ def recreate_files_from_meta_dict(meta_list_from_json, output_directory):
 
         with open(meta_file_name, 'w') as f:
             f.write(file_content[:-1]) # Write contents after stripping the final \n
+
+def get_first_entry(meta_dict):
+    '''
+    Given the meta_dict return the first entry from the first channel key
+    '''
+    for ch in meta_dict:
+        for entry in meta_dict[ch]:
+            return entry
 
 def get_ch_entry_for_file_name(meta_dict, file_name):
     '''

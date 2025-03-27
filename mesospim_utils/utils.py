@@ -176,3 +176,15 @@ def path_to_wine_mappings(path: Path) -> Path:
     path = path.replace('/','\\')
     print(path)
     return Path(path)
+
+def path_to_windows_mappings(path: Path) -> Path:
+    '''Convert a linux path to wine (windows) paths using MAPPINGS defined at top of script'''
+    from constants import WINDOWS_MAPPINGS
+    if isinstance(path, Path):
+        path = path.as_posix()
+    for key in WINDOWS_MAPPINGS:
+        path = path.replace(key,WINDOWS_MAPPINGS[key])
+    path = path.replace('/','\\')
+    print(path)
+    return Path(path)
+

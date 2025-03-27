@@ -5,14 +5,92 @@ import os
 
 
 from imaris3 import convert_ims, nested_list_tile_files_sorted_by_color
+from rl3 import decon
 from utils import path_to_wine_mappings, ensure_path
 
 app = typer.Typer()
 
 
+######################################################################################################################
+####  DECON FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
+######################################################################################################################
+
+@app.command()
+def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
+              denoise_sigma: float=None, sharpen: bool=False,
+              half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=100,
+              num_parallel: int=8
+              ):
+    '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
+    import subprocess
+
+    from constants import ENV_PYTHON_LOC
+    from constants import DECON_SCRIPT
+
+    path = Path(dir_loc)
+    if out_dir:
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        out_dir = path / 'decon'
+    log_dir = out_dir / 'logs'
+    log_dir.parent.mkdir(parents=True, exist_ok=True)
+    file_list = list(path.glob('*' + file_type))
+    num_files = len(file_list)
+    # if queue_ims:
+    #     num_files += 1
+
+    SBATCH_ARG = '#SBATCH {}\n'
+    to_run = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon", f'-o {log_dir} / %A_%a.log', f'--array=0-{num_files-1}']
+    commands = "#!/bin/bash\n"
+    commands += SBATCH_ARG.format('-p gpu')
+    commands += SBATCH_ARG.format('--gres=gpu:1')
+    commands += SBATCH_ARG.format('-J decon')
+    commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
+    commands += SBATCH_ARG.format(f'--array=0-{num_files-1}{"%" + str(num_parallel) if num_parallel>0 else ""}')
+    commands += "\n"
+
+    commands += "commands=("
+    #Build each command
+    for p in file_list:
+        commands += '\n\t'
+        commands += '"'
+        commands += f'{ENV_PYTHON_LOC} -u {DECON_SCRIPT} decon'
+        commands += f' {p.as_posix()}'
+        commands += f' {refractive_index}'
+        commands += f' --out-location {out_dir / (p.stem + out_file_type)}'
+        #commands += f'{" --queue-ims" if queue_ims else ""}'
+        commands += f'{" --sharpen" if sharpen else ""}'
+        commands += f'{f" --denoise-sigma {denoise_sigma}" if denoise_sigma else ""}'
+        commands += f'{" --half-precision" if half_precision else " --no-half-precision"}'
+        commands += f' --psf-shape {psf_shape[0]} {psf_shape[1]} {psf_shape[2]}'
+        commands += f' --iterations {iterations}'
+        commands += f' --frames-per-chunk {frames_per_chunk}'
+        commands += '"'
+
+    commands += '\n)\n\n'
+    commands += 'echo "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"\n'
+    commands += 'eval "${commands[$SLURM_ARRAY_TASK_ID]}"'
+
+    file_to_run = out_dir / 'slurm_array.sh'
+    with open(file_to_run, 'w') as f:
+        f.write(commands)
+
+    output = subprocess.run(f'sbatch {file_to_run}', shell=True, capture_output=True)
+    prefix_len = len(b'Submitted batch job ')
+    job_number = int(output.stdout[prefix_len:-1])
+    print(f'SBATCH Job #: {job_number}')
+
+    return job_number, out_dir
+
+
+######################################################################################################################
+####  IMARIS CONVERTER FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
+######################################################################################################################
+
 @app.command()
 def convert_ims_dir_mesospim_tiles_slurm(dir_loc: Path, file_type: str='.btf', res: tuple[float,float,float]=(1,1,1),
-                                after_slurm_jobs: str=None):
+                                after_slurm_jobs: list[int]=None):
     '''
     Convert all files in a directory to Imaris Files [executed on SLURM]
     The function assumes this is mesospim data.
@@ -28,12 +106,12 @@ def convert_ims_dir_mesospim_tiles_slurm(dir_loc: Path, file_type: str='.btf', r
     # from constants import SLURM_PARTITION, SLURM_CPUS, SLURM_RAM_MB, SLURM_JOB_LABEL, SLURM_RAM_MB, SLURM_GRES
     from constants import SLURM_PARAMETERS_IMARIS_CONVERTER as slurm_parameters_dictionary
 
-    after_slurm_jobs = parse_job_numbers(after_slurm_jobs)
+    # after_slurm_jobs = parse_job_numbers(after_slurm_jobs)
 
     tiles = nested_list_tile_files_sorted_by_color(dir_loc=dir_loc, file_type=file_type)
     job_numbers = []
     for ii in tiles:
-        current_script, log_location = convert_ims(ii, res=res, run_conversion=False)
+        current_script, log_location, out_dir = convert_ims(ii, res=res, run_conversion=False)
         job_number = wrap_slurm(current_script,
                                 slurm_parameters_dictionary, log_location,
                                 after_slurm_jobs=after_slurm_jobs)
@@ -41,11 +119,11 @@ def convert_ims_dir_mesospim_tiles_slurm(dir_loc: Path, file_type: str='.btf', r
         #                         after_slurm_jobs=None)
         job_numbers.append(job_number)
 
-    return job_numbers
+    return job_numbers, out_dir
 
 @app.command()
 def convert_ims_dir_mesospim_tiles_slurm_array(dir_loc: Path, file_type: str='.btf', res: tuple[float,float,float]=(1,1,1),
-                                after_slurm_jobs: str=None):
+                                after_slurm_jobs: list[int]=None):
     '''
     Convert all files in a directory to Imaris Files [executed on SLURM]
     The function assumes this is mesospim data.
@@ -61,19 +139,19 @@ def convert_ims_dir_mesospim_tiles_slurm_array(dir_loc: Path, file_type: str='.b
     # from constants import SLURM_PARTITION, SLURM_CPUS, SLURM_RAM_MB, SLURM_JOB_LABEL, SLURM_RAM_MB, SLURM_GRES, SLURM_PARALLEL_JOBS
     from constants import SLURM_PARAMETERS_IMARIS_CONVERTER as slurm_parameters_dictionary
 
-    after_slurm_jobs = parse_job_numbers(after_slurm_jobs)
+    # after_slurm_jobs = parse_job_numbers(after_slurm_jobs)
 
     tiles = nested_list_tile_files_sorted_by_color(dir_loc=dir_loc, file_type=file_type)
     commands = []
     for ii in tiles:
-        current_script, log_location = convert_ims(ii, res=res, run_conversion=False)
+        current_script, log_location, out_dir = convert_ims(ii, res=res, run_conversion=False)
         commands.append(current_script)
 
     # job_number = submit_array(commands, dir_loc, SLURM_PARTITION, SLURM_CPUS, SLURM_RAM_MB, SLURM_JOB_LABEL, SLURM_GRES, log_location, SLURM_PARALLEL_JOBS, after_slurm_jobs = None)
     job_number = submit_array(commands, dir_loc, slurm_parameters_dictionary,
                               log_location, after_slurm_jobs=after_slurm_jobs)
 
-    return job_number
+    return job_number, out_dir
 
 
 
@@ -199,7 +277,8 @@ def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, arra
     RAM_GB = PARAMS.get('RAM_GB')
     GRES = PARAMS.get('GRES')
     PARALLEL_JOBS = PARAMS.get('PARALLEL_JOBS')
-    # PARALLEL_JOBS = None
+    NICE = PARAMS.get('NICE')
+    TIME_LIMIT = PARAMS.get('TIME_LIMIT')
 
     # Build sbatch wrapper components
     sbatch_options = [
@@ -209,6 +288,8 @@ def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, arra
         f"--mem={RAM_GB}G" if RAM_GB is not None else "",
         f"-J {JOB_LABEL}" if JOB_LABEL is not None else "",
         f"--array=0-{array_len-1}" + (f"%{PARALLEL_JOBS}" if PARALLEL_JOBS else "") if array_len is not None else "",
+        f"--nice={NICE}" if NICE is not None else "",
+        f"--time={TIME_LIMIT}" if TIME_LIMIT is not None else "",
         f"-o {log_location}",
         "--wrap='bash -c \"{}\"'" if bash else "--wrap='{}'"
     ]
@@ -231,7 +312,7 @@ def sbatch_depends(sbatch_script, list_of_job_ids:list[int]=None):
     if isinstance(list_of_job_ids, list):
         for idx, job in enumerate(list_of_job_ids):
             if idx == 0:
-                depends_statement = f' --depend=afterok:{job}'
+                depends_statement = f' --depend=afterok:{job} --kill-on-invalid-dep=yes '
             else:
                 depends_statement += f':{job}'
     depends_statement += ' '
@@ -247,76 +328,6 @@ def parse_job_numbers(job_number_strings_comma_separated=None):
     return jobs_num_list
 
 
-#######################################################################################################################
-####  OLD CODE #############
-#######################################################################################################################
-
-# def submit_array(cmd: list[str], location_for_sbatch_script, SLURM_PARTITION, SLURM_CPUS, SLURM_RAM_MB, SLURM_JOB_LABEL, SLURM_GRES, log_location, parallel_jobs,
-#                after_slurm_jobs: list[str] = None):
-#     '''
-#     Given a list of commands (cmd), wrap the commands in a sbatch script and submit it as an array to slurm
-#     If the command should not run until after another job(s) pass these job number in a list to after_slurm_jobs
-#     '''
-#     ## For spinning off on slurm
-#     depends_statement = ''
-#     if after_slurm_jobs and isinstance(after_slurm_jobs, list):
-#         for idx, job in enumerate(after_slurm_jobs):
-#             if idx == 0:
-#                 depends_statement = f' --depend=afterok:{job}'
-#             else:
-#                 depends_statement += f':{job}'
-#     depends_statement += ' '
-#
-#     commands = 'commands=('
-#     for ii in cmd:
-#         commands = f'{commands}\n\t"{ii.replace("\n\n",";").replace("\n",";").replace("\"","\\\"")}'
-#         commands = commands.replace('then;','then').replace('else;','else')
-#         commands += '"'
-#         # commands = commands.replace('"', '\\"')
-#         # commands = f'{commands}\n\t{ii}'
-#     commands = f'{commands}\n)'
-#     commands += '\n\necho "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"'
-#     commands += '\neval "${commands[$SLURM_ARRAY_TASK_ID]}"'
-#
-#     if not isinstance(location_for_sbatch_script, Path):
-#         location_for_sbatch_script = Path(location_for_sbatch_script)
-#     name_of_sbatch_script = location_for_sbatch_script / 'ims_conv_sbatch.sh'
-#     with open(name_of_sbatch_script, 'w') as f:
-#         f.write(commands)
-#     os.chmod(name_of_sbatch_script, 0o770)
-#
-#     # Sbatch command wrapping each ims build
-#     sbatch_cmd = f"sbatch{depends_statement}-p {SLURM_PARTITION} -n {SLURM_CPUS} {f'--gres={SLURM_GRES}' if SLURM_GRES is not None else ''} \
-#     {f'--mem={SLURM_RAM_MB}G' if SLURM_RAM_MB is not None else ''} -J {SLURM_JOB_LABEL} -o {log_location.parent/'%A_%a.log'} --array=0-{len(cmd)}%{parallel_jobs}\
-#     --wrap='bash -c {name_of_sbatch_script}'"
-#     output = subprocess.run(sbatch_cmd, shell=True, capture_output=True, text=True, check=True)
-#     job_number = get_job_number_from_slurm_out(output)
-#     print(f'Submitted job: {job_number}')
-#     return job_number
-
-# def wrap_slurm(cmd: str, SLURM_PARTITION, SLURM_CPUS, SLURM_RAM_MB, SLURM_JOB_LABEL, log_location,
-#                after_slurm_jobs: list[str] = None):
-#     '''
-#     Given a command (cmd) string, wrap the command in a sbatch script and submit it to slurm
-#     If the command should not run until after another job(s) pass these job number in a list to after_slurm_jobs
-#     '''
-#     ## For spinning off on slurm
-#     depends_statement = ''
-#     if after_slurm_jobs and isinstance(after_slurm_jobs, list):
-#         for idx, job in enumerate(after_slurm_jobs):
-#             if idx == 0:
-#                 depends_statement = f' --depend=afterok:{job}'
-#             else:
-#                 depends_statement += f':{job}'
-#     depends_statement += ' '
-#
-#     # Sbatch command wrapping each ims build
-#     sbatch_cmd = f"sbatch{depends_statement}-p {SLURM_PARTITION} -n {SLURM_CPUS} --mem={SLURM_RAM_MB}G -J {SLURM_JOB_LABEL} -o {log_location} --wrap='{cmd}'"
-#     print(sbatch_cmd)
-#     output = subprocess.run(sbatch_cmd, shell=True, capture_output=True, text=True, check=True)
-#     job_number = get_job_number_from_slurm_out(output)
-#     print(f'Submitted job: {job_number}')
-#     return job_number
 
 if __name__ == "__main__":
     app()
