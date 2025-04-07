@@ -4,8 +4,8 @@ import subprocess
 import os
 
 
-from imaris3 import convert_ims, nested_list_tile_files_sorted_by_color
-from rl3 import decon
+from imaris import convert_ims, nested_list_tile_files_sorted_by_color
+from rl import decon
 from utils import path_to_wine_mappings, ensure_path
 
 app = typer.Typer()

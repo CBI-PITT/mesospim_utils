@@ -20,7 +20,7 @@ SLURM_PARAMETERS_FOR_DEPENDENCIES = {
 ####  DECON rl.py constants ###
 #######################################################################################################################
 
-DECON_SCRIPT = '/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl3.py'
+DECON_SCRIPT = '/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl.py'
 DECON_SLURM_PARTITION = 'gpu' #multiple partitions can be specified with comma separation part1,par2
 DECON_SLURM_CPUS = None  # Number of CPUs (int), None=SLURM partition Default
 DECON_SLURM_JOB_LABEL = 'decon'

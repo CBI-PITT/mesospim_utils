@@ -26,136 +26,22 @@ import skimage
 from skimage import img_as_float32, img_as_uint
 
 from psf import get_psf
+from metadata import collect_all_metadata, get_ch_entry_for_file_name, get_entry_for_file_name
 
-#######################################
-# CHANGE THESE CONSTANTS IF NECESSARY #
-#######################################
-ENV_PYTHON_LOC = '/h20/home/lab/miniconda3/envs/decon/bin/python'
-# Append -u so unbuffered outputs scroll in realtime to slurm out files
-ENV_PYTHON_LOC = f'{ENV_PYTHON_LOC} -u'
+from constants import ENV_PYTHON_LOC
+from constants import DECON_SCRIPT as LOC_OF_THIS_SCRIPT
 
-LOC_OF_THIS_SCRIPT = '/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl.py'
 
-WINE_INSTALL_LOC = '/h20/home/lab/src/wine/wine64'
-IMARIS_CONVERTER_LOC = '/h20/home/lab/src/ImarisFileConverter 10.2.0/ImarisConvert.exe'
+ims_conv_module_name = Path(LOC_OF_THIS_SCRIPT).parent / 'slurm.py'
 
-# Drive mappings for linux directories in wine for ims file conversions
-MAPPINGS = { #linux_path:wine_drive_letter:
-'/h20':'h:',
-'/CBI_FastStore':'f:',
-}
 
 app = typer.Typer()
-
-###################################################################################################################
-## IMARIS CODE ############
-###################################################################################################################
-@app.command()
-def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1),
-                            after_slurm_jobs: list[str]=None):
-    '''Convert a single file to ims format and spin off the process on slurm compute node [executed on SLURM]'''
-
-    SLURM_PARTITION = 'compute'
-    SLURM_CPUS = 24
-    SLURM_JOB_LABEL = 'ims_conv'
-    RAM = 64  # G
-    res_z, res_y, res_x = res
-
-    if not isinstance(file, list):
-        file = [file]
-
-    file = [Path(x) for x in file if not isinstance(x,Path)]
-
-    ext = file[0].suffix
-    inputformat = None
-    if ext == '.tif' or ext == '.tiff' or ext == '.btf':
-        inputformat = 'TiffSeries'
-
-    out_file = file[0].parent / 'ims_files' / (file[0].stem + '.ims')
-    out_file.parent.mkdir(parents=True, exist_ok=True)
-
-    layout_path = out_file.parent / 'ims_convert_layouts' / (out_file.stem + '_layout.txt')
-    layout_path.parent.mkdir(parents=True, exist_ok=True)
-
-    log_location = out_file.parent / 'ims_convert_logs' / (out_file.stem + '.txt')
-    log_location.parent.mkdir(parents=True, exist_ok=True)
-
-    line = f'<FileSeriesLayout>'
-    for c, f in enumerate(file):
-        line += f'\n<ImageIndex name="{path_to_wine_mappings(f)}" x="0" y="0" z="0" c="{c}" t="0"/>'
-    line += '</FileSeriesLayout>'
-
-    with layout_path.open("w") as f:
-        f.write(line)
-
-    # Main ims converter command
-    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file[0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" -il "{path_to_wine_mappings(layout_path)}" --logprogress --nthreads {SLURM_CPUS} --compression 6 -ps {RAM * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
-
-    # BASH script if/then statements to rename the .ims.part file to .ims
-    lines = lines + f'\n\nif [ -f "{out_file}.part" ]; then\n  mv "{out_file}.part" "{out_file}"\n  echo "File renamed to {out_file}"\nelse\n  echo "File {out_file} does not exist."\nfi'
-
-    depends_statement = ''
-    if after_slurm_jobs and isinstance(after_slurm_jobs, list):
-        for idx, job in enumerate(after_slurm_jobs):
-            if idx == 0:
-                depends_statement = f' --depend=afterok:{job}'
-            else:
-                depends_statement += f':{job}'
-    depends_statement += ' '
-
-    # Sbatch command wrapping each ims build
-    sbatch_cmd = f"sbatch{depends_statement}-p {SLURM_PARTITION} -n {SLURM_CPUS} --mem={RAM}G -J {SLURM_JOB_LABEL} -o {log_location} --wrap='{lines}'"
-    subprocess.run(sbatch_cmd, shell=True)
-    print(lines)
-    print(sbatch_cmd)
-
-
-@app.command()
-def convert_ims_dir_mesospim_tiles(dir_loc: Path, file_type: str='.btf', res: tuple[float,float,float]=(1,1,1),
-                                after_slurm_jobs: list[str]=None):
-    '''
-    Convert all files in a directory to Imaris Files [executed on SLURM]
-    The function assumes this is mesospim data.
-    Tiles are grouped and sorted by color using the function
-    nested_list_tile_files_sorted_by_color
-
-    names are expected to be as follows: _Tile{NUMBER}_ with a number representing laser line
-
-    Currently, resolution must be provided manually.
-    '''
-
-    tiles = nested_list_tile_files_sorted_by_color(dir_loc=dir_loc, file_type=file_type)
-    for ii in tiles:
-        convert_ims(ii, res=res)
-
-
-@app.command()
-def ims_dir(dir_loc: str, file_type: str = '.tif', res: tuple[float, float, float] = (1, 1, 1)):
-    '''
-    Convert all files in a directory to Imaris Files [executed on SLURM]
-    No consideration is given for whether files should be grouped to make multichannel images
-    i.e. each file is converted separately
-    '''
-
-    path = Path(dir_loc)
-    file_list = path.glob('*' + file_type)
-
-    for p in file_list:
-        # convert_ims(p, res=res)
-        convert_ims_multi_color([p], res=res)
-
-
-
-#####################################################################################################################
-### DECON CODE ########
-####################################################################################################################
-
 
 @app.command()
 def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
               queue_ims: bool=False, denoise_sigma: float=None, sharpen: bool=False,
               half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=100,
-              num_parallel: int=8
+              num_parallel: int=8, run_slurm=True
               ):
     '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
     import subprocess
@@ -187,7 +73,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     for p in file_list:
         commands += '\n\t'
         commands += '"'
-        commands += f'{ENV_PYTHON_LOC} {LOC_OF_THIS_SCRIPT} decon'
+        commands += f'{ENV_PYTHON_LOC} -u {LOC_OF_THIS_SCRIPT} decon'
         commands += f' {p.as_posix()}'
         commands += f' {refractive_index}'
         commands += f' --out-location {out_dir / (p.stem + out_file_type)}'
@@ -204,17 +90,16 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         # Extract resolution from mesospim metadata file if it exists
         res = (1,1,1)
         try:
-            meta_file = file_list[0].with_name(file_list[0].name + '_meta.txt')
-            meta_dict = mesospim_meta_data(meta_file)
-            x_res = meta_dict.get('x_res')
-            y_res = meta_dict.get('y_res')
-            z_res = meta_dict.get('z_res')
+            meta_dir = file_list[0].parent
+            meta_entry = get_entry_for_file_name(meta_dir, file_list[0].name)
+            x_res, y_res, z_res  = meta_entry.get('resolution')
             res = (z_res,y_res,x_res)
         except:
             pass
 
-        ims_auto_queue = f'\n\t"sbatch -p compute -n 1 --mem 5G --dependency=afterok:$SLURM_JOB_ID -J ims_queue --kill-on-invalid-dep=yes --wrap=\''
-        ims_auto_queue += f'{ENV_PYTHON_LOC} {LOC_OF_THIS_SCRIPT} convert-ims-dir-mesospim-tiles '
+        ims_auto_queue = f'\n\t"sbatch -p compute -n 1 --mem 5G -o {log_dir}/%A.log --dependency=afterok:$SLURM_JOB_ID -J ims_queue --kill-on-invalid-dep=yes --wrap=\''
+        # ims_auto_queue += f'{ENV_PYTHON_LOC} -u {ims_conv_module_name} convert-ims-dir-mesospim-tiles '
+        ims_auto_queue += f'{ENV_PYTHON_LOC} -u {ims_conv_module_name} convert-ims-dir-mesospim-tiles-slurm-array '
         ims_auto_queue += f'{out_dir} '
         ims_auto_queue += f'--file-type {out_file_type} '
         ims_auto_queue += f'--res {res[0]} {res[1]} {res[2]}\'"'
@@ -228,10 +113,14 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     with open(file_to_run, 'w') as f:
         f.write(commands)
 
-    output = subprocess.run(f'sbatch {file_to_run}', shell=True, capture_output=True)
-    prefix_len = len(b'Submitted batch job ')
-    job_number = int(output.stdout[prefix_len:-1])
-    print(f'SBATCH Job #: {job_number}')
+    if run_slurm:
+        output = subprocess.run(f'sbatch {file_to_run}', shell=True, capture_output=True)
+        prefix_len = len(b'Submitted batch job ')
+        job_number = int(output.stdout[prefix_len:-1])
+        print(f'SBATCH Job #: {job_number}')
+    else:
+        # Return the name of the sbatch script that was created.
+        return file_to_run
 
 
 def get_rl_model(psf, iterations=20, sigma=None):
@@ -416,8 +305,10 @@ class mesospim_btf_helper:
         self.zdim = len(self.tif.series)
 
         self.build_lazy_array()
+
     def __getitem__(self, item):
         return self.lazy_array[item].compute()
+
     def build_lazy_array(self):
         print('Building Array')
         delayed_image_reads = [delayed(self.get_z_plane)(x) for x in range(self.zdim)]
@@ -459,46 +350,8 @@ class mesospim_btf_helper:
         del self.tif
 
 
-def mesospim_meta_data(meta_file: Path):
-    # Extract imaging metadata from mesospim metadata file
-
-    if not isinstance(meta_file, Path):
-        meta_file = Path(meta_file)
-
-    assert meta_file.is_file(), 'Path is not a file'
-
-    meta_dict = {}
-    with meta_file.open('r') as f:
-        metadata = f.readlines()
-
-    emission_wavelength = [x for x in metadata if '[Filter]' in x][0][9:12]
-    emission_wavelength = int(emission_wavelength)
-    meta_dict['emission_wavelength'] = emission_wavelength
-
-    xy_res = [x for x in metadata if '[Pixelsize in um]' in x][0][18:-1]
-    xy_res = float(xy_res)
-    y_res = x_res = xy_res
-    meta_dict['x_res'] = x_res
-    meta_dict['y_res'] = y_res
-
-    z_res = [x for x in metadata if '[z_stepsize]' in x][0][13:-1]
-    z_res = float(z_res)
-    meta_dict['z_res'] = z_res
-
-    z_planes = [x for x in metadata if '[z_planes]' in x][0][11:-1]
-    z_planes = int(z_planes)
-    meta_dict['z_planes'] = z_planes
-
-    x_pixels = [x for x in metadata if '[x_pixels]' in x][0][11:-1]
-    x_pixels = int(x_pixels)
-    meta_dict['x_pixels'] = x_pixels
-
-    y_pixels = [x for x in metadata if '[y_pixels]' in x][0][11:-1]
-    y_pixels = int(y_pixels)
-    meta_dict['y_pixels'] = y_pixels
-
-    print(meta_dict)
-    return meta_dict
+def mesospim_meta_data(metadata_dir: Path):
+    return collect_all_metadata(metadata_dir)
 
 def pad_reflect(input_tensor, padding_depth=0):
     # Calculate padding values
@@ -550,16 +403,6 @@ def time_report(start_time=None, units='minutes', to_print=True):
 
     return time.time()
 
-def path_to_wine_mappings(path: Path) -> Path:
-    '''Convert a linux path to wine (windows) paths using MAPPINGS defined at top of script'''
-    if isinstance(path, Path):
-        path = path.as_posix()
-    for key in MAPPINGS:
-        path = path.replace(key,MAPPINGS[key])
-    path = path.replace('/','\\')
-    print(path)
-    return Path(path)
-
 def save_image(file_name, array):
     print(f'Saving: {file_name}')
     skimage.io.imsave(file_name,array, plugin="tifffile", bigtiff=True)
@@ -573,36 +416,55 @@ def save_image(file_name, array):
     #     metadata={'axes': 'ZYX'},
     # )
 
-
-def nested_list_tile_files_sorted_by_color(dir_loc: Path, file_type: str='.tif'):
-    ''' Given a directory, return a list of lists. Where each nested list is
-    a represents 1 tile with all channel files, sorted by channel'''
-    from natsort import natsorted
-    print('In nested')
-    if not isinstance(dir_loc, Path):
-        path = Path(dir_loc)
-    else:
-        path = dir_loc
-    file_list = path.glob('*' + file_type)
-    file_list = [x.as_posix() for x in file_list]
-    print(file_list)
-
-    idx = 0
-    tiles = []
-    while idx is not None:
-        to_find = f'_Tile{idx}_'
-        current_tile = []
-        for i in file_list:
-            if to_find in i:
-                current_tile.append(i)
-        if len(current_tile) > 0:
-            tiles.append(current_tile)
-            idx += 1
+def trim_psf(psf):
+    from constants import PSF_THRESHOLD as threshold
+    while np.all(psf[0] < threshold) and np.all(psf[-1] < threshold):
+        if all(psf[1:-1].shape):
+            psf = psf[1:-1]
         else:
-            idx = None
-    #print(tiles)
-    tiles = [natsorted(x) for x in tiles]
-    return tiles
+            break
+    while np.all(psf[:,0] < threshold) and np.all(psf[:,-1] < threshold):
+        if all(psf[:,1:-1].shape):
+            psf = psf[:,1:-1]
+        else:
+            break
+    while np.all(psf[:,:,0] < threshold) and np.all(psf[:,:,-1] < threshold):
+        if all(psf[:,:,1:-1].shape):
+            psf = psf[:,:,1:-1]
+        else:
+            break
+    return psf
+
+
+
+# def trim_psf(arr):
+#     from constants import PSF_THRESHOLD as threshold
+#
+#     # assert arr.ndim == 3, "Array must be 3D"
+#
+#     # Create a mask where values are above the threshold
+#     mask = arr > threshold
+#
+#     # Find the bounding box of the non-trimmed region
+#     def find_trim_indices(mask, axis):
+#         # Collapse along all axes except the one we're trimming
+#         collapsed = np.any(mask, axis=tuple(i for i in range(3) if i != axis))
+#         indices = np.where(collapsed)[0]
+#         if len(indices) == 0:
+#             return 0, 0  # no values above threshold along this axis
+#         return indices[0], indices[-1] + 1  # +1 because slice end is exclusive
+#
+#     x_start, x_end = find_trim_indices(mask, 0)
+#     y_start, y_end = find_trim_indices(mask, 1)
+#     z_start, z_end = find_trim_indices(mask, 2)
+#
+#     # Handle the case where all values are below threshold
+#     if x_end == 0 or y_end == 0 or z_end == 0:
+#         return arr[0:0, 0:0, 0:0]  # return empty array with correct dimensions
+#
+#     return arr[x_start:x_end, y_start:y_end, z_start:z_end]
+
+
 
 @app.command()
 def decon(file_location: Path, refractive_index: float, out_location: Path=None, resolution: tuple[float,float,float]=None,
@@ -664,28 +526,19 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
 
         # Extract imaging parameter from metadata file if it exists
-        meta_file = file_location.with_name(file_location.name + '_meta.txt')
-        meta_dict = mesospim_meta_data(meta_file)
+        meta_dir = file_location.parent
+        meta_dict = mesospim_meta_data(meta_dir)
+        file_name = file_location.name
+        meta_entry = get_entry_for_file_name(meta_dict,file_name)
+        # ch, file_idx = get_ch_entry_for_file_name(meta_dict,file_location.name)
+        # ch0 = list(meta_dict.keys())[file_idx]
+        x_res, y_res, z_res = meta_entry.get('resolution')
+        res = (z_res, y_res, x_res)
 
-        emission_wavelength = meta_dict.get('emission_wavelength')
-        x_res = meta_dict.get('x_res')
-        y_res = meta_dict.get('y_res')
-        z_res = meta_dict.get('z_res')
+        emission_wavelength = meta_entry.get('emission_wavelength')
 
 
     assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
-
-    print(f'--- INPUT_LOCATION: {file_location}')
-    print(f'--- OUT_LOCATION_TMP: {out_location}')
-    print(f'--- OUT_LOCATION_FINAL: {final_out_location}')
-    print(f'--- Depth of frames per run: {FRAMES_PER_DECON}')
-    print(f'--- Iterations: {ITERATIONS}')
-    print(f'--- NA: {na}')
-    print(f'--- RI: {sample_ri}')
-    print(f'--- Emission Wavelength: {emission_wavelength}')
-    print(f'--- Lateral Resolution: X: {x_res}, Y: {y_res}')
-    print(f'--- Z Steps: {z_res}')
-    print(f'--- PSF Model: {psf_model}')
 
     if '.btf' in str(file_location):
         print('Opening File as mesospim_btf_helper')
@@ -722,7 +575,11 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         normalize=True,
     )
 
-    psf_image = out_location.parent / 'psf.tif'
+    print(f'Determining whether PSF should be trimmed')
+    print(f'PSF input shape: {psf.shape}')
+    psf = trim_psf(psf) #Reduce psf below threshold value set in constants
+    print(f'PSF trimmed shape: {psf.shape}')
+    psf_image = out_location.parent / f'psf_RI{sample_ri}_{emission_wavelength}nm.tif'
     if not psf_image.is_file():
         save_image(psf_image, psf)
 
@@ -730,6 +587,23 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
     ARRAY_PADDING = [[int((x * 2) + 1) for z in [1, 1]] for x in psf.shape]
     stack = np.pad(stack, ARRAY_PADDING, mode='reflect')
     print(f'PADDED_SHAPE: {stack.shape}')
+
+    ## Attempt to determine the number of frames that will max out vRAM for most efficient processing.
+    FRAMES_PER_DECON = calculate_max_frames_per_chunk(stack.shape[1:],(ARRAY_PADDING[1][0],ARRAY_PADDING[2][0]))
+    # print(f'*
+
+
+    print(f'--- INPUT_LOCATION: {file_location}')
+    print(f'--- OUT_LOCATION_TMP: {out_location}')
+    print(f'--- OUT_LOCATION_FINAL: {final_out_location}')
+    print(f'--- Depth of frames per run: {FRAMES_PER_DECON}')
+    print(f'--- Iterations: {ITERATIONS}')
+    print(f'--- NA: {na}')
+    print(f'--- RI: {sample_ri}')
+    print(f'--- Emission Wavelength: {emission_wavelength}')
+    print(f'--- Lateral Resolution: X: {x_res}, Y: {y_res}')
+    print(f'--- Z Steps: {z_res}')
+    print(f'--- PSF Model: {psf_model}')
 
     # Import pytorch dependencies
     print('Importing pytorch dependencies')
@@ -842,6 +716,19 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         convert_ims(out_location, res=(z_res, y_res, x_res))
 
     time_report(start_time=start_time, to_print=True)
+
+
+
+def calculate_max_frames_per_chunk(y_x_shape: tuple, y_x_overlap: tuple):
+    from constants import VRAM_PER_VOXEL, P40_VRAM
+    current_size = 0
+    frame_per_chunk = 0
+    while True:
+        frame_per_chunk += 1
+        chunk_size = (y_x_shape[0]+y_x_overlap[0]) * (y_x_shape[1]+y_x_overlap[1]) * frame_per_chunk
+        current_size = chunk_size * VRAM_PER_VOXEL
+        if current_size >= P40_VRAM:
+            return frame_per_chunk - 1
 
 if __name__ == "__main__":
     app()

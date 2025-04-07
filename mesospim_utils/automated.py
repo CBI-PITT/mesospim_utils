@@ -3,7 +3,7 @@ from pathlib import Path
 import subprocess
 
 from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL
-from metadata2 import collect_all_metadata, get_first_entry
+from metadata import collect_all_metadata, get_first_entry
 from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap
 from utils import ensure_path
 
@@ -75,8 +75,7 @@ def ims_conv_then_stitch(dir_loc: Path, metadata_dir: Path, file_type: str='.tif
     print('Setting up script to manage Stitching after IMS conversion')
     from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
     cmd = ''
-    # cmd += f'{mesospim_root_application}/stitch3.py write-auto-stitch-message'
-    cmd += f'{mesospim_root_application}/stitch4.py write-auto-stitch-message'
+    cmd += f'{mesospim_root_application}/stitch.py write-auto-stitch-message'
     cmd += f' {metadata_dir} {out_dir} {job_number}'
     job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir, after_slurm_jobs=[job_number])
     print(f'Dependency process number: {job_number}')

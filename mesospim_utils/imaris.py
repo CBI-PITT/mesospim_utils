@@ -26,7 +26,7 @@ import skimage
 from skimage import img_as_float32, img_as_uint
 
 from psf import get_psf
-from metadata2 import collect_all_metadata
+from metadata import collect_all_metadata
 
 from constants import LOCATION_OF_MESOSPIM_UTILS_INSTALL, ENV_PYTHON_LOC
 from constants import WINE_INSTALL_LOC, IMARIS_CONVERTER_LOC
