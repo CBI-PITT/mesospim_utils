@@ -40,15 +40,37 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     # if queue_ims:
     #     num_files += 1
 
+    from constants import SLURM_PARAMETERS_DECON as PARAMS
+    # Extract required parameters into simple names
+    PARTITION = PARAMS.get('PARTITION')
+    CPUS = PARAMS.get('CPUS')
+    JOB_LABEL = PARAMS.get('JOB_LABEL')
+    RAM_GB = PARAMS.get('RAM_GB')
+    GRES = PARAMS.get('GRES')
+    PARALLEL_JOBS = PARAMS.get('PARALLEL_JOBS',1)
+    NICE = PARAMS.get('NICE')
+    TIME_LIMIT = PARAMS.get('TIME_LIMIT')
+
     SBATCH_ARG = '#SBATCH {}\n'
-    to_run = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon", f'-o {log_dir} / %A_%a.log', f'--array=0-{num_files-1}']
+    # to_run = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon", f'-o {log_dir} / %A_%a.log', f'--array=0-{num_files-1}']
     commands = "#!/bin/bash\n"
-    commands += SBATCH_ARG.format('-p gpu')
-    commands += SBATCH_ARG.format('--gres=gpu:1')
-    commands += SBATCH_ARG.format('-J decon')
+    commands += SBATCH_ARG.format(f'-p {PARTITION}') if PARTITION is not None else ""
+    commands += SBATCH_ARG.format(f'-n {CPUS}') if CPUS is not None else ""
+    commands += SBATCH_ARG.format(f'--mem={RAM_GB}GB') if RAM_GB is not None else ""
+    commands += SBATCH_ARG.format(f'--gres={GRES}') if GRES is not None else ""
+    commands += SBATCH_ARG.format(f'-J {JOB_LABEL}') if JOB_LABEL is not None else ""
+    commands += SBATCH_ARG.format(f'--nice={NICE}') if NICE is not None else ""
+    commands += SBATCH_ARG.format(f'-t {TIME_LIMIT}') if TIME_LIMIT is not None else ""
     commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
-    commands += SBATCH_ARG.format(f'--array=0-{num_files-1}{"%" + str(num_parallel) if num_parallel>0 else ""}')
+    commands += SBATCH_ARG.format(f'--array=0-{num_files - 1}{"%" + str(PARALLEL_JOBS) if PARALLEL_JOBS > 0 else ""}')
     commands += "\n"
+
+    # commands += SBATCH_ARG.format('-p gpu')
+    # commands += SBATCH_ARG.format('--gres=gpu:1')
+    # commands += SBATCH_ARG.format('-J decon')
+    # commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
+    # commands += SBATCH_ARG.format(f'--array=0-{num_files-1}{"%" + str(num_parallel) if num_parallel>0 else ""}')
+    # commands += "\n"
 
     commands += "commands=("
     #Build each command
@@ -83,6 +105,37 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
 
     return job_number, out_dir
 
+
+def make_sbatch_params(PARAMS, array_len=None):
+    '''
+    PARAMS is a dictionary with sbatch options
+    Generally these are stored in the constants module
+    '''
+    # Extract required parameters into simple names
+    PARTITION = PARAMS.get('PARTITION')
+    CPUS = PARAMS.get('CPUS')
+    JOB_LABEL = PARAMS.get('JOB_LABEL')
+    RAM_GB = PARAMS.get('RAM_GB')
+    GRES = PARAMS.get('GRES')
+    PARALLEL_JOBS = PARAMS.get('PARALLEL_JOBS')
+    NICE = PARAMS.get('NICE')
+    TIME_LIMIT = PARAMS.get('TIME_LIMIT')
+
+    # Build sbatch wrapper components
+    sbatch_options = [
+        f"-p {PARTITION}" if PARTITION is not None else "",
+        f"-n {CPUS}" if CPUS is not None else "",
+        f"--gres={GRES}" if GRES is not None else "",
+        f"--mem={RAM_GB}G" if RAM_GB is not None else "",
+        f"-J {JOB_LABEL}" if JOB_LABEL is not None else "",
+        f"--array=0-{array_len - 1}" + (f"%{PARALLEL_JOBS}" if PARALLEL_JOBS else "") if array_len is not None else "",
+        f"--nice={NICE}" if NICE is not None else "",
+        f"--time={TIME_LIMIT}" if TIME_LIMIT is not None else "",
+    ]
+
+    # Join non-empty elements with a space
+    sbatch_cmd = f"{' '.join(filter(None, sbatch_options))}"
+    return sbatch_cmd
 
 ######################################################################################################################
 ####  IMARIS CONVERTER FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################

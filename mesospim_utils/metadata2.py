@@ -50,6 +50,11 @@ def collect_all_metadata(location: Path, alt_save_path:Path = None, prepare=True
         metadata_by_channel = convert_paths(metadata_by_channel)
         metadata_by_channel = convert_str_to_nums(metadata_by_channel)
         metadata_by_channel = annotate_metadata(sort_meta_list(metadata_by_channel))
+
+        print("Saving annotated metadata json")
+        annotated_name = save_json_path.with_name("mesospim_annotated_metadata.json")
+        dict_to_json_file(metadata_by_channel, annotated_name)
+
     print(metadata_by_channel)
 
     return metadata_by_channel
@@ -62,7 +67,8 @@ def sort_meta_list(meta_list):
 
     # Regex patterns to extract Tile number and Channel
     tile_pattern = re.compile(r"Tile(\d+)")
-    channel_pattern = re.compile(r"_Ch(\d+)_")
+    # channel_pattern = re.compile(r"_Ch(\d+)_")
+    channel_pattern = re.compile(r"_Ch(\d+)([a-zA-Z]*)_")
 
     # Process each entry
     for entry in meta_list:
@@ -75,8 +81,12 @@ def sort_meta_list(meta_list):
 
         # Extract channel number
         channel_match = channel_pattern.search(file_name)
-        channel_number = channel_match.group(1) if channel_match else None
-        channel_number = int(channel_number)
+        if channel_match:
+            channel_number = channel_match.group(1) + channel_match.group(2)  # e.g., '561b'
+        else:
+            channel_number = None
+        # channel_number = channel_match.group(1) if channel_match else None
+        # channel_number = int(channel_number)
 
         if tile_number is not None and channel_number is not None:
             if channel_number not in sorted_data:

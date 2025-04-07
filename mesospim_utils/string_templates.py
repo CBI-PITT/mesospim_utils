@@ -53,3 +53,4 @@ COLOR_RECORD_TEMPLATE = '''<Channel ChannelIndex="Channel {}" Selection="true" R
 </BaseColor>
 </Channel>'''
 
+# BAT_RENAME_FILE = f'\n\nif [ -f "{out_file}.part" ]; then\n  mv "{out_file}.part" "{out_file}"\n  echo "File renamed to {out_file}"\nelse\n  echo "File {out_file} does not exist."\nfi'

@@ -26,7 +26,7 @@ DECON_SLURM_CPUS = None  # Number of CPUs (int), None=SLURM partition Default
 DECON_SLURM_JOB_LABEL = 'decon'
 DECON_SLURM_RAM_MB = None # Value in gigabytes, None will be SLURM partition default
 DECON_GRES = 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1" or None
-DECON_PARALLEL_JOBS = 16 # Number of jobs that will run in parallel, only applicable to array submissions
+DECON_PARALLEL_JOBS = 32 # Number of jobs that will run in parallel, only applicable to array submissions
 
 DECON_DEFAULT_OUTPUT_DIR = 'decon'
 SLURM_PARAMETERS_DECON = {
@@ -35,10 +35,15 @@ SLURM_PARAMETERS_DECON = {
     'JOB_LABEL': 'decon',
     'RAM_GB': None,
     'GRES': 'gpu:1', # Specific exactly as it would be in slurm eg. "gpu:1" or None
-    'PARALLEL_JOBS': 16,
+    'PARALLEL_JOBS': 32,
     'NICE': 0,
     'TIME_LIMIT': None, # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
 }
+
+PSF_THRESHOLD = 1e-5 # Automatically reduce PSF size to exclude values below this.
+
+P40_VRAM = 24576 * 0.95
+VRAM_PER_VOXEL = 17136 / ((3200+15) * (3200+15) * 70)
 
 #######################################################################################################################
 ####  Imaris file converter constants ###
@@ -94,7 +99,7 @@ METADATA_FILENAME = 'mesospim_metadata.json'
 
 CORRELATION_THRESHOLD_FOR_ALIGNMENT = 0.85
 
-FRACTION_OF_RAM_FOR_PROCESSING = 0.5
+FRACTION_OF_RAM_FOR_PROCESSING = 0.2
 
 IMS_STITCHER_COMPRESSION_LEVEL = 6 #GZIP 0-9
 

@@ -416,6 +416,55 @@ def save_image(file_name, array):
     #     metadata={'axes': 'ZYX'},
     # )
 
+def trim_psf(psf):
+    from constants import PSF_THRESHOLD as threshold
+    while np.all(psf[0] < threshold) and np.all(psf[-1] < threshold):
+        if all(psf[1:-1].shape):
+            psf = psf[1:-1]
+        else:
+            break
+    while np.all(psf[:,0] < threshold) and np.all(psf[:,-1] < threshold):
+        if all(psf[:,1:-1].shape):
+            psf = psf[:,1:-1]
+        else:
+            break
+    while np.all(psf[:,:,0] < threshold) and np.all(psf[:,:,-1] < threshold):
+        if all(psf[:,:,1:-1].shape):
+            psf = psf[:,:,1:-1]
+        else:
+            break
+    return psf
+
+
+
+# def trim_psf(arr):
+#     from constants import PSF_THRESHOLD as threshold
+#
+#     # assert arr.ndim == 3, "Array must be 3D"
+#
+#     # Create a mask where values are above the threshold
+#     mask = arr > threshold
+#
+#     # Find the bounding box of the non-trimmed region
+#     def find_trim_indices(mask, axis):
+#         # Collapse along all axes except the one we're trimming
+#         collapsed = np.any(mask, axis=tuple(i for i in range(3) if i != axis))
+#         indices = np.where(collapsed)[0]
+#         if len(indices) == 0:
+#             return 0, 0  # no values above threshold along this axis
+#         return indices[0], indices[-1] + 1  # +1 because slice end is exclusive
+#
+#     x_start, x_end = find_trim_indices(mask, 0)
+#     y_start, y_end = find_trim_indices(mask, 1)
+#     z_start, z_end = find_trim_indices(mask, 2)
+#
+#     # Handle the case where all values are below threshold
+#     if x_end == 0 or y_end == 0 or z_end == 0:
+#         return arr[0:0, 0:0, 0:0]  # return empty array with correct dimensions
+#
+#     return arr[x_start:x_end, y_start:y_end, z_start:z_end]
+
+
 
 @app.command()
 def decon(file_location: Path, refractive_index: float, out_location: Path=None, resolution: tuple[float,float,float]=None,
@@ -491,18 +540,6 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
     assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
 
-    print(f'--- INPUT_LOCATION: {file_location}')
-    print(f'--- OUT_LOCATION_TMP: {out_location}')
-    print(f'--- OUT_LOCATION_FINAL: {final_out_location}')
-    print(f'--- Depth of frames per run: {FRAMES_PER_DECON}')
-    print(f'--- Iterations: {ITERATIONS}')
-    print(f'--- NA: {na}')
-    print(f'--- RI: {sample_ri}')
-    print(f'--- Emission Wavelength: {emission_wavelength}')
-    print(f'--- Lateral Resolution: X: {x_res}, Y: {y_res}')
-    print(f'--- Z Steps: {z_res}')
-    print(f'--- PSF Model: {psf_model}')
-
     if '.btf' in str(file_location):
         print('Opening File as mesospim_btf_helper')
         stack = mesospim_btf_helper(file_location)
@@ -538,7 +575,11 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         normalize=True,
     )
 
-    psf_image = out_location.parent / 'psf.tif'
+    print(f'Determining whether PSF should be trimmed')
+    print(f'PSF input shape: {psf.shape}')
+    psf = trim_psf(psf) #Reduce psf below threshold value set in constants
+    print(f'PSF trimmed shape: {psf.shape}')
+    psf_image = out_location.parent / f'psf_RI{sample_ri}_{emission_wavelength}nm.tif'
     if not psf_image.is_file():
         save_image(psf_image, psf)
 
@@ -546,6 +587,23 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
     ARRAY_PADDING = [[int((x * 2) + 1) for z in [1, 1]] for x in psf.shape]
     stack = np.pad(stack, ARRAY_PADDING, mode='reflect')
     print(f'PADDED_SHAPE: {stack.shape}')
+
+    ## Attempt to determine the number of frames that will max out vRAM for most efficient processing.
+    FRAMES_PER_DECON = calculate_max_frames_per_chunk(stack.shape[1:],(ARRAY_PADDING[1][0],ARRAY_PADDING[2][0]))
+    # print(f'*
+
+
+    print(f'--- INPUT_LOCATION: {file_location}')
+    print(f'--- OUT_LOCATION_TMP: {out_location}')
+    print(f'--- OUT_LOCATION_FINAL: {final_out_location}')
+    print(f'--- Depth of frames per run: {FRAMES_PER_DECON}')
+    print(f'--- Iterations: {ITERATIONS}')
+    print(f'--- NA: {na}')
+    print(f'--- RI: {sample_ri}')
+    print(f'--- Emission Wavelength: {emission_wavelength}')
+    print(f'--- Lateral Resolution: X: {x_res}, Y: {y_res}')
+    print(f'--- Z Steps: {z_res}')
+    print(f'--- PSF Model: {psf_model}')
 
     # Import pytorch dependencies
     print('Importing pytorch dependencies')
@@ -658,6 +716,19 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         convert_ims(out_location, res=(z_res, y_res, x_res))
 
     time_report(start_time=start_time, to_print=True)
+
+
+
+def calculate_max_frames_per_chunk(y_x_shape: tuple, y_x_overlap: tuple):
+    from constants import VRAM_PER_VOXEL, P40_VRAM
+    current_size = 0
+    frame_per_chunk = 0
+    while True:
+        frame_per_chunk += 1
+        chunk_size = (y_x_shape[0]+y_x_overlap[0]) * (y_x_shape[1]+y_x_overlap[1]) * frame_per_chunk
+        current_size = chunk_size * VRAM_PER_VOXEL
+        if current_size >= P40_VRAM:
+            return frame_per_chunk - 1
 
 if __name__ == "__main__":
     app()

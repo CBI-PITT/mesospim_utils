@@ -13,7 +13,7 @@ mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_IN
 app = typer.Typer()
 
 @app.command()
-def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iterations: int=40, frames_per_chunk: int=70, file_type: str = '.btf', decon: bool=False):
+def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iterations: int=40, frames_per_chunk: int=70, file_type: str = '.btf', decon: bool=True, num_parallel: int=32):
     '''
     Automate the processing of all data in a mesospim directory using slurm
     Stitching must be completed on windows which requires the separate stitch:run_windows_auto_stitch_client to be running
@@ -41,7 +41,7 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
     if refractive_index and decon:
         ## Decon:
         print('Queueing DECON of MesoSPIM tiles on SLURM')
-        job_number, out_dir = decon_dir(dir_loc, refractive_index, iterations=iterations, frames_per_chunk=frames_per_chunk)
+        job_number, out_dir = decon_dir(dir_loc, refractive_index, iterations=iterations, frames_per_chunk=frames_per_chunk, num_parallel=num_parallel)
         print((job_number, out_dir))
         file_type = '.tif'
 
@@ -75,7 +75,8 @@ def ims_conv_then_stitch(dir_loc: Path, metadata_dir: Path, file_type: str='.tif
     print('Setting up script to manage Stitching after IMS conversion')
     from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
     cmd = ''
-    cmd += f'{mesospim_root_application}/stitch3.py write-auto-stitch-message'
+    # cmd += f'{mesospim_root_application}/stitch3.py write-auto-stitch-message'
+    cmd += f'{mesospim_root_application}/stitch4.py write-auto-stitch-message'
     cmd += f' {metadata_dir} {out_dir} {job_number}'
     job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir, after_slurm_jobs=[job_number])
     print(f'Dependency process number: {job_number}')

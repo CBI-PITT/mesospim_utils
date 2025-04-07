@@ -23,6 +23,7 @@ import xml.etree.ElementTree as ET
 import traceback
 from time import sleep
 import os
+from collections import namedtuple
 
 # external package imports
 from imaris_ims_file_reader.ims import ims
@@ -218,61 +219,38 @@ def get_moving_tile(pairwise_alignment_list, tile_num, return_highest_correlatio
 
     return moving_tiles, moving_tiles.get('ImageB')
 
-def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel, montage_name='montage.ims'):
+def get_extends_lines(image_extends_list):
+    '''
+    Generator that takes image_extends_list and yields data for lines in resample input file
+    '''
+    image = namedtuple('Extends', ['channel','file','MinX','MinY','MinZ','MaxX','MaxY','MaxZ'])
+    for ch_num, channel in enumerate(image_extends_list):
+        for ims_file in channel:
+            extends_min = ims_file.get('ExtendMin')
+            extends_max = ims_file.get('ExtendMax')
 
-    anchor_image = image_extends_list[0][0]
-    ExtendMax = anchor_image.get('ExtendMax')
+            current = image(ch_num,
+                ims_file.get('Image'),
+                extends_min.get('x'),
+                extends_min.get('y'),
+                extends_min.get('z'),
+                extends_max.get('x'),
+                extends_max.get('y'),
+                extends_max.get('z'),
+            )
+            yield current
 
-    x_pixels = ExtendMax.get('x')
-    y_pixels = ExtendMax.get('y')
-    z_pixels = ExtendMax.get('z')
+def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel, montage_name='montage.ims', channel=0):
 
-    print(f'Tile Size: {x_pixels}x, {y_pixels}y, {z_pixels}z')
 
-    grid_x, grid_y = get_grid_size_from_metadata_by_channel(metadata_by_channel)
-    print(f'Grid Size 273: {grid_x}x, {grid_y}y')
-
-    overlap = metadata_by_channel[list(metadata_by_channel.keys())[0]][0]['overlap']
-
-    #moving_tiles = get_moving_tile(pairwise_alignment_list, 16, return_highest_correlation=True)
-
-    ## Build input file for alignment:
-    template = '<Image MinX="{}" MinY="{}" MinZ="{}" MaxX="{}" MaxY="{}" MaxZ="{}">{}</Image>\n'
     input = f'<ImageList>\n'
-
-    MinX = 0.0
-    MinZ = 0.0
-    MaxX = float(x_pixels)
-    MaxZ = float(z_pixels)
-    file_idx = 0
-    for _ in range(grid_x):
-        MinY = 0.0
-        MaxY = float(y_pixels)
-        for _ in range(grid_y):
-
-            moving_tiles, file_name = get_moving_tile(pairwise_alignment_list, file_idx, return_highest_correlation=False, get_average_translation=True)
-            print(f'{moving_tiles=}  : {file_name=}')
-
-            if moving_tiles and moving_tiles.get('Correlation') > CORRELATION_THRESHOLD_FOR_ALIGNMENT:
-                translation = moving_tiles.get('Translation')
-                MinX += translation.get('x')
-                MaxX += translation.get('x')
-                MinY += translation.get('y')
-                MaxY += translation.get('y')
-                MinZ += translation.get('z')
-                MaxZ += translation.get('z')
-
-            new = f'<Image MinX="{MinX:.6f}" MinY="{MinY:.6f}" MinZ="{MinZ:.6f}" MaxX="{MaxX:.6f}" MaxY="{MaxY:.6f}" MaxZ="{MaxZ:.6f}">{file_name}</Image>\n'
-            print(new)
-            MinY = MinY + (y_pixels * (1-overlap))
-            MaxY = MinY + y_pixels
-            input = input + new
-            file_idx += 1
-        MinX = MinX + (x_pixels * (1-overlap))
-        MaxX = MinX + x_pixels
+    for line in get_extends_lines(image_extends_list):
+        if line.channel == channel:
+            new = f'<Image MinX="{line.MinX:.6f}" MinY="{line.MinY:.6f}" MinZ="{line.MinZ:.6f}" MaxX="{line.MaxX:.6f}" MaxY="{line.MaxY:.6f}" MaxZ="{line.MaxZ:.6f}">{line.file}</Image>\n'
+            input += new
     input = input + '</ImageList>'
 
-    output_folder = Path(file_name).parent
+    output_folder = Path(line.file).parent
     resample_input_file_name = output_folder / 'resample_input.xml'
 
     with open(resample_input_file_name, 'w') as f:
@@ -281,8 +259,14 @@ def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_b
     resample_bat_file = output_folder / 'resample.bat'
     output_resample_file = output_folder / montage_name
 
+    montage_name_tmp = montage_name + '.part'
+    output_resample_file_tmp = output_folder / montage_name_tmp
+
     color_file = create_color_file(image_extends_list, metadata_by_channel)
-    resample_bat = WIN_RESAMPLE_BAT.format(resample_input_file_name, output_resample_file, color_file, get_num_processors())
+    resample_bat = WIN_RESAMPLE_BAT.format(resample_input_file_name, output_resample_file_tmp, color_file, get_num_processors())
+
+    # resample_bat += f'\n\nif [ -f "{output_resample_file_tmp}" ]; then\n  mv "{output_resample_file_tmp}" "{output_resample_file}"\n  echo "File renamed to {output_resample_file}"\nelse\n  echo "File {output_resample_file_tmp} does not exist."\nfi'
+
     with open(resample_bat_file, 'w') as f:
         f.write(resample_bat)
 
@@ -399,6 +383,10 @@ def stitch_and_assemble(directory_with_mesospim_metadata: Path, directory_with_i
     # Run resample to build montage
     if not skip_resample or not build_scripts_only:
         run_bat(resample_bat_file)
+        tmp_name = name_of_montage_file + '.part'
+        tmp_name = directory_with_ims_files_to_stitch / tmp_name
+        new_name = directory_with_ims_files_to_stitch / name_of_montage_file
+        os.rename(tmp_name, new_name)
 
 
 auto_stitch_json_message = {
