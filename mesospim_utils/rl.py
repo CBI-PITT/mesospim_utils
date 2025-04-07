@@ -471,7 +471,7 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
           emission_wavelength: int=None, na: float=None, ri: float=None,
           start_index: int=None, stop_index: int=None, save_pre_post: bool=False, queue_ims: bool=False,
           denoise_sigma: float=None, sharpen: bool=False, half_precision: bool=False,
-          psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=20, frames_per_chunk: int=75
+          psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=20, frames_per_chunk: int=None
           ):
     '''Deconvolution of a file using the richardson-lucy method'''
 
@@ -589,8 +589,8 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
     print(f'PADDED_SHAPE: {stack.shape}')
 
     ## Attempt to determine the number of frames that will max out vRAM for most efficient processing.
-    FRAMES_PER_DECON = calculate_max_frames_per_chunk(stack.shape[1:],(ARRAY_PADDING[1][0],ARRAY_PADDING[2][0]))
-    # print(f'*
+    if FRAMES_PER_DECON is None:
+        FRAMES_PER_DECON = calculate_max_frames_per_chunk(stack.shape[1:],(ARRAY_PADDING[1][0],ARRAY_PADDING[2][0]))
 
 
     print(f'--- INPUT_LOCATION: {file_location}')

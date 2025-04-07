@@ -18,7 +18,7 @@ app = typer.Typer()
 @app.command()
 def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
               denoise_sigma: float=None, sharpen: bool=False,
-              half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=100,
+              half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=None,
               num_parallel: int=8
               ):
     '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
@@ -87,7 +87,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         commands += f'{" --half-precision" if half_precision else " --no-half-precision"}'
         commands += f' --psf-shape {psf_shape[0]} {psf_shape[1]} {psf_shape[2]}'
         commands += f' --iterations {iterations}'
-        commands += f' --frames-per-chunk {frames_per_chunk}'
+        commands += f' --frames-per-chunk {frames_per_chunk}' if frames_per_chunk is not None else ''
         commands += '"'
 
     commands += '\n)\n\n'

@@ -42,8 +42,8 @@ SLURM_PARAMETERS_DECON = {
 
 PSF_THRESHOLD = 1e-5 # Automatically reduce PSF size to exclude values below this.
 
-P40_VRAM = 24576 * 0.95
-VRAM_PER_VOXEL = 17136 / ((3200+15) * (3200+15) * 70)
+P40_VRAM = 24576 * 0.95 # 0.95 is an arbitrary factor to ensure that we don't over fill the GPU and cause a crash.
+VRAM_PER_VOXEL = 17136 / ((3200+15) * (3200+15) * 70) # Approximation based on real data
 
 #######################################################################################################################
 ####  Imaris file converter constants ###
