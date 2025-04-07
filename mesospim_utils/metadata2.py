@@ -62,6 +62,11 @@ def collect_all_metadata(location: Path, alt_save_path:Path = None, prepare=True
 
 def sort_meta_list(meta_list):
 
+    '''
+    take a list of dictionaries where each dictionary represents a metadata file from the mesospim.
+    The meta_list is the output of function: save_dir_of_meta_to_json and read by function: json_file_to_dict(save_json_path)
+    '''
+
     # Dictionary to store sorted data dynamically
     sorted_data = {}
 
@@ -76,11 +81,11 @@ def sort_meta_list(meta_list):
         file_name = file_path.name
 
         # Extract tile number
-        tile_match = tile_pattern.search(file_name)
+        tile_match = tile_pattern.search(file_name) #Extract tile number from filename
         tile_number = int(tile_match.group(1)) if tile_match else None
 
         # Extract channel number
-        channel_match = channel_pattern.search(file_name)
+        channel_match = channel_pattern.search(file_name) #Extract channel wavelength from filename
         if channel_match:
             channel_number = channel_match.group(1) + channel_match.group(2)  # e.g., '561b'
         else:
@@ -99,8 +104,20 @@ def sort_meta_list(meta_list):
     for channel in sorted_data:
         sorted_data[channel].sort(key=lambda x: x["tile_number"])
 
+    # Ensure keys of metadata dictionary are always sorted in order of channel excitation
+    sorted_data = dict(sorted(sorted_data.items(), key=lambda item: sort_key(item[0])))
+
     return sorted_data
 
+
+def sort_key(key):
+    match = re.match(r"(\d+)([a-zA-Z]*)", str(key))
+    if match:
+        num_part = int(match.group(1))
+        letter_part = match.group(2)
+        return (num_part, letter_part)
+    else:
+        return (float('inf'), str(key))  # fallback for unexpected format
 
 def annotate_metadata(metadata_by_channel):
 
@@ -365,14 +382,19 @@ def get_entry_for_file_name(meta_dict, file_name):
 
 if __name__ == "__main__":
 
-    input_directory = r"/CBI_FastStore/tmp/mesospim/knee"  # Change to the folder where the files are stored
-    output_json = fr"Z:\tmp\mesospim\meta_test_data\{METADATA_FILENAME}"
-    output_directory = r"Z:\tmp\mesospim\meta_test_data\recreated_files"
+    # input_directory = r"/CBI_FastStore/tmp/mesospim/knee"  # Change to the folder where the files are stored
+    # output_json = fr"Z:\tmp\mesospim\meta_test_data\{METADATA_FILENAME}"
+    # output_directory = r"Z:\tmp\mesospim\meta_test_data\recreated_files"
+    #
+    # from pprint import pprint as print
+    # meta_dict = collect_all_metadata(input_directory, prepare=True)
+    # print(meta_dict)
+    # annotate_metadata(meta_list)
 
-    from pprint import pprint as print
+    input_directory = r'/CBI_FastStore/Acquire/MesoSPIM/stujenske-j/4CL32/040225'
     meta_dict = collect_all_metadata(input_directory, prepare=True)
     print(meta_dict)
-    # annotate_metadata(meta_list)
+    print(list(meta_dict.keys()))
 
     # # Step 1: Save parsed data to JSON
     # meta_list = save_dir_of_meta_to_json(input_directory, output_json)
