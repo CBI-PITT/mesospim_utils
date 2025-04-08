@@ -19,7 +19,7 @@ app = typer.Typer()
 def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
               denoise_sigma: float=None, sharpen: bool=False,
               half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=None,
-              num_parallel: int=8
+              num_parallel: int=None
               ):
     '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
     import subprocess
@@ -47,9 +47,13 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     JOB_LABEL = PARAMS.get('JOB_LABEL')
     RAM_GB = PARAMS.get('RAM_GB')
     GRES = PARAMS.get('GRES')
-    PARALLEL_JOBS = PARAMS.get('PARALLEL_JOBS',1)
     NICE = PARAMS.get('NICE')
     TIME_LIMIT = PARAMS.get('TIME_LIMIT')
+
+    if num_parallel is None:
+        PARALLEL_JOBS = PARAMS.get('PARALLEL_JOBS', 1)
+    else:
+        PARALLEL_JOBS = num_parallel
 
     SBATCH_ARG = '#SBATCH {}\n'
     # to_run = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon", f'-o {log_dir} / %A_%a.log', f'--array=0-{num_files-1}']
@@ -64,13 +68,6 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
     commands += SBATCH_ARG.format(f'--array=0-{num_files - 1}{"%" + str(PARALLEL_JOBS) if PARALLEL_JOBS > 0 else ""}')
     commands += "\n"
-
-    # commands += SBATCH_ARG.format('-p gpu')
-    # commands += SBATCH_ARG.format('--gres=gpu:1')
-    # commands += SBATCH_ARG.format('-J decon')
-    # commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
-    # commands += SBATCH_ARG.format(f'--array=0-{num_files-1}{"%" + str(num_parallel) if num_parallel>0 else ""}')
-    # commands += "\n"
 
     commands += "commands=("
     #Build each command

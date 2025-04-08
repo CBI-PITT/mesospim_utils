@@ -436,36 +436,6 @@ def trim_psf(psf):
     return psf
 
 
-
-# def trim_psf(arr):
-#     from constants import PSF_THRESHOLD as threshold
-#
-#     # assert arr.ndim == 3, "Array must be 3D"
-#
-#     # Create a mask where values are above the threshold
-#     mask = arr > threshold
-#
-#     # Find the bounding box of the non-trimmed region
-#     def find_trim_indices(mask, axis):
-#         # Collapse along all axes except the one we're trimming
-#         collapsed = np.any(mask, axis=tuple(i for i in range(3) if i != axis))
-#         indices = np.where(collapsed)[0]
-#         if len(indices) == 0:
-#             return 0, 0  # no values above threshold along this axis
-#         return indices[0], indices[-1] + 1  # +1 because slice end is exclusive
-#
-#     x_start, x_end = find_trim_indices(mask, 0)
-#     y_start, y_end = find_trim_indices(mask, 1)
-#     z_start, z_end = find_trim_indices(mask, 2)
-#
-#     # Handle the case where all values are below threshold
-#     if x_end == 0 or y_end == 0 or z_end == 0:
-#         return arr[0:0, 0:0, 0:0]  # return empty array with correct dimensions
-#
-#     return arr[x_start:x_end, y_start:y_end, z_start:z_end]
-
-
-
 @app.command()
 def decon(file_location: Path, refractive_index: float, out_location: Path=None, resolution: tuple[float,float,float]=None,
           emission_wavelength: int=None, na: float=None, ri: float=None,

@@ -4,16 +4,6 @@ Stitch a mesospim dataset after conversion of all tiles to ims file.
 Uses the ImarisStitcher and currently requires it to be install on a Windows computer
 '''
 
-location = r"I:\Acquire\MesoSPIM\zhang-l\4CL19\012425"
-dir_with_ims_files = r"I:\Acquire\MesoSPIM\zhang-l\4CL19\012425\ims_files"
-
-location = r"Z:\Acquire\MesoSPIM\cakir-i\4CL16\020425"
-dir_with_ims_files = r"Z:\Acquire\MesoSPIM\cakir-i\4CL16\020425\ims_files"
-
-location = r"Z:\tmp\mesospim\kidney"
-dir_with_ims_files = r"Z:\tmp\mesospim\kidney\decon\ims_files"
-
-
 # Std lib imports
 from pathlib import Path
 #from pprint import pprint as print
