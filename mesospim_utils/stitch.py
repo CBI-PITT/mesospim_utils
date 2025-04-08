@@ -18,12 +18,16 @@ dir_with_ims_files = r"Z:\tmp\mesospim\kidney\decon\ims_files"
 from pathlib import Path
 #from pprint import pprint as print
 from datetime import datetime
+from multiprocessing import Process
 import subprocess
 import xml.etree.ElementTree as ET
 import traceback
 from time import sleep
 import os
 from collections import namedtuple
+import statistics
+import numpy as np
+
 
 # external package imports
 from imaris_ims_file_reader.ims import ims
@@ -156,68 +160,27 @@ def parse_align_outputs(align_output_file_list):
     return image_extends_list_final, pairwise_alignment_list_final
 
 
-def get_moving_tile(pairwise_alignment_list, tile_num, return_highest_correlation=False, get_average_translation=True):
-    moving_tiles_list = []
+def get_moving_tile(pairwise_alignment_list, tile_num, return_highest_correlation=False, get_average_translation=False):
+    moving_tiles = []
 
     for pairwise_alignment in pairwise_alignment_list:
-        moving_tiles = []
         for entry in pairwise_alignment:
             tile_name = f'Tile{int(tile_num)}_'
             if tile_name in entry.get('ImageB'):
                 moving_tiles.append(entry)
         print(moving_tiles)
 
-        # Short circuit, if no matching tiles for ImageB, Extract ImageA name to return file_name
+        # If no matching tiles for ImageB, Extract ImageA name to return file_name
         if len(moving_tiles) == 0:
             print("No Alignments for this Tile")
-            moving_tiles = []
             for entry in pairwise_alignment:
                 tile_name = f'Tile{int(tile_num)}_'
                 if tile_name in entry.get('ImageA'):
                     moving_tiles.append(entry)
             print(moving_tiles[0].get('ImageA'))
-            return None, moving_tiles[0].get('ImageA')
+            return [], moving_tiles[0].get('ImageA')
 
-
-        if return_highest_correlation and not get_average_translation:
-            highest_index = 0
-            for idx, tile in enumerate(moving_tiles):
-                if tile.get('Correlation') > moving_tiles[highest_index].get('Correlation'):
-                    highest_index = idx
-            moving_tiles = [moving_tiles[highest_index]]
-            #print(moving_tiles)
-
-        # Build a weighted average translation based on correlation
-        if get_average_translation:
-            num_aligns = len(moving_tiles)
-            sum_correlation = sum([x.get('Correlation') for x in moving_tiles])
-            avg_coorelation = sum([x.get('Correlation')*(x.get('Correlation')/sum_correlation) for x in moving_tiles])
-            print(f'Sum: {sum_correlation}, avg: {avg_coorelation}')
-
-            x, y, z = 0,0,0
-            for data in moving_tiles:
-                translation = data.get('Translation')
-                x += translation.get('x') * (data.get('Correlation') / sum_correlation)
-                y += translation.get('y') * (data.get('Correlation') / sum_correlation)
-                z += translation.get('z') * (data.get('Correlation') / sum_correlation)
-
-            alignment_data = {
-                "Correlation": avg_coorelation,
-                "AverageAlign": True,
-                "ImageB": data["ImageB"],
-                "ImageA": [x["ImageA"] for x in moving_tiles],
-                "Translation": {'x': x, 'y': y, 'z': z},
-            }
-            print(alignment_data)
-            moving_tiles = alignment_data
-            moving_tiles_list.append(moving_tiles)
-
-    # Take the highest correlation alignment regardless of channel
-    for tiles in moving_tiles_list:
-        if tiles["Correlation"] > moving_tiles["Correlation"]:
-            moving_tiles = tiles
-
-    return moving_tiles, moving_tiles.get('ImageB')
+    return moving_tiles, moving_tiles[0].get('ImageB')
 
 def get_extends_lines(image_extends_list):
     '''
@@ -240,17 +203,90 @@ def get_extends_lines(image_extends_list):
             )
             yield current
 
-def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel, montage_name='montage.ims', channel=0):
+def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel, montage_name='montage.ims'):
+
+    anchor_image = image_extends_list[0][0]
+    ExtendMax = anchor_image.get('ExtendMax')
+
+    x_pixels = ExtendMax.get('x')
+    y_pixels = ExtendMax.get('y')
+    z_pixels = ExtendMax.get('z')
+
+    print(f'Tile Size: {x_pixels}x, {y_pixels}y, {z_pixels}z')
+
+    grid_x, grid_y = get_grid_size_from_metadata_by_channel(metadata_by_channel)
+    print(f'Grid Size 273: {grid_x}x, {grid_y}y')
+
+    # Collect down alignment
+    downs = {'x':[],'y':[],'z':[]}
+    overs = {'x':[],'y':[],'z':[]}
+    for tile_num in range(grid_y * grid_x): # Go through all potential tile numbers
+        # Find any moving tiles associated with each tile
+        moving_tiles, file_name = get_moving_tile(pairwise_alignment_list, tile_num, return_highest_correlation=False,
+                                                  get_average_translation=False)
+
+        tile_name_previous = f'Tile{int(tile_num - 1)}_'
+        print(f'{tile_name_previous=}')
+        for tile in moving_tiles:
+            if tile_name_previous in tile.get('ImageA'): # Find alignment for the previous Tile i.e. Tile5 aligned with Tile4
+                # if tile.get('Correlation') >= 0:
+                if tile.get('Correlation') >= CORRELATION_THRESHOLD_FOR_ALIGNMENT:
+                    translation = tile.get('Translation')
+                    downs['x'].append(translation.get('x'))
+                    downs['y'].append(translation.get('y'))
+                    downs['z'].append(translation.get('z'))
+            else: # If not previous Tile then it must be a sideways alignment
+                # if tile.get('Correlation') >= 0:
+                if tile.get('Correlation') >= CORRELATION_THRESHOLD_FOR_ALIGNMENT:
+                    translation = tile.get('Translation')
+                    overs['x'].append(translation.get('x'))
+                    overs['y'].append(translation.get('y'))
+                    overs['z'].append(translation.get('z'))
+
+    print(f'{overs=}')
+    print(f'{downs=}')
+
+    overs = {x:y if len(y) > 0 else [0] for x,y in overs.items()} # replace empty lists with 0
+    overs = {x:statistics.median(y) for x, y in overs.items()} # replace lists with median of values
+
+    downs = {x: y if len(y) > 0 else [0] for x, y in downs.items()}  # replace empty lists with 0
+    downs = {x: statistics.median(y) for x, y in downs.items()}  # replace lists with median of values
+
+    ## Build x,y,z coordinate grids
+    overlap = metadata_by_channel[list(metadata_by_channel.keys())[0]][0]['overlap'] # Proportion i.e. 0.1
+    tile_size_um = metadata_by_channel[list(metadata_by_channel.keys())[0]][0]['tile_size_um'] # namedtuple i.e TileSizeUm(x=3200, y=3200, z=9500.0)
+
+    x_min = np.zeros((grid_x, grid_y))
+    y_min = np.zeros((grid_x, grid_y))
+    z_min = np.zeros((grid_x, grid_y))
+
+    for x in range(grid_x):
+        for y in range(grid_y):
+            print(f'Coords for: {(x,y)}')
+            x_min[x, y] = (x * (tile_size_um.x * (1-overlap))) + (y * downs.get('x')) + (x * overs.get('x'))
+            y_min[x, y] = (y * (tile_size_um.y * (1-overlap))) + (y * downs.get('y')) + (x * overs.get('y'))
+
+            z_min[x, y] = 0 + (x * overs.get('z')) + (y * downs.get('z'))
+
+    x_max = x_min + tile_size_um.x
+    y_max = y_min + tile_size_um.y
+    z_max = z_min + tile_size_um.z
 
 
     input = f'<ImageList>\n'
-    for line in get_extends_lines(image_extends_list):
-        if line.channel == channel:
-            new = f'<Image MinX="{line.MinX:.6f}" MinY="{line.MinY:.6f}" MinZ="{line.MinZ:.6f}" MaxX="{line.MaxX:.6f}" MaxY="{line.MaxY:.6f}" MaxZ="{line.MaxZ:.6f}">{line.file}</Image>\n'
+    tile_num = 0
+    for x in range(grid_x):
+        for y in range(grid_y):
+            _ , file_name = get_moving_tile(pairwise_alignment_list, tile_num,
+                                                      return_highest_correlation=False,
+                                                      get_average_translation=False)
+            new = f'<Image MinX="{x_min[x, y]:.6f}" MinY="{y_min[x, y]:.6f}" MinZ="{z_min[x, y]:.6f}" MaxX="{x_max[x, y]:.6f}" MaxY="{y_max[x, y]:.6f}" MaxZ="{z_max[x, y]:.6f}">{file_name}</Image>\n'
             input += new
-    input = input + '</ImageList>'
+            tile_num += 1
+    input += '</ImageList>'
+    print(input)
 
-    output_folder = Path(line.file).parent
+    output_folder = Path(file_name).parent
     resample_input_file_name = output_folder / 'resample_input.xml'
 
     with open(resample_input_file_name, 'w') as f:
@@ -272,7 +308,7 @@ def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_b
 
     print(input)
     print(resample_bat)
-    return resample_bat_file
+    return resample_bat_file, output_resample_file_tmp, output_resample_file
 
 
 def create_color_file(image_extends_list, metadata_by_channel):
@@ -377,16 +413,16 @@ def stitch_and_assemble(directory_with_mesospim_metadata: Path, directory_with_i
     # Build files for resample
     image_extends_list, pairwise_alignment_list = parse_align_outputs(align_output_file_list)
 
-    resample_bat_file = build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel,
+    resample_bat_file, output_resample_file_tmp, output_resample_file = build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel,
                                              montage_name=name_of_montage_file)
 
     # Run resample to build montage
     if not skip_resample or not build_scripts_only:
         run_bat(resample_bat_file)
-        tmp_name = name_of_montage_file + '.part'
-        tmp_name = directory_with_ims_files_to_stitch / tmp_name
-        new_name = directory_with_ims_files_to_stitch / name_of_montage_file
-        os.rename(tmp_name, new_name)
+        # tmp_name = name_of_montage_file + '.part'
+        # tmp_name = directory_with_ims_files_to_stitch / tmp_name
+        # new_name = directory_with_ims_files_to_stitch / name_of_montage_file
+        os.rename(output_resample_file_tmp, output_resample_file)
 
 
 auto_stitch_json_message = {
@@ -407,8 +443,11 @@ auto_stitch_json_message = {
 }
 
 @app.command()
-def write_auto_stitch_message(metadata_location: Path, ims_files_location: Path, job_number: int, name_of_montage_file: str='auto_test_montage.ims',
+def write_auto_stitch_message(metadata_location: Path, ims_files_location: Path, job_number: int, name_of_montage_file: str=None,
                               skip_align: bool=False, skip_resample: bool=False, build_scripts_only: bool=False):
+
+    if name_of_montage_file is None:
+        from constants import MONTAGE_NAME as name_of_montage_file
 
     message = auto_stitch_json_message
     message['directory_with_mesospim_metadata'] = path_to_windows_mappings(metadata_location) if not os.name == 'nt' else metadata_location
@@ -426,10 +465,13 @@ def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_betwee
                running_path: str='running', complete_path: str='complete', error_path: str='error'):
     '''
     A program that runs in windows with ImarisStitcher installed and looks for jobs files to run stitching
+    This can run multiple processes at once and is less prone to errors due to use of multiprocess
     '''
 
     ## For testing - write a message to disk at start.
     # dict_to_json_file(auto_stitch_json_message, listen_path / 'test.json')
+
+    num_processes = 2
 
     running_path = listen_path / running_path
     complete_path = listen_path / complete_path
@@ -477,10 +519,11 @@ def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_betwee
                 del to_run['job_info']
 
                 ## RUN
-                stitch_and_assemble(**to_run)
-                # sleep(5)
-                #float('abc')
-                # float('123')
+                # Create the process
+                p = Process(target=stitch_and_assemble, kwargs=to_run)
+                p.start()
+                print(f'Processing: {data_dir_file_name}')
+                p.join()
 
                 # Fill in processing details
                 message['job_info']['ended'] = datetime.now()
@@ -509,12 +552,24 @@ def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_betwee
         print(f'Waiting {seconds_between_checks} seconds before checking again')
         sleep(seconds_between_checks)
 
-
-
-
-
 if __name__ == "__main__":
     app()
+
+    # align_output = r'/CBI_FastStore/tmp/mesospim/kidney/ims_files/align_output_ch0.xml'
+    # align_output_file_list = [align_output]
+    #
+    # metadata_dir = r'/CBI_FastStore/tmp/mesospim/kidney'
+    # metadata_by_channel = collect_all_metadata(metadata_dir)
+    #
+    # # Build files for resample
+    # image_extends_list, pairwise_alignment_list = parse_align_outputs(align_output_file_list)
+    #
+    # moving_tiles, file_name = get_moving_tile(pairwise_alignment_list, 1, return_highest_correlation=False,
+    #                                           get_average_translation=False)
+    #
+    # x_cord, y_cord, z_cord = build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel, montage_name='montage.ims')
+
+    # app()
     #
     # locations = [
     #     r'Z:\Acquire\MesoSPIM\zhao-y\4CL24\021225',

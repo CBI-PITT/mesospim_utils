@@ -83,6 +83,8 @@ SLURM_PARAMETERS_IMARIS_CONVERTER = {
 ####  Imaris Stitcher constants ###
 #######################################################################################################################
 
+MONTAGE_NAME = 'auto_montage.ims'
+
 # Drive mappings for linux directories in wine for ims file conversions
 WINDOWS_MAPPINGS = { #linux_path:windows_mapped_drive_letter:
 '/h20':'i:',
@@ -97,7 +99,7 @@ SHARED_LINUX_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = r"/CBI_FastStore/tmp/s
 
 METADATA_FILENAME = 'mesospim_metadata.json'
 
-CORRELATION_THRESHOLD_FOR_ALIGNMENT = 0.85
+CORRELATION_THRESHOLD_FOR_ALIGNMENT = 0.6
 
 FRACTION_OF_RAM_FOR_PROCESSING = 0.2
 
