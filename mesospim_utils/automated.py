@@ -13,7 +13,7 @@ mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_IN
 app = typer.Typer()
 
 @app.command()
-def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iterations: int=20, frames_per_chunk: int=70, file_type: str = '.btf', decon: bool=True, num_parallel: int=32):
+def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iterations: int=20, frames_per_chunk: int=None, file_type: str = '.btf', decon: bool=True, num_parallel: int=32):
     '''
     Automate the processing of all data in a mesospim directory using slurm
     Stitching must be completed on windows which requires the separate stitch:run_windows_auto_stitch_client to be running
