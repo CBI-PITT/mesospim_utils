@@ -1,4 +1,5 @@
 from pathlib import Path
+import math, os
 
 LOCATION_OF_MESOSPIM_UTILS_INSTALL = '/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils'
 ENV_PYTHON_LOC = '/h20/home/lab/miniconda3/envs/mesospim_dev/bin/python'
@@ -93,6 +94,7 @@ WINDOWS_MAPPINGS = { #linux_path:windows_mapped_drive_letter:
 
 ## Change this path for any specific installation of ImarisStitcher
 PATH_TO_IMARIS_STITCHER_FOLDER = r"C:\Program Files\Bitplane\ImarisStitcher 10.2.0"
+PATH_TO_IMARIS_STITCHER_TEMP_FOLDER = r"Z:\tmp\stitch_tmp_files" # If set to None, will default to windows user Temp directory
 
 SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = r"Z:\tmp\stitch_jobs"
 SHARED_LINUX_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = r"/CBI_FastStore/tmp/stitch_jobs"
@@ -101,7 +103,9 @@ METADATA_FILENAME = 'mesospim_metadata.json'
 
 CORRELATION_THRESHOLD_FOR_ALIGNMENT = 0.6
 
-FRACTION_OF_RAM_FOR_PROCESSING = 0.2
+PERCENTAGE_OF_MACHINE_RESOURCES_TO_USE_FOR_STITCHING = 0.2
+FRACTION_OF_RAM_FOR_PROCESSING = PERCENTAGE_OF_MACHINE_RESOURCES_TO_USE_FOR_STITCHING
+NUM_CPUS_FOR_STITCH = math.floor(os.cpu_count() * FRACTION_OF_RAM_FOR_PROCESSING)
 
 IMS_STITCHER_COMPRESSION_LEVEL = 6 #GZIP 0-9
 

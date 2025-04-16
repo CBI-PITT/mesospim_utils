@@ -1,7 +1,7 @@
 
 '''
 Stitch a mesospim dataset after conversion of all tiles to ims file.
-Uses the ImarisStitcher and currently requires it to be install on a Windows computer
+Uses the ImarisStitcher and currently requires it to be installed on a Windows computer
 '''
 
 # Std lib imports
@@ -22,12 +22,12 @@ import numpy as np
 # external package imports
 from imaris_ims_file_reader.ims import ims
 import typer
+import json
 
 ## Local imports
 from metadata import collect_all_metadata
 from utils import sort_list_of_paths_by_tile_number
 from utils import map_wavelength_to_RGB
-from utils import get_num_processors
 from utils import ensure_path
 from utils import dict_to_json_file, json_file_to_dict
 from utils import path_to_windows_mappings
@@ -105,7 +105,8 @@ def build_align_inputs(metadata_by_channel: dict, dir_with_ims_files: Path, over
 
 def run_bat(bat_file):
     IDLE_PRIORITY_CLASS = subprocess.IDLE_PRIORITY_CLASS # 0x00000040
-    subprocess.run([bat_file], shell=True, check=True, creationflags=IDLE_PRIORITY_CLASS)
+    BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+    subprocess.run([bat_file], shell=True, check=True, creationflags=BELOW_NORMAL_PRIORITY_CLASS)
     return True
 
 
@@ -115,6 +116,12 @@ def parse_align_outputs(align_output_file_list):
     pairwise_alignment_list_final = []
 
     for align_output_file in align_output_file_list:
+        align_output_file = ensure_path(align_output_file)
+
+        if not align_output_file.exists():
+            print(f'File does not exist: {align_output_file}')
+            continue
+
         tree = ET.parse(align_output_file)
         root = tree.getroot()
 
@@ -160,15 +167,15 @@ def get_moving_tile(pairwise_alignment_list, tile_num, return_highest_correlatio
                 moving_tiles.append(entry)
         print(moving_tiles)
 
-        # If no matching tiles for ImageB, Extract ImageA name to return file_name
-        if len(moving_tiles) == 0:
-            print("No Alignments for this Tile")
-            for entry in pairwise_alignment:
-                tile_name = f'Tile{int(tile_num)}_'
-                if tile_name in entry.get('ImageA'):
-                    moving_tiles.append(entry)
-            print(moving_tiles[0].get('ImageA'))
-            return [], moving_tiles[0].get('ImageA')
+    # If no matching tiles for ImageB, Extract ImageA name to return file_name
+    if len(moving_tiles) == 0:
+        print("No Alignments for this Tile")
+        for entry in pairwise_alignment:
+            tile_name = f'Tile{int(tile_num)}_'
+            if tile_name in entry.get('ImageA'):
+                moving_tiles.append(entry)
+        print(moving_tiles[0].get('ImageA'))
+        return [], moving_tiles[0].get('ImageA')
 
     return moving_tiles, moving_tiles[0].get('ImageB')
 
@@ -210,6 +217,8 @@ def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_b
     # Collect down alignment
     downs = {'x':[],'y':[],'z':[]}
     overs = {'x':[],'y':[],'z':[]}
+    all_downs = {'x': [], 'y': [], 'z': []}
+    all_overs = {'x': [], 'y': [], 'z': []}
     for tile_num in range(grid_y * grid_x): # Go through all potential tile numbers
         # Find any moving tiles associated with each tile
         moving_tiles, file_name = get_moving_tile(pairwise_alignment_list, tile_num, return_highest_correlation=False,
@@ -220,15 +229,21 @@ def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_b
         for tile in moving_tiles:
             if tile_name_previous in tile.get('ImageA'): # Find alignment for the previous Tile i.e. Tile5 aligned with Tile4
                 # if tile.get('Correlation') >= 0:
+                translation = tile.get('Translation')
+                all_downs['x'].append(translation.get('x'))
+                all_downs['y'].append(translation.get('y'))
+                all_downs['z'].append(translation.get('z'))
                 if tile.get('Correlation') >= CORRELATION_THRESHOLD_FOR_ALIGNMENT:
-                    translation = tile.get('Translation')
                     downs['x'].append(translation.get('x'))
                     downs['y'].append(translation.get('y'))
                     downs['z'].append(translation.get('z'))
             else: # If not previous Tile then it must be a sideways alignment
                 # if tile.get('Correlation') >= 0:
+                translation = tile.get('Translation')
+                all_overs['x'].append(translation.get('x'))
+                all_overs['y'].append(translation.get('y'))
+                all_overs['z'].append(translation.get('z'))
                 if tile.get('Correlation') >= CORRELATION_THRESHOLD_FOR_ALIGNMENT:
-                    translation = tile.get('Translation')
                     overs['x'].append(translation.get('x'))
                     overs['y'].append(translation.get('y'))
                     overs['z'].append(translation.get('z'))
@@ -236,11 +251,27 @@ def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_b
     print(f'{overs=}')
     print(f'{downs=}')
 
+    any_overs = [True if len(y) > 0 else False for _, y in overs.items()]
     overs = {x:y if len(y) > 0 else [0] for x,y in overs.items()} # replace empty lists with 0
     overs = {x:statistics.median(y) for x, y in overs.items()} # replace lists with median of values
 
+    any_downs = [True if len(y) > 0 else False for _, y in downs.items()]
     downs = {x: y if len(y) > 0 else [0] for x, y in downs.items()}  # replace empty lists with 0
     downs = {x: statistics.median(y) for x, y in downs.items()}  # replace lists with median of values
+
+    # Add Calculated offsets only to be saved to a file
+    # If True, the values were derived by the ImarisStitcher
+    # If False, it implies that the values defaulted to 0,0,0 because no data was retrieved from Stitcher
+    # If False, most likely no values had a Correlation >= the CORRELATION_THRESHOLD_FOR_ALIGNMENT
+    if any(any_overs):
+        overs['Calculated offsets'] = True
+    else:
+        overs['Calculated offsets'] = False
+
+    if any(any_downs):
+        downs['Calculated offsets'] = True
+    else:
+        downs['Calculated offsets'] = False
 
     ## Build x,y,z coordinate grids
     overlap = metadata_by_channel[list(metadata_by_channel.keys())[0]][0]['overlap'] # Proportion i.e. 0.1
@@ -282,6 +313,28 @@ def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_b
     with open(resample_input_file_name, 'w') as f:
         f.write(input)
 
+    # Record the offsets in downs and overs.
+    resample_tile_offsets_file = output_folder / 'resample_median_tile_offsets_microns.txt'
+    offsets = {
+        'overs': overs,
+        'downs': downs,
+        'app': 'ImarisStitcher'
+    }
+    # Write to a JSON file
+    with open(resample_tile_offsets_file, 'w') as f:
+        json.dump(offsets, f, indent=4)
+
+    # Record the all offsets in all_downs and all_overs.
+    resample_all_tile_offsets_file = output_folder / 'resample_all_tile_offsets_microns.txt'
+    all_offsets = {
+        'overs': all_overs,
+        'downs': all_downs,
+        'app': 'ImarisStitcher'
+    }
+    # Write to a JSON file
+    with open(resample_all_tile_offsets_file, 'w') as f:
+        json.dump(all_offsets, f, indent=4)
+
     resample_bat_file = output_folder / 'resample.bat'
     output_resample_file = output_folder / montage_name
 
@@ -289,7 +342,7 @@ def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_b
     output_resample_file_tmp = output_folder / montage_name_tmp
 
     color_file = create_color_file(image_extends_list, metadata_by_channel)
-    resample_bat = WIN_RESAMPLE_BAT.format(resample_input_file_name, output_resample_file_tmp, color_file, get_num_processors())
+    resample_bat = WIN_RESAMPLE_BAT.format(resample_input_file_name, output_resample_file_tmp, color_file)
 
     # resample_bat += f'\n\nif [ -f "{output_resample_file_tmp}" ]; then\n  mv "{output_resample_file_tmp}" "{output_resample_file}"\n  echo "File renamed to {output_resample_file}"\nelse\n  echo "File {output_resample_file_tmp} does not exist."\nfi'
 
@@ -451,17 +504,16 @@ def write_auto_stitch_message(metadata_location: Path, ims_files_location: Path,
 
 
 @app.command()
-def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_between_checks: int=30,
+def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_between_checks: int=60,
                running_path: str='running', complete_path: str='complete', error_path: str='error'):
     '''
     A program that runs in windows with ImarisStitcher installed and looks for jobs files to run stitching
-    This can run multiple processes at once and is less prone to errors due to use of multiprocess
     '''
 
     ## For testing - write a message to disk at start.
     # dict_to_json_file(auto_stitch_json_message, listen_path / 'test.json')
 
-    num_processes = 2
+    import gc
 
     running_path = listen_path / running_path
     complete_path = listen_path / complete_path
@@ -474,7 +526,7 @@ def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_betwee
 
 
     while True:
-        print(listen_path)
+        print(f'Look for stitch jobs at: {listen_path}')
         list_of_job_files = list(listen_path.glob('*.json'))
 
         if len(list_of_job_files) == 0:
@@ -510,10 +562,16 @@ def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_betwee
 
                 ## RUN
                 # Create the process
-                p = Process(target=stitch_and_assemble, kwargs=to_run)
-                p.start()
-                print(f'Processing: {data_dir_file_name}')
-                p.join()
+                while True:
+                    # Perform garbage collection to clean up memory
+                    gc.collect()
+                    p = Process(target=stitch_and_assemble, kwargs=to_run)
+                    p.start()
+                    print(f'Processing: {data_dir_file_name}')
+                    p.join()
+                    gc.collect()
+                    if p.exitcode != 0:
+                        raise Exception("This process exited with a non-zero code")
 
                 # Fill in processing details
                 message['job_info']['ended'] = datetime.now()
