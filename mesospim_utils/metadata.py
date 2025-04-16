@@ -380,6 +380,16 @@ def get_entry_for_file_name(meta_dict, file_name):
         return meta_dict[ch][idx]
     return None
 
+def get_all_tile_entries(meta_dict, tile_num):
+    tile_num = int(tile_num)
+    tile_entries = []
+    for ch in meta_dict:
+        for entry in meta_dict[ch]:
+            if int(entry.get('tile_number')) == tile_num:
+                tile_entries.append(entry)
+    return tile_entries
+
+
 if __name__ == "__main__":
 
     # input_directory = r"/CBI_FastStore/tmp/mesospim/knee"  # Change to the folder where the files are stored
