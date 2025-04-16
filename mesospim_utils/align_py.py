@@ -1,39 +1,24 @@
-
-import SimpleITK as sitk
-import numpy as np
 from pathlib import Path
+import statistics
+# from pprint import pprint as print
+
+import numpy as np
+import SimpleITK as sitk
 from skimage import img_as_float32, img_as_uint
 from skimage.registration import phase_cross_correlation
 from scipy.ndimage import gaussian_filter
 from imaris_ims_file_reader.ims import ims
-import statistics
-import re
-import json
-# from pprint import pprint as print
-
 
 from metadata import collect_all_metadata, get_first_entry, get_all_tile_entries
 from utils import ensure_path, sort_list_of_paths_by_tile_number
 from rl import mesospim_btf_helper
 from utils import dict_to_json_file
+from align_utils import calculate_offsets, annotate_with_sheet_direction, separate_by_sheet_direction
 
-import SimpleITK as sitk
-import numpy as np
-
-def compute_ncc(fixed_np, moving_np):
-    fixed_flat = fixed_np.flatten()
-    moving_flat = moving_np.flatten()
-    fixed_mean = np.mean(fixed_flat)
-    moving_mean = np.mean(moving_flat)
-
-    numerator = np.sum((fixed_flat - fixed_mean) * (moving_flat - moving_mean))
-    denominator = np.sqrt(np.sum((fixed_flat - fixed_mean) ** 2) * np.sum((moving_flat - moving_mean) ** 2))
-
-    if denominator == 0:
-        return 0
-
-    return numerator / denominator
-
+'''
+This module has functions to deal with calculating alignment of mesospim data using python-based tools.
+Currently it is only compatible with tiles converted to Imaris (.ims) files and SimpleITK for alignment 
+'''
 
 def compute_shift_np_microns_multiscale(fixed, moving, spacing, initial_transform=None, shrink_factors=[2, 1],
                                         smoothing_sigmas=[1, 0]):
@@ -114,14 +99,6 @@ def compute_shift_np_microns_multiscale(fixed, moving, spacing, initial_transfor
 
 
 
-
-
-
-
-
-
-
-
 def compute_ncc(fixed_np, moving_np):
     fixed_flat = fixed_np.flatten()
     moving_flat = moving_np.flatten()
@@ -134,67 +111,6 @@ def compute_ncc(fixed_np, moving_np):
 
     return numerator / denominator if denominator != 0 else 0.0
 
-
-# def compute_shift_np_microns_multiscale(fixed, moving, spacing, initial_transform=None, shrink_factors=[2, 1],
-#                                         smoothing_sigmas=[1, 0]):
-#     if fixed.dtype != float:
-#         fixed = img_as_float32(fixed)
-#     if moving.dtype != float:
-#         moving = img_as_float32(moving)
-#
-#     fixed_sitk = sitk.GetImageFromArray(fixed)
-#     moving_sitk = sitk.GetImageFromArray(moving)
-#
-#     fixed_sitk.SetSpacing(spacing)
-#     moving_sitk.SetSpacing(spacing)
-#
-#     fixed_sitk.SetOrigin((0, 0, 0))
-#     moving_sitk.SetOrigin((0, 0, 0))
-#
-#     method = sitk.ImageRegistrationMethod()
-#     method.SetMetricAsMeanSquares()
-#     method.SetOptimizerAsRegularStepGradientDescent(
-#         learningRate=1.0,
-#         minStep=0.01,
-#         numberOfIterations=1000,
-#         gradientMagnitudeTolerance=1e-6
-#     )
-#     transform = sitk.TranslationTransform(3)
-#     method.SetInitialTransform(transform)
-#
-#     method.SetInterpolator(sitk.sitkLinear)
-#     method.SetShrinkFactorsPerLevel(shrinkFactors=shrink_factors)
-#     method.SetSmoothingSigmasPerLevel(smoothing_sigmas=smoothing_sigmas)
-#     method.SmoothingSigmasAreSpecifiedInPhysicalUnitsOn()
-#
-#     if initial_transform:
-#         method.SetInitialTransform(initial_transform, inPlace=False)
-#
-#     def iteration_update(method):
-#         print(f"Level: {method.GetCurrentLevel()}, Iter: {method.GetOptimizerIteration()}, "
-#               f"Metric: {method.GetMetricValue()}, Shift: {transform.GetOffset()}")
-#
-#     method.AddCommand(sitk.sitkIterationEvent, lambda: iteration_update(method))
-#
-#     final_transform = method.Execute(fixed_sitk, moving_sitk)
-#
-#     offsets = final_transform.GetParameters()
-#     offsets = offsets[::-1]  # (x, y, z) → (z, y, x) for NumPy convention
-#     print("Shift (microns):", offsets)
-#
-#     # Resample moving to fixed space using final transform
-#     resampled_moving = sitk.Resample(moving_sitk, fixed_sitk, final_transform, sitk.sitkLinear, 0.0, moving_sitk.GetPixelID())
-#
-#     # Convert both to NumPy arrays for NCC
-#     fixed_np = sitk.GetArrayFromImage(fixed_sitk)
-#     moving_np = sitk.GetArrayFromImage(resampled_moving)
-#
-#     ncc_score = compute_ncc(fixed_np, moving_np)
-#     print("NCC after alignment:", ncc_score)
-#
-#     return np.array(offsets), final_transform, ncc_score
-#
-#
 
 def align_ims_files(directory_with_mesospim_metadata, directory_with_ims_tiles, channel: list=None, res_overide=None):
 
@@ -389,50 +305,6 @@ def align_ims_files(directory_with_mesospim_metadata, directory_with_ims_tiles, 
     return overs, downs
 
 
-def filer_coorelation(align_list, coorelation=0.75):
-    return [x for x in align_list if x.get('corr') >= coorelation]
-
-
-def calculate_offsets(aligns_list, coorelation=0.75):
-    aligns_list = filer_coorelation(aligns_list, coorelation=coorelation)
-    x = statistics.median([x.get('x') for x in aligns_list])
-    y = statistics.median([x.get('y') for x in aligns_list])
-    z = statistics.median([x.get('z') for x in aligns_list])
-    medians = {
-        'x':x,
-        'y':y,
-        'z':z
-    }
-    return medians
-
-def annotate_with_sheet_direction(directory_with_mesospim_metadata, align_list):
-    directory_with_mesospim_metadata = ensure_path(directory_with_mesospim_metadata)
-    mesospim_metadata = collect_all_metadata(directory_with_mesospim_metadata)
-    for current_align in align_list:
-        # Extract moving image name
-        moving_fn = current_align.get('moving').name
-
-        # Get tile number
-        match = re.search(r'Tile(\d+)', moving_fn)
-        tile_num = match.group(1)
-
-        # Grab the first entry for this tile number
-        meta_entry_current_align = get_all_tile_entries(mesospim_metadata, tile_num)[0]
-
-        # Determine direction left/right light sheet
-        sheet_direction = meta_entry_current_align.get("CFG").get("Shutter")
-        sheet_direction = sheet_direction.lower()
-
-        # Append direction to entry
-        current_align['sheet'] = sheet_direction
-    return align_list
-
-def separate_by_sheet_direction(align_list):
-    left = [x for x in align_list if x.get('sheet') == 'left']
-    right = [x for x in align_list if x.get('sheet') == 'right']
-    return left, right
-
-
 def align(directory_with_mesospim_metadata, directory_with_ims_tiles, res_overide=3):
     overs, downs = align_ims_files(directory_with_mesospim_metadata, directory_with_ims_tiles, res_overide=res_overide)
 
@@ -441,18 +313,18 @@ def align(directory_with_mesospim_metadata, directory_with_ims_tiles, res_overid
     downs = annotate_with_sheet_direction(directory_with_mesospim_metadata, downs)
 
     # Calculate median offsets for overs and downs
-    overs_med = calculate_offsets(overs, coorelation=0.75)
-    downs_med = calculate_offsets(downs, coorelation=0.75)
+    overs_med = calculate_offsets(overs, correlation=0.75)
+    downs_med = calculate_offsets(downs, correlation=0.75)
 
     # Separate offsets by sheet directionality
     over_left, over_right = separate_by_sheet_direction(overs)
     down_left, down_right = separate_by_sheet_direction(downs)
 
     # Calculate median offsets for L/R Overs/Downs
-    o_l = calculate_offsets(over_left, coorelation=0.75)
-    o_r = calculate_offsets(over_right, coorelation=0.75)
-    d_l = calculate_offsets(down_left, coorelation=0.75)
-    d_r = calculate_offsets(down_right, coorelation=0.75)
+    o_l = calculate_offsets(over_left, correlation=0.75)
+    o_r = calculate_offsets(over_right, correlation=0.75)
+    d_l = calculate_offsets(down_left, correlation=0.75)
+    d_r = calculate_offsets(down_right, correlation=0.75)
 
     ## Save offset info
     file_output = Path(directory_with_ims_tiles) / 'resample_median_tile_offsets_microns.json'
@@ -467,8 +339,6 @@ def align(directory_with_mesospim_metadata, directory_with_ims_tiles, res_overid
 
     # Write to a JSON file
     dict_to_json_file(median_offsets, file_output)
-    # with open(file_output, 'w') as f:
-    #     json.dump(median_offsets, f, indent=4)
 
     file_output = Path(directory_with_ims_tiles) / 'resample_all_tile_offsets_microns.json'
     all_offsets = {
@@ -482,8 +352,6 @@ def align(directory_with_mesospim_metadata, directory_with_ims_tiles, res_overid
 
     # Write to a JSON file
     dict_to_json_file(all_offsets, file_output)
-    # with open(file_output, 'w') as f:
-    #     json.dump(all_offsets, f, indent=4)
 
     return overs, downs, over_left, over_right, down_left, down_right, overs_med, downs_med, o_l, o_r, d_l, d_r
 
