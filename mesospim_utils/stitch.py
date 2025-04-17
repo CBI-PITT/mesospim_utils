@@ -562,16 +562,15 @@ def run_windows_auto_stitch_client(listen_path: Path=listen_path, seconds_betwee
 
                 ## RUN
                 # Create the process
-                while True:
-                    # Perform garbage collection to clean up memory
-                    gc.collect()
-                    p = Process(target=stitch_and_assemble, kwargs=to_run)
-                    p.start()
-                    print(f'Processing: {data_dir_file_name}')
-                    p.join()
-                    gc.collect()
-                    if p.exitcode != 0:
-                        raise Exception("This process exited with a non-zero code")
+                # Perform garbage collection to clean up memory
+                gc.collect()
+                p = Process(target=stitch_and_assemble, kwargs=to_run)
+                p.start()
+                print(f'Processing: {data_dir_file_name}')
+                p.join()
+                gc.collect()
+                if p.exitcode != 0:
+                    raise Exception("This process exited with a non-zero code")
 
                 # Fill in processing details
                 message['job_info']['ended'] = datetime.now()
