@@ -90,6 +90,8 @@ MONTAGE_NAME = 'auto_montage.ims'
 WINDOWS_MAPPINGS = { #linux_path:windows_mapped_drive_letter:
 '/h20':'i:',
 '/CBI_FastStore':'z:',
+'//faststore.cbi.pitt.edu/CBI_FastStore':'z:',
+'//tn.cbi.pitt.edu/h20':'i:'
 }
 
 ## Change this path for any specific installation of ImarisStitcher

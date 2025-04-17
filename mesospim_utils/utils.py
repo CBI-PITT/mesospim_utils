@@ -83,6 +83,8 @@ def convert_paths(obj):
         return [convert_paths(v) for v in obj]
     elif isinstance(obj, str) and (':' in obj) and ("/" in obj or "\\" in obj):  # Heuristic check for paths
         return Path(obj)
+    elif isinstance(obj, str) and ( obj.startswith('//:') or obj.startswith('\\\\:') ):  # Heuristic check for paths
+        return Path(obj)
     return obj
 
 def convert_datetimes(obj):
