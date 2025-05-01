@@ -49,14 +49,14 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
     print('Setting up script to manage IMS conversions after DECON')
     from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
     cmd = ''
-    cmd += f'{mesospim_root_application}/automated.py ims-conv-then-stitch'
+    cmd += f'{mesospim_root_application}/automated.py ims-conv-then-align'
     cmd += f' {out_dir} {dir_loc} --file-type={file_type}'
     job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir, after_slurm_jobs=[job_number] if job_number else None)
     print(f'Dependency process number: {job_number}')
 
 
 @app.command()
-def ims_conv_then_stitch(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'):
+def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'):
 
     # Collect all metadata from MesoSPIM acquisition directory and save to mesospim_metadata.json in the ims file dir
     print(f'Extracting metadata from {metadata_dir}')
@@ -71,11 +71,20 @@ def ims_conv_then_stitch(dir_loc: Path, metadata_dir: Path, file_type: str='.tif
     from slurm import convert_ims_dir_mesospim_tiles_slurm_array
     job_number, out_dir = convert_ims_dir_mesospim_tiles_slurm_array(dir_loc, file_type=file_type, res=(res.z,res.y,res.x))
 
-    # Dependency process that kicks off IMS build following DECON
-    print('Setting up script to manage Stitching after IMS conversion')
+    # Dependency process that kicks off alignment following IMS Convert
+    print('Setting up script to manage alignment calculation after IMS conversion')
+    from constants import SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN
+    cmd = ''
+    cmd += f'{mesospim_root_application}/align_py.py'
+    cmd += f' {metadata_dir} {out_dir}'
+    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN, out_dir, after_slurm_jobs=[job_number])
+    print(f'Dependency process number: {job_number}')
+
+    # Dependency process that kicks off windows resampling
+    print('Setting up script to manage resampling after alignment')
     from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
     cmd = ''
-    cmd += f'{mesospim_root_application}/stitch.py write-auto-stitch-message'
+    cmd += f'{mesospim_root_application}/resample_ims.py write-auto-resample-message'
     cmd += f' {metadata_dir} {out_dir} {job_number}'
     job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir, after_slurm_jobs=[job_number])
     print(f'Dependency process number: {job_number}')

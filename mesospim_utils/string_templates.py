@@ -1,8 +1,7 @@
 
 from constants import PATH_TO_IMARIS_STITCHER_FOLDER, PATH_TO_IMARIS_STITCHER_TEMP_FOLDER, NUM_CPUS_FOR_STITCH
-
 from constants import FRACTION_OF_RAM_FOR_PROCESSING
-from constants import IMS_CONVERTER_COMPRESSION_LEVEL
+from constants import IMS_STITCHER_COMPRESSION_LEVEL
 from utils import get_ram_mb
 
 memlimit_for_processing = int(get_ram_mb() * FRACTION_OF_RAM_FOR_PROCESSING)
@@ -84,7 +83,7 @@ echo Working directory set to: %CD%
  --color "{'{}'}"^
  --jobs {NUM_CPUS_FOR_STITCH}^
  --memlimit {memlimit_for_processing}^
- --compression eCompressionAlgorithmGzipLevel{IMS_CONVERTER_COMPRESSION_LEVEL}
+ --compression eCompressionAlgorithmGzipLevel{IMS_STITCHER_COMPRESSION_LEVEL}
 
 {CLEAN_UP_TEMP_FILES if PATH_TO_IMARIS_STITCHER_TEMP_FOLDER is not None else ""}'''
 

@@ -1,143 +1,116 @@
+'''
+This module will handle the reading and organization of configuration
+and any necessary hardcoded constants
+'''
+
 from pathlib import Path
 import math, os
+import yaml
 
-LOCATION_OF_MESOSPIM_UTILS_INSTALL = '/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils'
-ENV_PYTHON_LOC = '/h20/home/lab/miniconda3/envs/mesospim_dev/bin/python'
+def read_config():
 
-# Dependencies are tasks that run a short process that spins off other processes
-# This is used to coordinate between DECON, IMARIS conversion
-SLURM_PARAMETERS_FOR_DEPENDENCIES = {
-    'PARTITION': 'compute,gpu', #multiple partitions can be specified with comma separation part1,par2
-    'CPUS': 1,
-    'JOB_LABEL': 'dependency',
-    'RAM_GB': 4,
-    'GRES': None, # Specific exactly as it would be in slurm eg. "gpu:1" or None
-    'PARALLEL_JOBS': 1,
-    'NICE': 0,
-    'TIME_LIMIT': '0-00:02:00', # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
-}
+    # Define relative path
+    config_path = Path(__file__).parent / 'config' / 'main.yaml'
+    # Resolve it to an absolute path
+    config_path = config_path.resolve()
+
+    if not config_path.is_file():
+        # Define relative path
+        config_path = Path(__file__).parent / 'config' / 'example.yaml'
+        # Resolve it to an absolute path
+        config_path = config_path.resolve()
+
+    # Load YAML config
+    with open(config_path, 'r') as file:
+        return yaml.safe_load(file)
+
+config = read_config()
+
+general = config.get('general')
+slurm = config.get('slurm')
+
+LOCATION_OF_MESOSPIM_UTILS_INSTALL = general.get('location_module')
+ENV_PYTHON_LOC = general.get('location_environment')
+METADATA_FILENAME = general.get('metadata_filename')
+MONTAGE_NAME = general.get('montage_name')
+
+WINDOWS_MAPPINGS = general.get('windows_mappings')
+WINE_MAPPINGS = general.get('wine_mappings')
+
+EMISSION_MAP = general.get('emission_map')
+EMISSION_TO_RGB = general.get('emission_to_rgb')
+
+VERBOSE = general.get('verbose')
+
+# Dependencies are tasks that run lightweight commands that spin off other processes
+# Very little resources are required
+# Used to coordinate between DECON, IMARIS conversion
+SLURM_PARAMETERS_FOR_DEPENDENCIES = slurm.get('dependencies')
+
+#######################################################################################################################
+####  Alignment align_py.py ###
+#######################################################################################################################
+align = config.get('align')
+ALIGNMENT_DIRECTORY = align.get('directory')
+RESOLUTION_LEVEL_FOR_ALIGN = align.get('resolution_level_for_align')
+REMOVE_OUTLIERS = align.get('remove_outliers')
+OFFSET_METRIC = align.get('offset_metric')
+
+SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN = slurm.get('align')
+
+#######################################################################################################################
+####  Resample settings ###
+#######################################################################################################################
+resample = config.get('resample')
+USE_SEPARATE_ALIGN_DATA_PER_SHEET = resample.get('use_separate_align_data_per_sheet')
 
 #######################################################################################################################
 ####  DECON rl.py constants ###
 #######################################################################################################################
+decon = config.get('decon')
 
-DECON_SCRIPT = '/CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/rl.py'
-DECON_SLURM_PARTITION = 'gpu' #multiple partitions can be specified with comma separation part1,par2
-DECON_SLURM_CPUS = None  # Number of CPUs (int), None=SLURM partition Default
-DECON_SLURM_JOB_LABEL = 'decon'
-DECON_SLURM_RAM_MB = None # Value in gigabytes, None will be SLURM partition default
-DECON_GRES = 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1" or None
-DECON_PARALLEL_JOBS = 32 # Number of jobs that will run in parallel, only applicable to array submissions
+DECON_SCRIPT = LOCATION_OF_MESOSPIM_UTILS_INSTALL + '/' + decon.get('script')
+DECON_DEFAULT_OUTPUT_DIR = decon.get('output_dir')
 
-DECON_DEFAULT_OUTPUT_DIR = 'decon'
-SLURM_PARAMETERS_DECON = {
-    'PARTITION': 'gpu', #multiple partitions can be specified with comma separation part1,par2
-    'CPUS': None,
-    'JOB_LABEL': 'decon',
-    'RAM_GB': None,
-    'GRES': 'gpu:1', # Specific exactly as it would be in slurm eg. "gpu:1" or None
-    'PARALLEL_JOBS': 32,
-    'NICE': 0,
-    'TIME_LIMIT': None, # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
-}
+PSF_THRESHOLD = decon.get('psf_threshold')
+MAX_VRAM = decon.get('max_vram') * decon.get('margin_vram')
+VRAM_PER_VOXEL = decon.get('vram_per_voxel') # Approximation based on real data
 
-PSF_THRESHOLD = 1e-5 # Automatically reduce PSF size to exclude values below this.
-
-P40_VRAM = 24576 * 0.95 # 0.95 is an arbitrary factor to ensure that we don't over fill the GPU and cause a crash.
-VRAM_PER_VOXEL = 17136 / ((3200+15) * (3200+15) * 70) # Approximation based on real data
+SLURM_PARAMETERS_DECON = slurm.get('decon')
 
 #######################################################################################################################
 ####  Imaris file converter constants ###
 #######################################################################################################################
+ims_converter = config.get('ims_converter')
 
-WINE_INSTALL_LOC = '/h20/home/lab/src/wine/wine64'
-IMARIS_CONVERTER_LOC = '/h20/home/lab/src/ImarisFileConverter 10.2.0/ImarisConvert.exe'
+WINE_INSTALL_LOC = ims_converter.get('wine_install_location')
+IMARIS_CONVERTER_LOC = ims_converter.get('imaris_installer_location')
+IMS_CONVERTER_COMPRESSION_LEVEL = ims_converter.get('compression_level')
 
-# Drive mappings for linux directories in wine for ims file conversions
-WINE_MAPPINGS = { #linux_path:wine_drive_letter:
-'/h20':'h:',
-'/CBI_FastStore':'f:',
-}
-
-IMS_CONVERTER_COMPRESSION_LEVEL = 6 #GZIP 0-9
-
-SLURM_PARTITION = 'compute,gpu' #multiple partitions can be specified with comma separation part1,par2
-SLURM_CPUS = 24 # Number of CPUs (int), None=SLURM partition Default
-SLURM_JOB_LABEL = 'ims_test_conv'
-SLURM_RAM_MB = 64 # Value in gigabytes, None will be SLURM partition default
-SLURM_GRES = None # Specific exactly as it would be in slurm eg. "gpu:1" or None
-SLURM_PARALLEL_JOBS = 8 # Number of jobs that will run in parallel, only applicable to array submissions
-
-SLURM_PARAMETERS_IMARIS_CONVERTER = {
-    'PARTITION': 'compute', #multiple partitions can be specified with comma separation part1,par2
-    'CPUS': 24,
-    'JOB_LABEL': 'ims_test_conv',
-    'RAM_GB': 64,
-    'GRES': None, # Specific exactly as it would be in slurm eg. "gpu:1" or None
-    'PARALLEL_JOBS': 50,
-    'NICE': 0,
-    'TIME_LIMIT': None, # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
-}
-
+SLURM_PARAMETERS_IMARIS_CONVERTER = slurm.get('ims_convert')
 
 #######################################################################################################################
-####  Imaris Stitcher constants ###
+####  Imaris Stitcher AND Imaris Resample constants ###
 #######################################################################################################################
-
-MONTAGE_NAME = 'auto_montage.ims'
-
-# Drive mappings for linux directories in wine for ims file conversions
-WINDOWS_MAPPINGS = { #linux_path:windows_mapped_drive_letter:
-'/h20':'i:',
-'/CBI_FastStore':'z:',
-'//faststore.cbi.pitt.edu/CBI_FastStore':'z:',
-'//tn.cbi.pitt.edu/h20':'i:'
-}
+imaris_stitcher = config.get('imaris_stitcher')
 
 ## Change this path for any specific installation of ImarisStitcher
-PATH_TO_IMARIS_STITCHER_FOLDER = r"C:\Program Files\Bitplane\ImarisStitcher 10.2.0"
-PATH_TO_IMARIS_STITCHER_TEMP_FOLDER = r"Z:\tmp\stitch_tmp_files" # If set to None, will default to windows user Temp directory
+PATH_TO_IMARIS_STITCHER_FOLDER = imaris_stitcher.get('path_to_imaris_stitcher_folder')
+PATH_TO_IMARIS_STITCHER_TEMP_FOLDER = imaris_stitcher.get('path_to_imaris_stitcher_temp_folder')
 
-SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = r"Z:\tmp\stitch_jobs"
-SHARED_LINUX_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = r"/CBI_FastStore/tmp/stitch_jobs"
+SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = (
+    imaris_stitcher.get('shared_windows_path_where_win_client_job_files_are_stored'))
+SHARED_LINUX_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = (
+    imaris_stitcher.get('shared_linux_path_where_win_client_job_files_are_stored'))
 
-METADATA_FILENAME = 'mesospim_metadata.json'
+CORRELATION_THRESHOLD_FOR_ALIGNMENT = imaris_stitcher.get('correlation_threshold_for_alignment')
 
-CORRELATION_THRESHOLD_FOR_ALIGNMENT = 0.6
 
-PERCENTAGE_OF_MACHINE_RESOURCES_TO_USE_FOR_STITCHING = 0.2
-FRACTION_OF_RAM_FOR_PROCESSING = PERCENTAGE_OF_MACHINE_RESOURCES_TO_USE_FOR_STITCHING
+PERCENTAGE_OF_MACHINE_RESOURCES_TO_USE_FOR_STITCHING = (
+    imaris_stitcher.get('percentage_of_machine_resources_to_use_for_stitching'))
+FRACTION_OF_RAM_FOR_PROCESSING = imaris_stitcher.get('percentage_of_machine_resources_to_use_for_stitching')
 NUM_CPUS_FOR_STITCH = math.floor(os.cpu_count() * FRACTION_OF_RAM_FOR_PROCESSING)
-
-IMS_STITCHER_COMPRESSION_LEVEL = 6 #GZIP 0-9
-
-EMISSION_TO_RGB = {
-    #Mapping emission range to RGB colors
-    # Keys are wavelength ranges in nm
-    # Values are (R,G,B)
-    '300-479': (0, 0, 1),
-    '480-540': (0, 1, 0),
-    '541-625': (1, 0, 0),
-    '627-730': (1, 0, 0.75),
-    '731-2000': (.75, 0, 1),
-}
-
-
-#######################################################################################################################
-####  MesoSPIM constants ###
-#######################################################################################################################
-
-
-EMISSION_MAP = {
-    #Mapping common names to emission wavelengths, only used if wavelength is not explicitly stated in metadata file
-    "gfp": 525,
-    "green": 525,
-    "rfp": 595,
-    "red": 595,
-    "cy5": 665,
-    "far_red": 665,
-}
-
+IMS_STITCHER_COMPRESSION_LEVEL = imaris_stitcher.get('compression_level')
 
 
 ### Format constants ###  DO NOT CHANGE

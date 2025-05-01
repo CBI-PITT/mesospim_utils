@@ -28,10 +28,16 @@ from skimage import img_as_float32, img_as_uint
 from psf import get_psf
 from metadata import collect_all_metadata
 
+from utils import path_to_wine_mappings
 from constants import LOCATION_OF_MESOSPIM_UTILS_INSTALL, ENV_PYTHON_LOC
 from constants import WINE_INSTALL_LOC, IMARIS_CONVERTER_LOC
-from constants import SLURM_PARTITION, SLURM_CPUS, SLURM_JOB_LABEL, SLURM_RAM_MB
-from utils import path_to_wine_mappings
+from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
+from constants import IMS_CONVERTER_COMPRESSION_LEVEL
+
+SLURM_PARTITION = SLURM_PARAMETERS_IMARIS_CONVERTER.get('PARTITION')
+SLURM_CPUS = SLURM_PARAMETERS_IMARIS_CONVERTER.get('CPUS')
+SLURM_JOB_LABEL = SLURM_PARAMETERS_IMARIS_CONVERTER.get('JOB_LABEL')
+SLURM_RAM_MB = SLURM_PARAMETERS_IMARIS_CONVERTER.get('RAM_GB')
 
 LOC_OF_THIS_SCRIPT = LOCATION_OF_MESOSPIM_UTILS_INSTALL / 'imaris.py'
 
@@ -88,7 +94,7 @@ def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1),
         f.write(line)
 
     # Main ims converter command
-    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file[0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" -il "{path_to_wine_mappings(layout_path)}" --logprogress --nthreads {SLURM_CPUS} --compression 6 -ps {SLURM_RAM_MB * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
+    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file[0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" -il "{path_to_wine_mappings(layout_path)}" --logprogress --nthreads {SLURM_CPUS} --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
 
     # BASH script if/then statements to rename the .ims.part file to .ims
     lines = lines + f'\n\nif [ -f "{out_file}.part" ]; then\n  mv "{out_file}.part" "{out_file}"\n  echo "File renamed to {out_file}"\nelse\n  echo "File {out_file} does not exist."\nfi'

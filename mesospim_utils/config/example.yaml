@@ -1,0 +1,116 @@
+general:
+  location_module: '/h20/home/lab/src/mesospim_utils/mesospim_utils'
+  location_environment: '/h20/home/lab/miniconda3/envs/mesospim_utils/bin/python'
+  metadata_filename: 'mesospim_metadata.json'
+  montage_name: 'auto_montage.ims'
+  verbose: 1 # true/false or 0-2. 0=off, 1-2 are increasing levels of verbosity. true==1
+
+  # Drive mappings for linux directories in wine for ims file conversions
+  windows_mappings: #linux_path:windows_mapped_drive_letter:
+    '/h20': 'i:'
+    '/CBI_FastStore': 'z:'
+
+  # Drive mappings for linux directories in wine for ims file conversions
+  wine_mappings: #linux_path:wine_drive_letter:
+    '/h20': 'h:'
+    '/CBI_FastStore': 'f:'
+
+  emission_map:
+    #Mapping common names to emission wavelengths, only used if wavelength is not explicitly stated in metadata file
+    "gfp": 525
+    "yfp": 525
+    "green": 525
+    "rfp": 595
+    "red": 595
+    "cy5": 665
+    "far_red": 665
+
+  emission_to_rgb:
+    # Mapping emission range to RGB colors
+    # Keys are wavelength ranges in nm
+    # Values are (R,G,B)
+    '300-479': [ 0, 0, 1 ]
+    '480-540': [ 0, 1, 0 ]
+    '541-625': [ 1, 0, 0 ]
+    '627-730': [ 1, 0, 0.75 ]
+    '731-2000': [ 0.75, 0, 1 ]
+
+
+decon:
+  script: 'rl.py'
+  output_dir: 'decon'
+  psf_threshold: 1.0e-5 # Automatically reduce PSF size to exclude values below this.
+  vram_per_voxel: 2.36837e-5 # 17136 / ((3200+15) * (3200+15) * 70) # Approximation based on real data
+  max_vram: 24576 # value == vram available from nvidia-smi, It will be multiplied by margin_vram
+  margin_vram: 0.95 # Arbitrary factor <= 1 to ensure that we don't over fill the GPU and cause a crash.
+
+align:
+  directory: 'align'
+  resolution_level_for_align: 3
+  remove_outliers: true # true/false remove alignment outliers before calculating offsets
+  offset_metric: 'median' # 'mean', 'median', default='median'
+
+resample:
+  use_separate_align_data_per_sheet: false # true, different stitch for left and right sheet,
+                                          #false, same stitch regardless of sheet
+
+ims_converter:
+  wine_install_location: '/h20/home/lab/src/wine/wine64'
+  imaris_installer_location: '/h20/home/lab/src/ImarisFileConverter 10.2.0/ImarisConvert.exe'
+  compression_level: 6 #1-9
+
+imaris_stitcher:
+
+  ## Change this path for any specific installation of ImarisStitcher
+  ## Paths are local to the maching running Imaris Stitcher
+  path_to_imaris_stitcher_folder: "C:\\Program Files\\Bitplane\\ImarisStitcher 10.2.0"
+  path_to_imaris_stitcher_temp_folder: "Z:\\tmp\\stitch_tmp_files" # If set to None, will default to windows user Temp directory
+
+  shared_windows_path_where_win_client_job_files_are_stored: "Z:\\tmp\\stitch_jobs_dev"
+  shared_linux_path_where_win_client_job_files_are_stored: "/CBI_FastStore/tmp/stitch_jobs_dev"
+  correlation_threshold_for_alignment: 0.6
+  percentage_of_machine_resources_to_use_for_stitching: 0.2
+  fraction_of_ram_for_processing: 0.2
+  compression_level: 6 #1-9
+
+slurm:
+  dependencies:
+    # Low resource required to run a small scripts for spinning off new processes
+    'PARTITION': 'compute,gpu' #multiple partitions can be specified with comma separation part1,par2
+    'CPUS': 1
+    'JOB_LABEL': 'ms_depends'
+    'RAM_GB': 4
+    'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'PARALLEL_JOBS': 1
+    'NICE': 0
+    'TIME_LIMIT': '0-00:02:00' # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  decon:
+    # Deconvolution tasks require a CUDA GPU
+    'PARTITION': 'gpu' #multiple partitions can be specified with comma separation part1,par2
+    'CPUS':
+    'JOB_LABEL': 'ms_decon'
+    'RAM_GB':
+    'GRES': 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'PARALLEL_JOBS': 32 # In a slurm array, how many jobs will run in parallel
+    'NICE': 0
+    'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  align:
+    # WINE-based ImarisConverter for converting MesoSPIM data to ims ** This is not ImarisStitcher **
+    'PARTITION': 'compute,gpu' #multiple partitions can be specified with comma separation part1,par2
+    'CPUS': 24
+    'JOB_LABEL': 'ms_align'
+    'RAM_GB': 64
+    'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'PARALLEL_JOBS': 1
+    'NICE': 0
+    'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  ims_convert:
+    # WINE-based ImarisConverter for converting MesoSPIM data to ims ** This is not ImarisStitcher **
+    'PARTITION': 'compute' #multiple partitions can be specified with comma separation part1,par2
+    'CPUS': 24
+    'JOB_LABEL': 'ms_ims_conv'
+    'RAM_GB': 64
+    'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'PARALLEL_JOBS': 50
+    'NICE': 0
+    'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority

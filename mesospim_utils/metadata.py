@@ -10,10 +10,10 @@ from collections import namedtuple
 from utils import ensure_path, dict_to_json_file, json_file_to_dict, convert_paths_to_posix, convert_paths, convert_str_to_nums
 from utils import map_wavelength_to_RGB
 
-from constants import EMISSION_MAP, METADATA_FILENAME
+from constants import EMISSION_MAP, METADATA_FILENAME, VERBOSE
 
 
-def collect_all_metadata(location: Path, alt_save_path:Path = None, prepare=True):
+def collect_all_metadata(location: Path, prepare=True):
     """
     Collect all relevant metadata from mesospim Tile metadata files, sort by channel
 
@@ -21,41 +21,40 @@ def collect_all_metadata(location: Path, alt_save_path:Path = None, prepare=True
     """
 
     location = ensure_path(location)
-    if alt_save_path:
-        alt_save_path = ensure_path(alt_save_path)
+    location = find_metadata_dir(location)
 
     # If the default file is present, read it, sort it by channel, by tile
     save_json_path = location / METADATA_FILENAME
     if location.suffix.lower() == ".json" or save_json_path.is_file():
 
-        print("Reading metadata json")
+        if VERBOSE: print("Reading metadata json")
         metadata_by_channel = json_file_to_dict(save_json_path)
 
         if prepare:
-            metadata_by_channel = annotate_metadata(sort_meta_list(metadata_by_channel))
+            metadata_by_channel = annotate_metadata(sort_meta_list(metadata_by_channel), location=location)
 
         return metadata_by_channel
 
 
     # Otherwise, read all raw metadata entries and create the json
-    print("Verifying that metadata files are present for each .btf file")
+    if VERBOSE: print("Verifying that metadata files are present for each .btf file")
     verify_metadata_file_for_each_btf(location)
 
-    print("Collecting all metadata into json and saving the json")
+    if VERBOSE: print("Collecting all metadata into json and saving the json")
     meta_list = save_dir_of_meta_to_json(location, save_json_path)
 
-    print("Sorting metadata bt channel and tile")
+    if VERBOSE: print("Sorting metadata by channel and tile")
     metadata_by_channel = meta_list
     if prepare:
         metadata_by_channel = convert_paths(metadata_by_channel)
         metadata_by_channel = convert_str_to_nums(metadata_by_channel)
-        metadata_by_channel = annotate_metadata(sort_meta_list(metadata_by_channel))
+        metadata_by_channel = annotate_metadata(sort_meta_list(metadata_by_channel), location=location)
 
         print("Saving annotated metadata json")
         annotated_name = save_json_path.with_name("mesospim_annotated_metadata.json")
         dict_to_json_file(metadata_by_channel, annotated_name)
 
-    print(metadata_by_channel)
+    if VERBOSE: print(metadata_by_channel)
 
     return metadata_by_channel
 
@@ -119,7 +118,10 @@ def sort_key(key):
     else:
         return (float('inf'), str(key))  # fallback for unexpected format
 
-def annotate_metadata(metadata_by_channel):
+def annotate_metadata(metadata_by_channel, location=None):
+
+    if location:
+        location = ensure_path(location)
 
     for color, data in metadata_by_channel.items():
 
@@ -139,14 +141,42 @@ def annotate_metadata(metadata_by_channel):
             entry['emission_wavelength'] = emission_wavelength
             entry['rgb_representation'] = map_wavelength_to_RGB(emission_wavelength)
             entry['grid_size'] = grid_size
+            entry['grid_location'] = get_grid_location(entry['grid_size'], entry['tile_number'])
             entry['overlap'] = overlap
             entry['resolution'] = determine_xyz_resolution(entry)
             entry['tile_shape'] = determine_tile_shape(entry)
             entry['tile_size_um'] = determine_tile_size_um(entry)
             entry['file_name'] = entry.get('Metadata for file').name
             entry['refractive_index'] = determine_refractive_index_from_ETL_file_name(entry)
+            entry['sheet'] = determine_sheet_direction(entry)
+
+            ### NOTES ###
+            # entry['tile_number'] is added by the sort_meta_list() function
+
+
+            if location:
+                entry['file_path'] = location / entry['file_name']
 
     return metadata_by_channel
+
+def get_grid_location(grid_size, tile_number):
+
+    GridLocation = namedtuple('GridLocation', ['x', 'y'])
+
+    current_tile = 0
+    for x in range(grid_size.x):
+        for y in range(grid_size.y):
+            if tile_number == current_tile:
+                return GridLocation(x=x, y=y)
+            current_tile += 1
+
+def determine_sheet_direction_from_tile_number(metadata_by_channel, tile_num):
+    for ch in metadata_by_channel:
+        for tile in metadata_by_channel[ch]:
+            if int(tile.get('tile_number')) == tile_num:
+                return tile.get("sheet")
+def determine_sheet_direction(metadata_entry):
+    return metadata_entry.get("CFG").get("Shutter").lower()
 
 def determine_refractive_index_from_ETL_file_name(metadata_entry):
     '''
@@ -154,20 +184,15 @@ def determine_refractive_index_from_ETL_file_name(metadata_entry):
     *_RI_{float_RI}_*.csv
     This function extracts the 'float_RI' value
     '''
-    # print(list(metadata_entry.keys()))
     etl_file_name = metadata_entry["ETL PARAMETERS"]["ETL CFG File"]
-    # print(etl_file_name)
     etl_file_name = str(etl_file_name.name)
-    # print(etl_file_name)
     split_ri = etl_file_name.split('_RI_')[-1]
-    # print(split_ri)
     split_ri = split_ri.split('_')[0]
-    # print(split_ri)
     try:
         ri = float(split_ri)
         return ri
     except Exception:
-        print('No RI found in the ETL cfg file')
+        if VERBOSE: print('No RI found in the ETL cfg file')
         return None
 
 def determine_tile_size_um(metadata_entry):
@@ -254,10 +279,26 @@ def get_metadata_file_name(btf_file: Path):
     Takes: a mesospim tile file name
     returns: metadata file name
     '''
-    if not isinstance(btf_file, Path):
-        btf_file = Path(btf_file)
+    btf_file = ensure_path(btf_file)
 
     return btf_file.with_name(btf_file.name + "_meta.txt")
+
+def find_metadata_dir(start_location):
+    '''
+    Given a path, search backwards to find mesospim metadata
+    do not ascend all the way to root
+    '''
+    start_location = ensure_path(start_location)
+    paths_to_test = [start_location] + list(start_location.parents)
+    for current_location in paths_to_test[:-1]: # Cut out that last entry which is root
+        if VERBOSE: print(f'Searching for Metadata at {current_location}')
+        if (current_location / METADATA_FILENAME).is_file():
+            return current_location
+        meta_files = list(current_location.glob("*_meta.txt"))
+        if len(meta_files) > 0:
+            return current_location
+    return None
+
 
 def verify_metadata_file_for_each_btf(location: Path):
     """
@@ -277,7 +318,7 @@ def verify_metadata_file_for_each_btf(location: Path):
         #print(f"Checking {meta_file}")
         assert meta_file.is_file(), f"{meta_file} is missing"
 
-    print('Verified a metadata file is present for each .btf file')
+    if VERBOSE: print('Verified a metadata file is present for each .btf file')
 
 #####################################################################################################################
 #####################################################################################################################
@@ -391,28 +432,4 @@ def get_all_tile_entries(meta_dict, tile_num):
 
 
 if __name__ == "__main__":
-
-    # input_directory = r"/CBI_FastStore/tmp/mesospim/knee"  # Change to the folder where the files are stored
-    # output_json = fr"Z:\tmp\mesospim\meta_test_data\{METADATA_FILENAME}"
-    # output_directory = r"Z:\tmp\mesospim\meta_test_data\recreated_files"
-    #
-    # from pprint import pprint as print
-    # meta_dict = collect_all_metadata(input_directory, prepare=True)
-    # print(meta_dict)
-    # annotate_metadata(meta_list)
-
-    input_directory = r'/CBI_FastStore/Acquire/MesoSPIM/stujenske-j/4CL32/040225'
-    meta_dict = collect_all_metadata(input_directory, prepare=True)
-    print(meta_dict)
-    print(list(meta_dict.keys()))
-
-    # # Step 1: Save parsed data to JSON
-    # meta_list = save_dir_of_meta_to_json(input_directory, output_json)
-    #
-    # # Step 2: Load the JSON back
-    # meta_list_from_json = json_file_to_dict(output_json)
-    # print(meta_list_from_json)
-    #
-    #
-    # # Step 3: Recreate the original files from the dictionary
-    # recreate_files_from_meta_dict(meta_list_from_json, output_directory)
+    pass

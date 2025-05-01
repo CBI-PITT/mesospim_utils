@@ -25,7 +25,7 @@ import typer
 import json
 
 ## Local imports
-from metadata import collect_all_metadata
+from metadata import collect_all_metadata, get_first_entry
 from utils import sort_list_of_paths_by_tile_number
 from utils import map_wavelength_to_RGB
 from utils import ensure_path
@@ -200,7 +200,8 @@ def get_extends_lines(image_extends_list):
             )
             yield current
 
-def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_by_channel, montage_name='montage.ims'):
+def build_resample_input(image_extends_list, pairwise_alignment_list,
+                         metadata_by_channel, montage_name='montage.ims'):
 
     anchor_image = image_extends_list[0][0]
     ExtendMax = anchor_image.get('ExtendMax')
@@ -274,8 +275,9 @@ def build_resample_input(image_extends_list, pairwise_alignment_list, metadata_b
         downs['Calculated offsets'] = False
 
     ## Build x,y,z coordinate grids
-    overlap = metadata_by_channel[list(metadata_by_channel.keys())[0]][0]['overlap'] # Proportion i.e. 0.1
-    tile_size_um = metadata_by_channel[list(metadata_by_channel.keys())[0]][0]['tile_size_um'] # namedtuple i.e TileSizeUm(x=3200, y=3200, z=9500.0)
+    metadata_entry = get_first_entry(metadata_by_channel)
+    overlap = metadata_entry.get('overlap') # Proportion i.e. 0.1
+    tile_size_um = metadata_entry.get('tile_size_um') # namedtuple i.e TileSizeUm(x=3200, y=3200, z=9500.0)
 
     x_min = np.zeros((grid_x, grid_y))
     y_min = np.zeros((grid_x, grid_y))
@@ -443,9 +445,12 @@ def stitch_and_assemble(directory_with_mesospim_metadata: Path, directory_with_i
 
     # Collect all metadata from MesoSPIM acquisition directory and save to mesospim_metadata.json in the ims file dir
     metadata_by_channel = collect_all_metadata(directory_with_mesospim_metadata)
+    overlap = get_first_entry(metadata_by_channel).get('overlap')
 
     # Build files for calculating the alignment
-    align_bat_file_list, align_output_file_list = build_align_inputs(metadata_by_channel, directory_with_ims_files_to_stitch)
+    align_bat_file_list, align_output_file_list = build_align_inputs(metadata_by_channel,
+                                                                     directory_with_ims_files_to_stitch,
+                                                                     overlap=overlap)
 
     #Run alignment
     if not skip_align or not build_scripts_only:

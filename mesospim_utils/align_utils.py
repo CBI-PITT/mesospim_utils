@@ -1,9 +1,11 @@
 from pathlib import Path
 import statistics
 import re
+import numpy as np
 
 from utils import ensure_path
 from metadata import collect_all_metadata, get_all_tile_entries
+from constants import REMOVE_OUTLIERS, OFFSET_METRIC, CORRELATION_THRESHOLD_FOR_ALIGNMENT
 
 '''
 Any alignment in mesospim_utils is assumed to output a dictionary that represents offsets in microns
@@ -43,6 +45,7 @@ create the arrangement for the final montage.
 The functions in this module enable us to work with this 
 '''
 
+
 def filer_coorelation(align_list, correlation=0.75):
     '''
     align_list: A list of alignments,
@@ -52,22 +55,128 @@ def filer_coorelation(align_list, correlation=0.75):
     return [x for x in align_list if x.get('corr') >= correlation]
 
 
-def calculate_offsets(aligns_list, correlation=0.75):
+def calculate_offsets(aligns_list, correlation=CORRELATION_THRESHOLD_FOR_ALIGNMENT,
+                      remove_outliers=REMOVE_OUTLIERS, offset_metric=OFFSET_METRIC) -> dict:
     '''
     align_list: A list of alignments,
     correlation: correlation threshold to retain
     return: a dict where 'x','y','z' is the median value of alignment with a correlation >= correlation
     '''
     aligns_list = filer_coorelation(aligns_list, correlation=correlation)
-    x = statistics.median([x.get('x') for x in aligns_list])
-    y = statistics.median([x.get('y') for x in aligns_list])
-    z = statistics.median([x.get('z') for x in aligns_list])
-    medians = {
-        'x':x,
-        'y':y,
-        'z':z
+    if len(aligns_list) == 0:
+        return {
+            'x': 0,
+            'y': 0,
+            'z': 0
+        }
+
+    x = trim_zeros([x.get('x') for x in aligns_list])
+    y = trim_zeros([x.get('y') for x in aligns_list])
+    z = trim_zeros([x.get('z') for x in aligns_list])
+
+    if remove_outliers:
+        x = remove_outliers(x)
+        y = remove_outliers(y)
+        z = remove_outliers(z)
+
+    if offset_metric == 'mean':
+        x = calculate_mean(x)
+        y = calculate_mean(y)
+        z = calculate_mean(z)
+
+    else:
+        x = calculate_median(x)
+        y = calculate_median(y)
+        z = calculate_median(z)
+
+    avg = {
+        'x': x,
+        'y': y,
+        'z': z
     }
-    return medians
+
+    return avg
+
+
+def trim_zeros(data: list) -> list:
+    # Remove 0's assuming that 0 means the alignment failed
+    data = [x for x in data if x != 0]
+    if len(data) == 0:
+        return [0.0]
+    return data
+
+
+def remove_outliers(data: list) -> list:
+    # Handle small datasets by returning the entire dataset
+    if len(data) <= 3:
+        return data  # No outlier removal for small lists
+
+    if isinstance(data, (list, tuple)):
+        data = np.array(data)
+
+    # Normal IQR-based outlier removal for larger datasets
+    q1 = np.percentile(data, 25)
+    q3 = np.percentile(data, 75)
+    iqr = q3 - q1
+
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+
+    filtered_data = data[(data >= lower_bound) & (data <= upper_bound)]
+    return filtered_data.tolist()
+
+
+def calculate_median(data: list) -> float:
+    # Check if filtered_data is not empty
+    if len(data) == 0:
+        return 0.0
+    else:
+        if isinstance(data, (list, tuple)):
+            data = np.array(data)
+        median = np.median(data)
+        return float(median)
+
+def calculate_mean(data: list) -> float:
+    # Check if filtered_data is not empty
+    if len(data) == 0:
+        return 0.0
+    else:
+        if isinstance(data, (list, tuple)):
+            data = np.array(data)
+        mean = np.mean(data)
+        return float(mean)
+
+# def remove_outliers_and_compute_median(data):
+#     # Remove 0's assuming that 0 means the alignment failed
+#     data = [x for x in data if x != 0]
+#     if len(data) == 0:
+#         return 0.0
+#
+#     data = np.array(data)
+#
+#     # Handle small datasets directly
+#     if len(data) <= 3:
+#         median = np.median(data)
+#         return float(median)  # No outlier removal for small lists
+#
+#     # Normal IQR-based outlier removal for larger datasets
+#     q1 = np.percentile(data, 25)
+#     q3 = np.percentile(data, 75)
+#     iqr = q3 - q1
+#
+#     lower_bound = q1 - 1.5 * iqr
+#     upper_bound = q3 + 1.5 * iqr
+#
+#     filtered_data = data[(data >= lower_bound) & (data <= upper_bound)]
+#
+#     # Check if filtered_data is not empty
+#     if len(filtered_data) == 0:
+#         median = np.median(data)  # Fall back to original data if all points were removed
+#         return float(median)
+#     else:
+#         median = np.median(filtered_data)
+#         return float(median)
+
 
 def annotate_with_sheet_direction(directory_with_mesospim_metadata: Path, align_list: list):
     '''
@@ -89,12 +198,12 @@ def annotate_with_sheet_direction(directory_with_mesospim_metadata: Path, align_
         meta_entry_current_align = get_all_tile_entries(mesospim_metadata, tile_num)[0]
 
         # Determine direction left/right light sheet
-        sheet_direction = meta_entry_current_align.get("CFG").get("Shutter")
-        sheet_direction = sheet_direction.lower()
+        sheet_direction = meta_entry_current_align.get('sheet')
 
         # Append direction to entry
         current_align['sheet'] = sheet_direction
     return align_list
+
 
 def separate_by_sheet_direction(align_list):
     '''

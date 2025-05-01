@@ -63,8 +63,6 @@ def json_file_to_dict(file_name:Path):
     # Read JSON file
     with open(file_name, "r") as json_file:
         data = json.load(json_file)
-    # data = convert_paths(data)
-    # data = convert_str_to_nums(data)
     data = recursive_convert_to_useable_objects(data)
     return data
 
@@ -81,9 +79,11 @@ def convert_paths(obj):
         return {k: convert_paths(v) for k, v in obj.items()}
     elif isinstance(obj, list):
         return [convert_paths(v) for v in obj]
-    elif isinstance(obj, str) and (':' in obj) and ("/" in obj or "\\" in obj):  # Heuristic check for paths
+    elif isinstance(obj, str) and ( (':/' in obj) or (':\\' in obj) ):  # Heuristic check for windows paths
         return Path(obj)
-    elif isinstance(obj, str) and ( obj.startswith('//') or obj.startswith('\\\\') ):  # Heuristic check for paths
+    # elif isinstance(obj, str) and (':' in obj) and ("/" in obj or "\\" in obj):  # Heuristic check for paths
+    #     return Path(obj)
+    elif isinstance(obj, str) and ( obj.startswith('//') or obj.startswith('\\\\') ):  # Heuristic check for network paths
         return Path(obj)
     return obj
 
@@ -168,6 +168,11 @@ def ensure_path(file_name: Path):
         return Path(file_name)
     return file_name
 
+def make_directories(path: Path):
+    # If it has a suffix, assume it's a file path and create its parent dirs
+    target = path.parent if path.suffix else path
+    target.mkdir(parents=True, exist_ok=True)
+
 def path_to_wine_mappings(path: Path) -> Path:
     '''Convert a linux path to wine (windows) paths using MAPPINGS defined at top of script'''
     from constants import WINE_MAPPINGS
@@ -176,7 +181,7 @@ def path_to_wine_mappings(path: Path) -> Path:
     for key in WINE_MAPPINGS:
         path = path.replace(key,WINE_MAPPINGS[key])
     path = path.replace('/','\\')
-    print(path)
+    # print(path)
     return Path(path)
 
 def path_to_windows_mappings(path: Path) -> Path:
@@ -187,6 +192,11 @@ def path_to_windows_mappings(path: Path) -> Path:
     for key in WINDOWS_MAPPINGS:
         path = path.replace(key,WINDOWS_MAPPINGS[key])
     path = path.replace('/','\\')
-    print(path)
+    # print(path)
     return Path(path)
 
+def write_file(filepath, content):
+    with open(filepath, 'w') as f:
+        f.write(content)
+    if os.name != 'nt':
+        os.chmod(filepath, 0o775)
