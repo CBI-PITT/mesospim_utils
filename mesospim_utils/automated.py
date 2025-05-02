@@ -2,7 +2,7 @@ import typer
 from pathlib import Path
 import subprocess
 
-from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL
+from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY
 from metadata import collect_all_metadata, get_first_entry
 from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap
 from utils import ensure_path
@@ -77,7 +77,7 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
     cmd = ''
     cmd += f'{mesospim_root_application}/align_py.py'
     cmd += f' {metadata_dir} {out_dir}'
-    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN, out_dir, after_slurm_jobs=[job_number])
+    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN, out_dir / ALIGNMENT_DIRECTORY, after_slurm_jobs=[job_number])
     print(f'Dependency process number: {job_number}')
 
     # Dependency process that kicks off windows resampling
@@ -86,7 +86,7 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
     cmd = ''
     cmd += f'{mesospim_root_application}/resample_ims.py write-auto-resample-message'
     cmd += f' {metadata_dir} {out_dir} {job_number}'
-    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir, after_slurm_jobs=[job_number])
+    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir / ALIGNMENT_DIRECTORY, after_slurm_jobs=[job_number])
     print(f'Dependency process number: {job_number}')
 
 
