@@ -5,7 +5,7 @@ import numpy as np
 
 from utils import ensure_path
 from metadata import collect_all_metadata, get_all_tile_entries
-from constants import REMOVE_OUTLIERS, OFFSET_METRIC, CORRELATION_THRESHOLD_FOR_ALIGNMENT
+from constants import REMOVE_OUTLIERS, OFFSET_METRIC, CORRELATION_THRESHOLD_FOR_ALIGN
 
 '''
 Any alignment in mesospim_utils is assumed to output a dictionary that represents offsets in microns
@@ -55,7 +55,7 @@ def filer_coorelation(align_list, correlation=0.75):
     return [x for x in align_list if x.get('corr') >= correlation]
 
 
-def calculate_offsets(aligns_list, correlation=CORRELATION_THRESHOLD_FOR_ALIGNMENT,
+def calculate_offsets(aligns_list, correlation=CORRELATION_THRESHOLD_FOR_ALIGN,
                       remove_outliers=REMOVE_OUTLIERS, offset_metric=OFFSET_METRIC) -> dict:
     '''
     align_list: A list of alignments,

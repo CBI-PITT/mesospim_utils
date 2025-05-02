@@ -55,6 +55,9 @@ ALIGNMENT_DIRECTORY = align.get('directory')
 RESOLUTION_LEVEL_FOR_ALIGN = align.get('resolution_level_for_align')
 REMOVE_OUTLIERS = align.get('remove_outliers')
 OFFSET_METRIC = align.get('offset_metric')
+ALIGN_ALL_OUTPUT_FILE_NAME = f'all_{align.get("align_output_file_name")}'
+ALIGN_METRIC_OUTPUT_FILE_NAME = f'{OFFSET_METRIC}_{align.get("align_output_file_name")}'
+CORRELATION_THRESHOLD_FOR_ALIGN = align.get('correlation_threshold_for_alignment')
 
 SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN = slurm.get('align')
 
@@ -103,7 +106,7 @@ SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = (
 SHARED_LINUX_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED = (
     imaris_stitcher.get('shared_linux_path_where_win_client_job_files_are_stored'))
 
-CORRELATION_THRESHOLD_FOR_ALIGNMENT = imaris_stitcher.get('correlation_threshold_for_alignment')
+CORRELATION_THRESHOLD_FOR_IMS_STITCHER = imaris_stitcher.get('correlation_threshold_for_alignment')
 
 
 PERCENTAGE_OF_MACHINE_RESOURCES_TO_USE_FOR_STITCHING = (

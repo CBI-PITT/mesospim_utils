@@ -22,7 +22,13 @@ from utils import (
     write_file,
     dict_to_json_file
     )
-from constants import ALIGNMENT_DIRECTORY, USE_SEPARATE_ALIGN_DATA_PER_SHEET, VERBOSE
+from constants import (
+    ALIGNMENT_DIRECTORY,
+    USE_SEPARATE_ALIGN_DATA_PER_SHEET,
+    VERBOSE,
+    ALIGN_ALL_OUTPUT_FILE_NAME,
+    ALIGN_METRIC_OUTPUT_FILE_NAME
+)
 from string_templates import WIN_RESAMPLE_BAT
 
 
@@ -128,10 +134,10 @@ def list_file_names_in_tile_order(all_tile_offsets: dict, format: str=None):
 
 
 def get_all_tile_offsets(directory_with_align_data):
-    return json_file_to_dict(directory_with_align_data / 'all_tile_offsets_microns.json')
+    return json_file_to_dict(directory_with_align_data / ALIGN_ALL_OUTPUT_FILE_NAME)
 
 def get_median_tile_offsets(directory_with_align_data):
-    return json_file_to_dict(directory_with_align_data / 'median_tile_offsets_microns.json')
+    return json_file_to_dict(directory_with_align_data / ALIGN_METRIC_OUTPUT_FILE_NAME)
 
 
 def build_ims_resample_input(x_min, x_max, y_min, y_max, z_min, z_max, directory_with_align_data, metadata_by_channel):

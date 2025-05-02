@@ -1,5 +1,3 @@
-#!/h20/home/lab/miniconda3/envs/decon/bin/python -u
-
 '''
 This script encodes several commandline utilities for richardson-lucy deconvolution
 of mesospim datasets and then conversion to ims files. 

@@ -19,11 +19,16 @@ from metadata import collect_all_metadata, get_first_entry, get_all_tile_entries
 from utils import ensure_path, sort_list_of_paths_by_tile_number, make_directories, dict_to_json_file
 from rl import mesospim_btf_helper
 from align_utils import calculate_offsets, annotate_with_sheet_direction, separate_by_sheet_direction
-from constants import (ALIGNMENT_DIRECTORY,
-                       CORRELATION_THRESHOLD_FOR_ALIGNMENT,
-                       RESOLUTION_LEVEL_FOR_ALIGN,
-                       VERBOSE,
-                       )
+from constants import (
+    ALIGNMENT_DIRECTORY,
+    CORRELATION_THRESHOLD_FOR_ALIGN,
+    RESOLUTION_LEVEL_FOR_ALIGN,
+    VERBOSE,
+    OFFSET_METRIC,
+    REMOVE_OUTLIERS,
+    ALIGN_ALL_OUTPUT_FILE_NAME,
+    ALIGN_METRIC_OUTPUT_FILE_NAME
+)
 
 # INIT typer cmdline interface
 app = typer.Typer()
@@ -555,7 +560,7 @@ def align_ims_files(directory_with_mesospim_metadata, directory_with_ims_tiles, 
 @app.command()
 def align(directory_with_mesospim_metadata:Path, directory_with_ims_tiles:Path,
           res_overide: int=RESOLUTION_LEVEL_FOR_ALIGN,
-          correlation_threshold: float=CORRELATION_THRESHOLD_FOR_ALIGNMENT):
+          correlation_threshold: float=CORRELATION_THRESHOLD_FOR_ALIGN):
 
     directory_with_ims_tiles = ensure_path(directory_with_ims_tiles)
 
@@ -574,7 +579,7 @@ def align(directory_with_mesospim_metadata:Path, directory_with_ims_tiles:Path,
     down_left, down_right = separate_by_sheet_direction(downs)
 
     ## Save offset info
-    file_output = align_dir / 'median_tile_offsets_microns.json'
+    file_output = align_dir / ALIGN_METRIC_OUTPUT_FILE_NAME
 
     median_offsets = {
         'overs': {
@@ -589,12 +594,16 @@ def align(directory_with_mesospim_metadata:Path, directory_with_ims_tiles:Path,
         },
         'correlation': correlation_threshold,
         'app': 'mesospim_align',
+        'shift_units': 'microns',
+        'outliers_removed': REMOVE_OUTLIERS,
+        'metric': OFFSET_METRIC,
+
     }
 
     # Write to a JSON file
     dict_to_json_file(median_offsets, file_output)
 
-    file_output = align_dir / 'all_tile_offsets_microns.json'
+    file_output = align_dir / ALIGN_ALL_OUTPUT_FILE_NAME
 
     all_offsets = {
         'overs': overs,

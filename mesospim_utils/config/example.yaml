@@ -47,8 +47,12 @@ decon:
 align:
   directory: 'align'
   resolution_level_for_align: 3
+  correlation_threshold_for_alignment: 0.6
   remove_outliers: true # true/false remove alignment outliers before calculating offsets
   offset_metric: 'median' # 'mean', 'median', default='median'
+  align_output_file_name: 'tile_offsets_microns.json'
+                                    # All alignment will be stored as all_{align_output_file_name},
+                                    # average parameters will be stored as {offset_metric}_{align_output_file_name}
 
 resample:
   use_separate_align_data_per_sheet: false # true, different stitch for left and right sheet,
@@ -76,6 +80,7 @@ imaris_stitcher:
 slurm:
   dependencies:
     # Low resource required to run a small scripts for spinning off new processes
+    # Should take less than 1 minute to run
     'PARTITION': 'compute,gpu' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 1
     'JOB_LABEL': 'ms_depends'
@@ -95,7 +100,7 @@ slurm:
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
   align:
-    # WINE-based ImarisConverter for converting MesoSPIM data to ims ** This is not ImarisStitcher **
+    # MeosSPIM built in alignment tool *align_py.py  ** NOT imaris stitcher **
     'PARTITION': 'compute,gpu' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 24
     'JOB_LABEL': 'ms_align'
@@ -111,6 +116,6 @@ slurm:
     'JOB_LABEL': 'ms_ims_conv'
     'RAM_GB': 64
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
-    'PARALLEL_JOBS': 50
+    'PARALLEL_JOBS': 20
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority

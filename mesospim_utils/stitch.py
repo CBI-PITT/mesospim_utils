@@ -33,7 +33,7 @@ from utils import dict_to_json_file, json_file_to_dict
 from utils import path_to_windows_mappings
 from string_templates import WIN_ALIGN_BAT, WIN_RESAMPLE_BAT, COLOR_RECORD_TEMPLATE
 
-from constants import CORRELATION_THRESHOLD_FOR_ALIGNMENT
+from constants import CORRELATION_THRESHOLD_FOR_IMS_STITCHER
 from constants import SHARED_WINDOWS_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED, SHARED_LINUX_PATH_WHERE_WIN_CLIENT_JOB_FILES_ARE_STORED
 
 if os.name == 'nt':
@@ -234,7 +234,7 @@ def build_resample_input(image_extends_list, pairwise_alignment_list,
                 all_downs['x'].append(translation.get('x'))
                 all_downs['y'].append(translation.get('y'))
                 all_downs['z'].append(translation.get('z'))
-                if tile.get('Correlation') >= CORRELATION_THRESHOLD_FOR_ALIGNMENT:
+                if tile.get('Correlation') >= CORRELATION_THRESHOLD_FOR_IMS_STITCHER:
                     downs['x'].append(translation.get('x'))
                     downs['y'].append(translation.get('y'))
                     downs['z'].append(translation.get('z'))
@@ -244,7 +244,7 @@ def build_resample_input(image_extends_list, pairwise_alignment_list,
                 all_overs['x'].append(translation.get('x'))
                 all_overs['y'].append(translation.get('y'))
                 all_overs['z'].append(translation.get('z'))
-                if tile.get('Correlation') >= CORRELATION_THRESHOLD_FOR_ALIGNMENT:
+                if tile.get('Correlation') >= CORRELATION_THRESHOLD_FOR_IMS_STITCHER:
                     overs['x'].append(translation.get('x'))
                     overs['y'].append(translation.get('y'))
                     overs['z'].append(translation.get('z'))
@@ -263,7 +263,7 @@ def build_resample_input(image_extends_list, pairwise_alignment_list,
     # Add Calculated offsets only to be saved to a file
     # If True, the values were derived by the ImarisStitcher
     # If False, it implies that the values defaulted to 0,0,0 because no data was retrieved from Stitcher
-    # If False, most likely no values had a Correlation >= the CORRELATION_THRESHOLD_FOR_ALIGNMENT
+    # If False, most likely no values had a Correlation >= the CORRELATION_THRESHOLD_FOR_IMS_STITCHER
     if any(any_overs):
         overs['Calculated offsets'] = True
     else:
