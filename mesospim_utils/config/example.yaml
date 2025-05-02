@@ -70,8 +70,8 @@ imaris_stitcher:
   path_to_imaris_stitcher_folder: "C:\\Program Files\\Bitplane\\ImarisStitcher 10.2.0"
   path_to_imaris_stitcher_temp_folder: "Z:\\tmp\\stitch_tmp_files" # If set to None, will default to windows user Temp directory
 
-  shared_windows_path_where_win_client_job_files_are_stored: "Z:\\tmp\\stitch_jobs_dev"
-  shared_linux_path_where_win_client_job_files_are_stored: "/CBI_FastStore/tmp/stitch_jobs_dev"
+  shared_windows_path_where_win_client_job_files_are_stored: "Z:\\tmp\\stitch_jobs"
+  shared_linux_path_where_win_client_job_files_are_stored: "/CBI_FastStore/tmp/stitch_jobs"
   correlation_threshold_for_alignment: 0.6
   percentage_of_machine_resources_to_use_for_stitching: 0.2
   fraction_of_ram_for_processing: 0.2
