@@ -188,10 +188,10 @@ def annotate_with_sheet_direction(directory_with_mesospim_metadata: Path, align_
     mesospim_metadata = collect_all_metadata(directory_with_mesospim_metadata)
     for current_align in align_list:
         # Extract moving image name
-        moving_fn = current_align.get('moving').name
+        moving_fn = current_align.get('moving').name.lower()
 
         # Get tile number
-        match = re.search(r'Tile(\d+)', moving_fn)
+        match = re.search(r'tile(\d+)', moving_fn)
         tile_num = match.group(1)
 
         # Grab the first entry for this tile number

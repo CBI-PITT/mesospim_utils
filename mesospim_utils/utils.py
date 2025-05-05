@@ -31,8 +31,8 @@ def map_wavelength_to_RGB(wavelength):
     # Default to white
     return default
 
-def sort_list_of_paths_by_tile_number(list_of_paths, pattern=r"_Tile(\d+)_"):
-    files = [str(x) for x in list_of_paths]
+def sort_list_of_paths_by_tile_number(list_of_paths, pattern=r"_tile(\d+)_"):
+    files = [str(x).lower() for x in list_of_paths]
     files.sort(key=lambda x: int(re.search(pattern, x).group(1)))
     return [Path(x) for x in files]
 

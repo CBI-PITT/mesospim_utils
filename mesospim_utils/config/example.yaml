@@ -2,6 +2,7 @@ general:
   location_module: '/h20/home/lab/src/mesospim_utils/mesospim_utils'
   location_environment: '/h20/home/lab/miniconda3/envs/mesospim_utils/bin/python'
   metadata_filename: 'mesospim_metadata.json'
+  metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'
   verbose: 1 # true/false or 0-2. 0=off, 1-2 are increasing levels of verbosity. true==1
 

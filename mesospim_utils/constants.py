@@ -35,6 +35,7 @@ slurm = config.get('slurm')
 LOCATION_OF_MESOSPIM_UTILS_INSTALL = general.get('location_module')
 ENV_PYTHON_LOC = general.get('location_environment')
 METADATA_FILENAME = general.get('metadata_filename')
+METADATA_ANNOTATED_FILENAME = general.get('metadata_annotated_filename')
 MONTAGE_NAME = general.get('montage_name')
 
 WINDOWS_MAPPINGS = general.get('windows_mappings')
