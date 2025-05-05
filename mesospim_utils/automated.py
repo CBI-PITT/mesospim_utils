@@ -56,7 +56,7 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
 
 
 @app.command()
-def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'):
+def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif', ims_convert: bool=True):
 
     # Collect all metadata from MesoSPIM acquisition directory and save to mesospim_metadata.json in the ims file dir
     print(f'Extracting metadata from {metadata_dir}')
@@ -64,12 +64,14 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
     first_metadata_entry = get_first_entry(metadata_by_channel)
     res = first_metadata_entry.get('resolution')
     print(f'Resolution of mesospim tiles: {res}')
-    
-    
-    # IMS Convert
-    print('Setting queueing IMS conversions on SLURM')
-    from slurm import convert_ims_dir_mesospim_tiles_slurm_array
-    job_number, out_dir = convert_ims_dir_mesospim_tiles_slurm_array(dir_loc, file_type=file_type, res=(res.z,res.y,res.x))
+
+    job_number = None
+    out_dir = dir_loc
+    if ims_convert:
+        # IMS Convert
+        print('Setting queueing IMS conversions on SLURM')
+        from slurm import convert_ims_dir_mesospim_tiles_slurm_array
+        job_number, out_dir = convert_ims_dir_mesospim_tiles_slurm_array(dir_loc, file_type=file_type, res=(res.z,res.y,res.x))
 
     # Dependency process that kicks off alignment following IMS Convert
     print('Setting up script to manage alignment calculation after IMS conversion')
@@ -77,8 +79,13 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
     cmd = ''
     cmd += f'{mesospim_root_application}/align_py.py'
     cmd += f' {metadata_dir} {out_dir}'
-    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN, out_dir / ALIGNMENT_DIRECTORY, after_slurm_jobs=[job_number])
-    print(f'Dependency process number: {job_number}')
+    if job_number:
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN, out_dir / ALIGNMENT_DIRECTORY,
+                                after_slurm_jobs=[job_number])
+        print(f'Dependency process number: {job_number}')
+    else:
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN, out_dir / ALIGNMENT_DIRECTORY,
+                                after_slurm_jobs=None)
 
     # Dependency process that kicks off windows resampling
     print('Setting up script to manage resampling after alignment')
