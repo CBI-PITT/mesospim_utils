@@ -7,6 +7,9 @@ from pathlib import Path
 import math, os
 import yaml
 
+# Define umask for files.  This only works if constants in imported early in other modules.
+os.umask(0o006)
+
 def read_config():
 
     # Define relative path
