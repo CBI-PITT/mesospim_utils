@@ -56,7 +56,7 @@ def filer_coorelation(align_list, correlation=0.75):
 
 
 def calculate_offsets(aligns_list, correlation=CORRELATION_THRESHOLD_FOR_ALIGN,
-                      remove_outliers=REMOVE_OUTLIERS, offset_metric=OFFSET_METRIC) -> dict:
+                      clean_outliers=REMOVE_OUTLIERS, offset_metric=OFFSET_METRIC) -> dict:
     '''
     align_list: A list of alignments,
     correlation: correlation threshold to retain
@@ -74,7 +74,7 @@ def calculate_offsets(aligns_list, correlation=CORRELATION_THRESHOLD_FOR_ALIGN,
     y = trim_zeros([x.get('y') for x in aligns_list])
     z = trim_zeros([x.get('z') for x in aligns_list])
 
-    if remove_outliers:
+    if clean_outliers:
         x = remove_outliers(x)
         y = remove_outliers(y)
         z = remove_outliers(z)
