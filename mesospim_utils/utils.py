@@ -215,11 +215,14 @@ def get_user(dir_loc):
         elif '/h20/Acquire/RSCM/' in dir_loc:
             user = dir_loc.replace('/h20/Acquire/RSCM/', '').split('/')[0]
         # FastStore
-        elif '/CBI_FastStore/Acquire/' in dir_loc:
-            user = dir_loc.replace('/CBI_FastStore/Acquire/', '').split('/')[0]
+        elif '/CBI_FastStore/Acquire/MesoSPIM/' in dir_loc:
+            user = dir_loc.replace('/CBI_FastStore/Acquire/MesoSPIM/', '').split('/')[0]
+        elif '/CBI_FastStore/Acquire/RSCM/' in dir_loc:
+            user = dir_loc.replace('/CBI_FastStore/Acquire/RSCM/', '').split('/')[0]
+        print("=======user=======", user)
         matches_regex = len(re.findall(user_regex, user))
         if not matches_regex:
             user = ""
     except:
-        pass
+        print("==========Couldn't get username===========")
     return user
