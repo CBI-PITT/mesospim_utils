@@ -30,7 +30,7 @@ def get_offsets(directory_with_align_data: Path, metadata_by_channel: dict,
     metadata_entry = get_first_entry(metadata_by_channel)
     overlap = metadata_entry.get('overlap') # Proportion i.e. 0.1
     tile_size_um = metadata_entry.get('tile_size_um') # namedtuple i.e TileSizeUm(x=3200, y=3200, z=9500.0)
-    grid_x, grid_y = metadata_entry.get('grid_size')
+    grid_y, grid_x = metadata_entry.get('grid_size')
 
     x_min = np.zeros((grid_x, grid_y))
     y_min = np.zeros((grid_x, grid_y))

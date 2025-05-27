@@ -358,10 +358,10 @@ def align_ims_files(directory_with_mesospim_metadata, directory_with_ims_tiles, 
 
     # Collect all metadata from MesoSPIM acquisition directory and save to mesospim_metadata.json in the ims file dir
     metadata_by_channel = collect_all_metadata(directory_with_mesospim_metadata)
-    grid_x, grid_y = get_first_entry(metadata_by_channel).get('grid_size')
-    resolution_um = get_first_entry(metadata_by_channel).get('resolution')[::-1]  # (z,y,x)
+    grid_y, grid_x = get_first_entry(metadata_by_channel).get('grid_size')
+    resolution_um = get_first_entry(metadata_by_channel).get('resolution')  # (z,y,x)
     overlap = get_first_entry(metadata_by_channel).get('overlap')
-    # tile_shape = get_first_entry(metadata_by_channel).get('tile_shape')[::-1]  # (z,y,x)
+    # tile_shape = get_first_entry(metadata_by_channel).get('tile_shape')  # (z,y,x)
 
     # List IMS files in tile order
     ims_files = list(directory_with_ims_tiles.glob('*Tile*.ims'))

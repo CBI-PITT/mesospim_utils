@@ -54,7 +54,7 @@ def build_resample_offsets(directory_with_align_data: Path, metadata_by_channel:
     metadata_entry = get_first_entry(metadata_by_channel)
     overlap = metadata_entry.get('overlap') # Proportion i.e. 0.1
     tile_size_um = metadata_entry.get('tile_size_um') # namedtuple i.e TileSizeUm(x=3200, y=3200, z=9500.0)
-    grid_x, grid_y = metadata_entry.get('grid_size')
+    grid_y, grid_x = metadata_entry.get('grid_size')
 
     x_min = np.zeros((grid_x, grid_y))
     y_min = np.zeros((grid_x, grid_y))
@@ -145,7 +145,7 @@ def build_ims_resample_input(x_min, x_max, y_min, y_max, z_min, z_max, directory
     tile_file_name_list = list_file_names_in_tile_order(all_tile_offsets, format='windows')
 
     metadata_entry = get_first_entry(metadata_by_channel)
-    grid_x, grid_y = metadata_entry.get('grid_size')
+    grid_y, grid_x  = metadata_entry.get('grid_size')
 
     input = f'<ImageList>\n'
     tile_num = 0

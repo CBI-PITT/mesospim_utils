@@ -62,7 +62,7 @@ def build_align_inputs(metadata_by_channel: dict, dir_with_ims_files: Path, over
 
         resolution = sample_tile['tile_size_um']
 
-        grid_x, grid_y = sample_tile['grid_size']
+        grid_y, grid_x  = sample_tile['grid_size']
 
 
         ## Build input file for alignment:
@@ -212,7 +212,7 @@ def build_resample_input(image_extends_list, pairwise_alignment_list,
 
     print(f'Tile Size: {x_pixels}x, {y_pixels}y, {z_pixels}z')
 
-    grid_x, grid_y = get_grid_size_from_metadata_by_channel(metadata_by_channel)
+    grid_y, grid_x  = get_grid_size_from_metadata_by_channel(metadata_by_channel)
     print(f'Grid Size 273: {grid_x}x, {grid_y}y')
 
     # Collect down alignment
@@ -645,7 +645,7 @@ if __name__ == "__main__":
 
     # metadata_by_channel = collect_all_metadata(location, save_json_path=dir_with_ims_files + r'\mesospim_metadata.json')
     # print(metadata_by_channel)
-    # grid_x, grid_y = determine_grid_size(metadata_by_channel)
+    # grid_y, grid_x = determine_grid_size(metadata_by_channel)
     # print(f'Grid Size 348: {grid_x}x, {grid_y}y')
     # align_bat_file, align_output_file = build_align_input(metadata_by_channel, dir_with_ims_files)
     # run_bat(align_bat_file)

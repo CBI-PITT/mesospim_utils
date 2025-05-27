@@ -92,7 +92,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         try:
             meta_dir = file_list[0].parent
             meta_entry = get_entry_for_file_name(meta_dir, file_list[0].name)
-            x_res, y_res, z_res  = meta_entry.get('resolution')
+            z_res, y_res, x_res  = meta_entry.get('resolution')
             res = (z_res,y_res,x_res)
         except:
             pass
@@ -480,7 +480,7 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         meta_entry = get_entry_for_file_name(meta_dict,file_name)
         # ch, file_idx = get_ch_entry_for_file_name(meta_dict,file_location.name)
         # ch0 = list(meta_dict.keys())[file_idx]
-        x_res, y_res, z_res = meta_entry.get('resolution')
+        z_res, y_res, x_res = meta_entry.get('resolution')
         res = (z_res, y_res, x_res)
 
         emission_wavelength = meta_entry.get('emission_wavelength')

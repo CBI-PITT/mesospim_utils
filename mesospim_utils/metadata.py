@@ -18,7 +18,7 @@ def collect_all_metadata(location: Path, prepare=True):
     """
     Collect all relevant metadata from mesospim Tile metadata files, sort by channel
 
-    prepare=True will sort and annotate the data. This is the primary format for all downstream uses
+    prepare=True will sort and annotate the data. This is the primary format used for all downstream applications
     """
 
     location = ensure_path(location)
@@ -30,11 +30,9 @@ def collect_all_metadata(location: Path, prepare=True):
 
         if VERBOSE: print("Reading metadata json")
         metadata_by_channel = json_file_to_dict(save_json_path)
-        print(metadata_by_channel)
 
         if prepare:
             metadata_by_channel = annotate_metadata(sort_meta_list(metadata_by_channel), location=location)
-            print(metadata_by_channel)
 
         return metadata_by_channel
 
@@ -50,11 +48,8 @@ def collect_all_metadata(location: Path, prepare=True):
     metadata_by_channel = meta_list
     if prepare:
         metadata_by_channel = convert_paths(metadata_by_channel)
-        print(metadata_by_channel)
         metadata_by_channel = convert_str_to_nums(metadata_by_channel)
-        print(metadata_by_channel)
         metadata_by_channel = annotate_metadata(sort_meta_list(metadata_by_channel), location=location)
-        print(metadata_by_channel)
 
         print("Saving annotated metadata json")
         annotated_name = save_json_path.with_name(METADATA_ANNOTATED_FILENAME)
@@ -205,19 +200,19 @@ def get_anchor_tile_entry(metadata_by_channel):
 
 def get_affine_transform(metadata_by_channel):
     anchor_entry = get_anchor_tile_entry(metadata_by_channel)
-    gx0, gy0 = anchor_entry.get('grid_location')
+    gy0, gx0 = anchor_entry.get('grid_location')
     z0 = anchor_entry["POSITION"]["z_start"]
     z_step = anchor_entry["POSITION"]["z_stepsize"]
 
     for _, data in metadata_by_channel.items():
         for entry in data:
             overlap = entry.get('overlap')
-            gx, gy = entry.get('grid_location')
+            gy, gx = entry.get('grid_location')
             z_start = entry["POSITION"]["z_start"]
             gx_rel = gx - gx0
             gy_rel = gy - gy0
 
-            nx, ny, nz = entry.get('tile_shape')
+            nz, ny, nx = entry.get('tile_shape')
 
             x_offset = gx_rel * nx * (1 - overlap)
             y_offset = gy_rel * ny * (1 - overlap)
@@ -225,20 +220,20 @@ def get_affine_transform(metadata_by_channel):
 
             # TODO confirm that maps to numpy (z,y,x) indexing
             affine_voxel_global = [
-                [1, 0, 0, x_offset],
+                [1, 0, 0, z_offset],
                 [0, 1, 0, y_offset],
-                [0, 0, 1, z_offset],
+                [0, 0, 1, x_offset],
                 [0, 0, 0, 1]
             ]
             entry['affine_voxel'] = affine_voxel_global
 
-            rx, ry, rz = entry.get('resolution')
+            rz, ry, rx = entry.get('resolution')
 
             #TODO confirm that maps to numpy (z,y,x) indexing
             affine_microns_global = [
-                [1, 0, 0, x_offset * rx],
+                [1, 0, 0, z_offset * rz],
                 [0, 1, 0, y_offset * ry],
-                [0, 0, 1, z_offset * rz],
+                [0, 0, 1, x_offset * rx],
                 [0, 0, 0, 1]
             ]
             entry['affine_microns'] = affine_microns_global
@@ -246,13 +241,13 @@ def get_affine_transform(metadata_by_channel):
 
 
 def get_grid_location(grid_size, tile_number):
-    GridLocation = namedtuple('GridLocation', ['x', 'y'])
+    GridLocation = namedtuple('GridLocation', ['y', 'x'])
 
     current_tile = 0
     for x in range(grid_size.x):
         for y in range(grid_size.y):
             if tile_number == current_tile:
-                return GridLocation(x=x, y=y)
+                return GridLocation(y=y, x=x)
             current_tile += 1
 
 
@@ -290,19 +285,19 @@ def determine_tile_size_um(metadata_entry):
     shape = determine_tile_shape(metadata_entry)
     res = determine_xyz_resolution(metadata_entry)
 
-    TileSizeUm = namedtuple('TileSizeUm', ['x', 'y', 'z'])
+    TileSizeUm = namedtuple('TileSizeUm', ['z', 'y', 'x'])
 
-    return TileSizeUm(x=shape.x * res.x, y=shape.y * res.y, z=shape.z * res.z)
+    return TileSizeUm(z=shape.z * res.z, y=shape.y * res.y, x=shape.x * res.x)
 
 
 def determine_tile_shape(metadata_entry):
-    TileShape = namedtuple('TileShape', ['x', 'y', 'z'])
+    TileShape = namedtuple('TileShape', ['z', 'y', 'x'])
 
     x = metadata_entry['CAMERA PARAMETERS']['x_pixels']
     y = metadata_entry['CAMERA PARAMETERS']['y_pixels']
     z = metadata_entry['POSITION']['z_planes']
 
-    return TileShape(x=x, y=y, z=z)
+    return TileShape(z=z, y=y, x=x)
 
 
 def determine_emission_wavelength(metadata_entry):
@@ -320,8 +315,8 @@ def determine_xyz_resolution(metadata_entry):
     xy = metadata_entry["CFG"]["Pixelsize in um"]
     z = metadata_entry["POSITION"]["z_stepsize"]
 
-    Resolution = namedtuple('Resolution', ['x', 'y', 'z'])
-    return Resolution(x=xy, y=xy, z=z)
+    Resolution = namedtuple('Resolution', ['z', 'y', 'x'])
+    return Resolution(z=z, y=xy, x=xy)
 
 
 def determine_overlap(single_channel_metadata):
@@ -361,9 +356,9 @@ def determine_grid_size(single_channel_metadata):
     grid_size_y = len(y_positions)
 
     # print(f'{grid_size_x}X, {grid_size_y}Y')
-    Grid_size = namedtuple('Grid_size', ['x', 'y'])
+    Grid_size = namedtuple('Grid_size', ['y', 'x'])
 
-    return Grid_size(x=grid_size_x, y=grid_size_y)
+    return Grid_size(y=grid_size_y, x=grid_size_x)
 
 
 def get_metadata_file_name(file: Path):
