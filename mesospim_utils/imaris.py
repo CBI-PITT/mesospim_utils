@@ -18,6 +18,7 @@ pip install -e /location/of/library
 import typer
 from pathlib import Path
 import subprocess
+import os
 from typing import Union
 
 import numpy as np
@@ -84,6 +85,9 @@ def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1),
 
     log_location = out_file.parent / 'ims_convert_logs' / (out_file.stem + '.txt')
     log_location.parent.mkdir(parents=True, exist_ok=True)
+
+    if os.path.exists(out_file):
+        return None, log_location, out_dir
 
     line = f'<FileSeriesLayout>'
     for c, f in enumerate(file):
