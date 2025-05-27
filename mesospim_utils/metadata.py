@@ -7,17 +7,18 @@ import json
 
 from collections import namedtuple
 
-from utils import ensure_path, dict_to_json_file, json_file_to_dict, convert_paths_to_posix, convert_paths, convert_str_to_nums
+from utils import ensure_path, dict_to_json_file, json_file_to_dict, convert_paths_to_posix, convert_paths, \
+    convert_str_to_nums
 from utils import map_wavelength_to_RGB
 
-from constants import EMISSION_MAP, METADATA_FILENAME, VERBOSE
+from constants import EMISSION_MAP, METADATA_FILENAME, METADATA_ANNOTATED_FILENAME, VERBOSE
 
 
 def collect_all_metadata(location: Path, prepare=True):
     """
     Collect all relevant metadata from mesospim Tile metadata files, sort by channel
 
-    prepare=True will sort and annotate the data. This is the primary format for all downstream uses
+    prepare=True will sort and annotate the data. This is the primary format used for all downstream applications
     """
 
     location = ensure_path(location)
@@ -35,10 +36,10 @@ def collect_all_metadata(location: Path, prepare=True):
 
         return metadata_by_channel
 
-
     # Otherwise, read all raw metadata entries and create the json
-    if VERBOSE: print("Verifying that metadata files are present for each .btf file")
-    verify_metadata_file_for_each_btf(location)
+    if VERBOSE: print("Verifying that metadata files are present for each image file")
+    acquisition_format = determine_acquisition_format(location)
+    verify_metadata_file_for_each_image(location, acquisition_format)
 
     if VERBOSE: print("Collecting all metadata into json and saving the json")
     meta_list = save_dir_of_meta_to_json(location, save_json_path)
@@ -51,7 +52,7 @@ def collect_all_metadata(location: Path, prepare=True):
         metadata_by_channel = annotate_metadata(sort_meta_list(metadata_by_channel), location=location)
 
         print("Saving annotated metadata json")
-        annotated_name = save_json_path.with_name("mesospim_annotated_metadata.json")
+        annotated_name = save_json_path.with_name(METADATA_ANNOTATED_FILENAME)
         dict_to_json_file(metadata_by_channel, annotated_name)
 
     if VERBOSE: print(metadata_by_channel)
@@ -59,8 +60,26 @@ def collect_all_metadata(location: Path, prepare=True):
     return metadata_by_channel
 
 
-def sort_meta_list(meta_list):
+def remove_max_projections(list_of_paths: list[Path]) -> list[Path]:
+    list_of_paths = [ensure_path(x) for x in list_of_paths]
+    return [entry for entry in list_of_paths if 'MAX_' not in entry.name]
 
+
+def determine_acquisition_format(location):
+    location = ensure_path(location)
+    files = [entry for entry in location.iterdir() if entry.is_file()]  # List all files
+    files = [entry for entry in files if '_meta.txt' not in entry.name]  # Remove _meta.txt files
+    files = remove_max_projections(files)
+    extensions = [x.suffix for x in files]
+    if '.btf' in extensions:
+        return '.btf'
+    if '.h5' in extensions and '.xml' in extensions:
+        return '.h5'
+    if '.tiff' in extensions:
+        return '.tiff'
+
+
+def sort_meta_list(meta_list):
     '''
     take a list of dictionaries where each dictionary represents a metadata file from the mesospim.
     The meta_list is the output of function: save_dir_of_meta_to_json and read by function: json_file_to_dict(save_json_path)
@@ -70,25 +89,29 @@ def sort_meta_list(meta_list):
     sorted_data = {}
 
     # Regex patterns to extract Tile number and Channel
-    tile_pattern = re.compile(r"Tile(\d+)")
+    tile_pattern = re.compile(r"tile(\d+)")
     # channel_pattern = re.compile(r"_Ch(\d+)_")
-    channel_pattern = re.compile(r"_Ch(\d+)([a-zA-Z]*)_")
+    channel_pattern = re.compile(r"_ch(\d+)([a-zA-Z]*)_")
 
     # Process each entry
     for entry in meta_list:
         file_path = Path(entry["Metadata for file"])  # Convert to Path object
-        file_name = file_path.name
+        file_name = file_path.name.lower()
+        print(f'{file_name=}')
 
         # Extract tile number
-        tile_match = tile_pattern.search(file_name) #Extract tile number from filename
+        tile_match = tile_pattern.search(file_name)  # Extract tile number from filename
         tile_number = int(tile_match.group(1)) if tile_match else None
+        print(f'{tile_number=}')
 
         # Extract channel number
-        channel_match = channel_pattern.search(file_name) #Extract channel wavelength from filename
+        channel_match = channel_pattern.search(file_name)  # Extract channel wavelength from filename
+        print(f'{channel_match=}')
         if channel_match:
             channel_number = channel_match.group(1) + channel_match.group(2)  # e.g., '561b'
         else:
             channel_number = None
+        print(f'{channel_number=}')
         # channel_number = channel_match.group(1) if channel_match else None
         # channel_number = int(channel_number)
 
@@ -106,6 +129,8 @@ def sort_meta_list(meta_list):
     # Ensure keys of metadata dictionary are always sorted in order of channel excitation
     sorted_data = dict(sorted(sorted_data.items(), key=lambda item: sort_key(item[0])))
 
+    if VERBOSE: print(sorted_data)
+
     return sorted_data
 
 
@@ -118,12 +143,14 @@ def sort_key(key):
     else:
         return (float('inf'), str(key))  # fallback for unexpected format
 
-def annotate_metadata(metadata_by_channel, location=None):
 
+def annotate_metadata(metadata_by_channel, location=None):
     if location:
         location = ensure_path(location)
 
+    ch = -1
     for color, data in metadata_by_channel.items():
+        ch += 1
 
         # Collect grid size information to be appended to each metadata parameter
         grid_size = determine_grid_size(data)
@@ -149,34 +176,91 @@ def annotate_metadata(metadata_by_channel, location=None):
             entry['file_name'] = entry.get('Metadata for file').name
             entry['refractive_index'] = determine_refractive_index_from_ETL_file_name(entry)
             entry['sheet'] = determine_sheet_direction(entry)
+            if tuple(entry.get('grid_location')) == (0,0) and ch == 0:
+                entry['anchor_tile'] = True
+            else:
+                entry['anchor_tile'] = False
 
             ### NOTES ###
             # entry['tile_number'] is added by the sort_meta_list() function
 
-
             if location:
                 entry['file_path'] = location / entry['file_name']
 
+    metadata_by_channel = get_affine_transform(metadata_by_channel)
     return metadata_by_channel
 
-def get_grid_location(grid_size, tile_number):
 
-    GridLocation = namedtuple('GridLocation', ['x', 'y'])
+def get_anchor_tile_entry(metadata_by_channel):
+    for _, data in metadata_by_channel.items():
+        for entry in data:
+            if entry.get('anchor_tile'):
+                return entry
+
+
+def get_affine_transform(metadata_by_channel):
+    anchor_entry = get_anchor_tile_entry(metadata_by_channel)
+    gy0, gx0 = anchor_entry.get('grid_location')
+    z0 = anchor_entry["POSITION"]["z_start"]
+    z_step = anchor_entry["POSITION"]["z_stepsize"]
+
+    for _, data in metadata_by_channel.items():
+        for entry in data:
+            overlap = entry.get('overlap')
+            gy, gx = entry.get('grid_location')
+            z_start = entry["POSITION"]["z_start"]
+            gx_rel = gx - gx0
+            gy_rel = gy - gy0
+
+            nz, ny, nx = entry.get('tile_shape')
+
+            x_offset = gx_rel * nx * (1 - overlap)
+            y_offset = gy_rel * ny * (1 - overlap)
+            z_offset = (z_start - z0) / z_step
+
+            # TODO confirm that maps to numpy (z,y,x) indexing
+            affine_voxel_global = [
+                [1, 0, 0, z_offset],
+                [0, 1, 0, y_offset],
+                [0, 0, 1, x_offset],
+                [0, 0, 0, 1]
+            ]
+            entry['affine_voxel'] = affine_voxel_global
+
+            rz, ry, rx = entry.get('resolution')
+
+            #TODO confirm that maps to numpy (z,y,x) indexing
+            affine_microns_global = [
+                [1, 0, 0, z_offset * rz],
+                [0, 1, 0, y_offset * ry],
+                [0, 0, 1, x_offset * rx],
+                [0, 0, 0, 1]
+            ]
+            entry['affine_microns'] = affine_microns_global
+    return metadata_by_channel
+
+
+def get_grid_location(grid_size, tile_number):
+    GridLocation = namedtuple('GridLocation', ['y', 'x'])
 
     current_tile = 0
     for x in range(grid_size.x):
         for y in range(grid_size.y):
             if tile_number == current_tile:
-                return GridLocation(x=x, y=y)
+                return GridLocation(y=y, x=x)
             current_tile += 1
+
 
 def determine_sheet_direction_from_tile_number(metadata_by_channel, tile_num):
     for ch in metadata_by_channel:
         for tile in metadata_by_channel[ch]:
             if int(tile.get('tile_number')) == tile_num:
                 return tile.get("sheet")
+
+
 def determine_sheet_direction(metadata_entry):
     return metadata_entry.get("CFG").get("Shutter").lower()
+
 
 def determine_refractive_index_from_ETL_file_name(metadata_entry):
     '''
@@ -186,7 +270,8 @@ def determine_refractive_index_from_ETL_file_name(metadata_entry):
     '''
     etl_file_name = metadata_entry["ETL PARAMETERS"]["ETL CFG File"]
     etl_file_name = str(etl_file_name.name)
-    split_ri = etl_file_name.split('_RI_')[-1]
+    etl_file_name = etl_file_name.lower()
+    split_ri = etl_file_name.split('_ri_')[-1]
     split_ri = split_ri.split('_')[0]
     try:
         ri = float(split_ri)
@@ -195,23 +280,24 @@ def determine_refractive_index_from_ETL_file_name(metadata_entry):
         if VERBOSE: print('No RI found in the ETL cfg file')
         return None
 
+
 def determine_tile_size_um(metadata_entry):
     shape = determine_tile_shape(metadata_entry)
     res = determine_xyz_resolution(metadata_entry)
 
-    TileSizeUm = namedtuple('TileSizeUm', ['x', 'y', 'z'])
+    TileSizeUm = namedtuple('TileSizeUm', ['z', 'y', 'x'])
 
-    return TileSizeUm(x=shape.x * res.x, y=shape.y * res.y, z=shape.z * res.z)
+    return TileSizeUm(z=shape.z * res.z, y=shape.y * res.y, x=shape.x * res.x)
 
 
 def determine_tile_shape(metadata_entry):
-    TileShape = namedtuple('TileShape', ['x', 'y', 'z'])
+    TileShape = namedtuple('TileShape', ['z', 'y', 'x'])
 
     x = metadata_entry['CAMERA PARAMETERS']['x_pixels']
     y = metadata_entry['CAMERA PARAMETERS']['y_pixels']
     z = metadata_entry['POSITION']['z_planes']
 
-    return TileShape(x=x, y=y, z=z)
+    return TileShape(z=z, y=y, x=x)
 
 
 def determine_emission_wavelength(metadata_entry):
@@ -229,11 +315,11 @@ def determine_xyz_resolution(metadata_entry):
     xy = metadata_entry["CFG"]["Pixelsize in um"]
     z = metadata_entry["POSITION"]["z_stepsize"]
 
-    Resolution = namedtuple('Resolution', ['x', 'y', 'z'])
-    return Resolution(x=xy, y=xy, z=z)
+    Resolution = namedtuple('Resolution', ['z', 'y', 'x'])
+    return Resolution(z=z, y=xy, x=xy)
+
 
 def determine_overlap(single_channel_metadata):
-
     for metadata in single_channel_metadata:
         if metadata['tile_number'] == 0:
             loc0 = metadata['POSITION']["y_pos"]
@@ -249,6 +335,7 @@ def determine_overlap(single_channel_metadata):
     overlap_percent = round(overlap_percent, 2)
     return overlap_percent
 
+
 def determine_grid_size(single_channel_metadata):
     """
     Determines the grid size based on unique x_pos and y_pos values.
@@ -258,7 +345,7 @@ def determine_grid_size(single_channel_metadata):
     Returns:
         tuple: (number of unique x_pos, number of unique y_pos)
     """
-    data =single_channel_metadata
+    data = single_channel_metadata
 
     # Extract unique x_pos and y_pos values
     x_positions = {entry['POSITION']["x_pos"] for entry in data}
@@ -268,20 +355,21 @@ def determine_grid_size(single_channel_metadata):
     grid_size_x = len(x_positions)
     grid_size_y = len(y_positions)
 
-    #print(f'{grid_size_x}X, {grid_size_y}Y')
-    Grid_size = namedtuple('Grid_size', ['x', 'y'])
+    # print(f'{grid_size_x}X, {grid_size_y}Y')
+    Grid_size = namedtuple('Grid_size', ['y', 'x'])
 
-    return Grid_size(x=grid_size_x, y=grid_size_y)
+    return Grid_size(y=grid_size_y, x=grid_size_x)
 
 
-def get_metadata_file_name(btf_file: Path):
+def get_metadata_file_name(file: Path):
     '''
     Takes: a mesospim tile file name
     returns: metadata file name
     '''
-    btf_file = ensure_path(btf_file)
+    file = ensure_path(file)
 
-    return btf_file.with_name(btf_file.name + "_meta.txt")
+    return file.with_name(file.name + "_meta.txt")
+
 
 def find_metadata_dir(start_location):
     '''
@@ -290,7 +378,7 @@ def find_metadata_dir(start_location):
     '''
     start_location = ensure_path(start_location)
     paths_to_test = [start_location] + list(start_location.parents)
-    for current_location in paths_to_test[:-1]: # Cut out that last entry which is root
+    for current_location in paths_to_test[:-1]:  # Cut out that last entry which is root
         if VERBOSE: print(f'Searching for Metadata at {current_location}')
         if (current_location / METADATA_FILENAME).is_file():
             return current_location
@@ -300,31 +388,32 @@ def find_metadata_dir(start_location):
     return None
 
 
-def verify_metadata_file_for_each_btf(location: Path):
+def verify_metadata_file_for_each_image(location: Path, file_ext: str):
     """
-    Verify that a metadata file exist for each .btf tile file
+    Verify that a metadata file exist for each image tile file
     """
 
-    if not isinstance(location, Path):
-        location = Path(location)
+    location = ensure_path(location)
 
     assert location.is_dir(), 'Path is not a directory'
 
-    btf_files = list(location.glob("*.btf"))
+    files = list(location.glob(f"*{file_ext}"))
+    files = remove_max_projections(files)
 
-    # Verify a metadata for for each .btf
-    for btf in btf_files:
-        meta_file = get_metadata_file_name(btf)
-        #print(f"Checking {meta_file}")
+    # Verify a metadata for for each image
+    for file in files:
+        meta_file = get_metadata_file_name(file)
+        # print(f"Checking {meta_file}")
         assert meta_file.is_file(), f"{meta_file} is missing"
 
-    if VERBOSE: print('Verified a metadata file is present for each .btf file')
+    if VERBOSE: print('Verified a metadata file is present for each image file')
+
 
 #####################################################################################################################
 #####################################################################################################################
 
-def parse_btf_meta_file(filepath):
-    """Parses a .btf_meta.txt file into a structured dictionary."""
+def parse_meta_file(filepath):
+    """Parses a _meta.txt file into a structured dictionary."""
     data = {}
     section = None
 
@@ -345,20 +434,22 @@ def parse_btf_meta_file(filepath):
 
     return data
 
+
 def save_dir_of_meta_to_json(directory, output_json):
-    """Reads all .btf_meta.txt files, parses them, and saves to JSON."""
+    """Reads all _meta.txt files, parses them, and saves to JSON."""
     meta_list = []
 
     for filename in os.listdir(directory):
-        if filename.endswith(".btf_meta.txt"):
+        if filename.endswith("_meta.txt"):
             filepath = os.path.join(directory, filename)
-            meta_list.append(parse_btf_meta_file(filepath))
+            meta_list.append(parse_meta_file(filepath))
 
     dict_to_json_file(meta_list, output_json)
     return meta_list
 
+
 def recreate_files_from_meta_dict(meta_list_from_json, output_directory):
-    """Writes dictionary data back to .btf_meta.txt files.
+    """Writes dictionary data back to _meta.txt files.
     Takes metadata gathered from raw files using the following method:
     collect_all_metadata(input_directory, prepare=False)
     """
@@ -380,9 +471,9 @@ def recreate_files_from_meta_dict(meta_list_from_json, output_directory):
                     file_content = f'{file_content}[{inner_key}] {inner_value}\n'
                 file_content = f'{file_content}\n'
 
-
         with open(meta_file_name, 'w') as f:
-            f.write(file_content[:-1]) # Write contents after stripping the final \n
+            f.write(file_content[:-1])  # Write contents after stripping the final \n
+
 
 def get_first_entry(meta_dict):
     '''
@@ -391,6 +482,7 @@ def get_first_entry(meta_dict):
     for ch in meta_dict:
         for entry in meta_dict[ch]:
             return entry
+
 
 def get_ch_entry_for_file_name(meta_dict, file_name):
     '''
@@ -402,10 +494,11 @@ def get_ch_entry_for_file_name(meta_dict, file_name):
     If the file_name is not found, then return (None,None)
     '''
     for ch in meta_dict:
-        for idx,entry in enumerate(meta_dict[ch]):
+        for idx, entry in enumerate(meta_dict[ch]):
             if file_name.lower() == entry.get('file_name').lower():
-                return ch,idx
+                return ch, idx
     return None, None
+
 
 def get_entry_for_file_name(meta_dict, file_name):
     '''
@@ -421,6 +514,7 @@ def get_entry_for_file_name(meta_dict, file_name):
         return meta_dict[ch][idx]
     return None
 
+
 def get_all_tile_entries(meta_dict, tile_num):
     tile_num = int(tile_num)
     tile_entries = []
@@ -432,4 +526,8 @@ def get_all_tile_entries(meta_dict, tile_num):
 
 
 if __name__ == "__main__":
-    pass
+    location = '/CBI_FastStore/tmp/mesospim/brain'
+    location = '/CBI_FastStore/Acquire/MesoSPIM/alan_testch1'
+    location = '/CBI_FastStore/Acquire/MesoSPIM/alan_test'
+    metadata_by_channel = collect_all_metadata(location)
+

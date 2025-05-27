@@ -51,7 +51,7 @@ python /CBI_FastStore/cbiPythonTools/mesospim_utils/mesospim_utils/automated.py 
 
 ##### MesoSPIM metadata module:
 
-This module underlies the whole project by collecting and 'annotating' the MesoSPIM metadata. A JSON file is written to disk in the data acquisition directory the is a single representation of the original metadata. A annotated json file is also stored which adds fields to each metadata entry for easy use. The annotated json file is only for reference and is never read off of disk. All annotated data are abstrations of informaten contained within each metadata file(s). 
+This module underlies the whole project by collecting and 'annotating' the MesoSPIM metadata. A JSON file is written to disk in the data acquisition directory the is a single representation of the original metadata. A annotated json file is also stored which adds fields to each metadata entry for easy use. The annotated json file is only for reference and is never read off of disk. All annotated data are abstractions of information contained within each metadata file(s). 
 
 
 
@@ -91,16 +91,16 @@ first_metadata_entry.keys()
 ## Annotation keys added by the module include:
 "tile_number": 			# From file name _Tile{#}_
 "channel": 				# From file name _Ch{#}_
-"emission_wavelength"	# From CFG/Filer: nm, common name mapped according to config
+"emission_wavelength"	# From CFG/Filter: nm, common name mapped according to config
 "rgb_representation"	# emission_wavelength mapped to RGB based on config
 "grid_size"				# X,Y dimensions of the imaging grid
-"grid_location"			# The specific X,Y coordinate of this tile_number
+"grid_location"			# The specific Y,X coordinate of this tile_number
 "overlap"				# Tile overlap determined by stage coordinates of multipe files
-"resolution"			# (x,y,z): xy = "Pixelsize in um", z = "z_stepsize"
-"tile_shape"			# (x,y,z): x="x_pixels", y="y_pixels", z="z_planes"
+"resolution"			# (z,y,z): xy = "Pixelsize in um", z = "z_stepsize"
+"tile_shape"			# (z,y,x): z="z_planes", y="y_pixels", x="x_pixels" 
 "tile_size_um"			# resolution * tile_shape
 "file_name"				# Name only of the image file
-"file_path"				# Full path of the image file
+"file_path"				# Full path of the image file in the current location
 "refractive_index"		# From "ETL CFG File" pattern "_RI_{float}_"
 "sheet"					# From "Shutter", left/right 
 '''
@@ -123,7 +123,7 @@ for ch in metadata_dict_stored_by_channel:
 
 
 
-##### <u>Configuration File:</u>
+##### <u>Configuration File (INCOMPLETE):</u>
 
 Default: ./config/example.yaml
 
