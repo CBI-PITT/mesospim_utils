@@ -195,7 +195,8 @@ def convert_ims_dir_mesospim_tiles_slurm_array(dir_loc: Path, file_type: str='.b
     commands = []
     for ii in tiles:
         current_script, log_location, out_dir = convert_ims(ii, res=res, run_conversion=False)
-        commands.append(current_script)
+        if current_script:
+            commands.append(current_script)
 
     # job_number = submit_array(commands, dir_loc, SLURM_PARTITION, SLURM_CPUS, SLURM_RAM_MB, SLURM_JOB_LABEL, SLURM_GRES, log_location, SLURM_PARALLEL_JOBS, after_slurm_jobs = None)
     job_number = submit_array(commands, dir_loc, slurm_parameters_dictionary,
@@ -235,7 +236,8 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
     Given a list of commands (cmd), wrap the commands in a sbatch script and submit it as an array to slurm
     If the command should not run until after another job(s) pass these job number in a list to after_slurm_jobs
     '''
-
+    if not cmd:
+        return
     ## Wrap all commands in a bash array 'commands' and call each element as a separate job in the SLURM array
     commands = 'commands=('
     for ii in cmd:
