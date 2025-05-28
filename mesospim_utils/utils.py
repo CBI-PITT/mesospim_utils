@@ -6,7 +6,7 @@ import psutil
 from collections import namedtuple
 from datetime import datetime
 
-from constants import EMISSION_TO_RGB
+from constants import EMISSION_TO_RGB, USERNAME_PATTERN
 
 def map_wavelength_to_RGB(wavelength):
     '''
@@ -202,24 +202,10 @@ def write_file(filepath, content):
         os.chmod(filepath, 0o775)
 
 
-def get_user(dir_loc):
-    user = ""
-    user_regex = r'^[a-z]+-[a-z]$'
-    try:
-        # h20 public
-        if '/h20/Public/' in dir_loc:
-            user = dir_loc.replace('/h20/Public/', '').split('/')[0]
-        # h20 acquire
-        elif '/h20/Acquire/MesoSPIM/' in dir_loc:
-            user = dir_loc.replace('/h20/Acquire/MesoSPIM/', '').split('/')[0]
-        elif '/h20/Acquire/RSCM/' in dir_loc:
-            user = dir_loc.replace('/h20/Acquire/RSCM/', '').split('/')[0]
-        # FastStore
-        elif '/CBI_FastStore/Acquire/' in dir_loc:
-            user = dir_loc.replace('/CBI_FastStore/Acquire/', '').split('/')[0]
-        matches_regex = len(re.findall(user_regex, user))
-        if not matches_regex:
-            user = ""
-    except:
-        pass
-    return user
+def get_user(pth):
+    pattern = r"{}".format(USERNAME_PATTERN)
+    match = re.findall(pattern, pth)
+    if len(match):
+        return match[0]
+    else:
+        return ""
