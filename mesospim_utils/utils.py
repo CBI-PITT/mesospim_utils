@@ -203,9 +203,18 @@ def write_file(filepath, content):
 
 
 def get_user(pth):
+
+    if not USERNAME_PATTERN:
+        return ""
+
+    if isinstance(pth, Path):
+        pth = pth.as_posix()
+    elif not isinstance(pth, str):
+        pth = str(pth)
+
     pattern = r"{}".format(USERNAME_PATTERN)
     match = re.findall(pattern, pth)
     if len(match):
         return match[0]
-    else:
-        return ""
+
+    return ""

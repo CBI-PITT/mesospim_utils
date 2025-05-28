@@ -28,7 +28,7 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
     '''
 
     dir_loc = ensure_path(dir_loc)
-    username = get_user(str(dir_loc))
+    username = get_user(dir_loc)
 
     # Ensure that metadata json is produced which will be used by downstream processes
     metadata_by_channel = collect_all_metadata(dir_loc)
@@ -66,7 +66,7 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
     res = first_metadata_entry.get('resolution')
     print(f'Resolution of mesospim tiles: {res}')
 
-    username = get_user(str(dir_loc))
+    username = get_user(dir_loc)
 
     job_number = None
     out_dir = dir_loc

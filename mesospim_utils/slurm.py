@@ -51,6 +51,9 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     TIME_LIMIT = PARAMS.get('TIME_LIMIT')
     username = get_user(dir_loc)
 
+    jobname = f'{username}' if username else ""
+    jobname = f'{jobname}{"-" if jobname else ""}{JOB_LABEL}' if JOB_LABEL else jobname
+
     if num_parallel is None:
         PARALLEL_JOBS = PARAMS.get('PARALLEL_JOBS', 1)
     else:
@@ -63,7 +66,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     commands += SBATCH_ARG.format(f'-n {CPUS}') if CPUS is not None else ""
     commands += SBATCH_ARG.format(f'--mem={RAM_GB}GB') if RAM_GB is not None else ""
     commands += SBATCH_ARG.format(f'--gres={GRES}') if GRES is not None else ""
-    commands += SBATCH_ARG.format(f'-J {username}-{JOB_LABEL}') if JOB_LABEL or username else ""
+    commands += SBATCH_ARG.format(f'-J {jobname}') if jobname else ""
     commands += SBATCH_ARG.format(f'--nice={NICE}') if NICE is not None else ""
     commands += SBATCH_ARG.format(f'-t {TIME_LIMIT}') if TIME_LIMIT is not None else ""
     commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
@@ -159,7 +162,7 @@ def convert_ims_dir_mesospim_tiles_slurm(dir_loc: Path, file_type: str='.btf', r
 
     # after_slurm_jobs = parse_job_numbers(after_slurm_jobs)
 
-    username = get_user(str(dir_loc))
+    username = get_user(dir_loc)
 
     tiles = nested_list_tile_files_sorted_by_color(dir_loc=dir_loc, file_type=file_type)
     job_numbers = []
@@ -194,7 +197,7 @@ def convert_ims_dir_mesospim_tiles_slurm_array(dir_loc: Path, file_type: str='.b
 
     # after_slurm_jobs = parse_job_numbers(after_slurm_jobs)
 
-    username = get_user(str(dir_loc))
+    username = get_user(dir_loc)
 
     tiles = nested_list_tile_files_sorted_by_color(dir_loc=dir_loc, file_type=file_type)
     commands = []
@@ -335,13 +338,16 @@ def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, arra
     NICE = PARAMS.get('NICE')
     TIME_LIMIT = PARAMS.get('TIME_LIMIT')
 
+    jobname = f'{username}' if username else ""
+    jobname = f'{jobname}{"-" if jobname else ""}{JOB_LABEL}' if JOB_LABEL else jobname
+
     # Build sbatch wrapper components
     sbatch_options = [
         f"-p {PARTITION}" if PARTITION is not None else "",
         f"-n {CPUS}" if CPUS is not None else "",
         f"--gres={GRES}" if GRES is not None else "",
         f"--mem={RAM_GB}G" if RAM_GB is not None else "",
-        f"-J {username}-{JOB_LABEL}" if JOB_LABEL or username else "",
+        f"-J {jobname}" if jobname else "",
         f"--array=0-{array_len-1}" + (f"%{PARALLEL_JOBS}" if PARALLEL_JOBS else "") if array_len is not None else "",
         f"--nice={NICE}" if NICE is not None else "",
         f"--time={TIME_LIMIT}" if TIME_LIMIT is not None else "",
