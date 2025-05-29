@@ -6,7 +6,7 @@ import os
 
 from imaris import convert_ims, nested_list_tile_files_sorted_by_color
 from rl import decon
-from utils import path_to_wine_mappings, ensure_path, get_user
+from utils import path_to_wine_mappings, ensure_path, get_user, get_file_size_gb
 
 app = typer.Typer()
 
@@ -37,15 +37,26 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     log_dir.parent.mkdir(parents=True, exist_ok=True)
     file_list = list(path.glob('*' + file_type))
     num_files = len(file_list)
-    # if queue_ims:
-    #     num_files += 1
+
+    # Dynamically determine how much RAM to allocate for SLURM to support decon, assumes all files are the same size.
+    file_size_to_decon = get_file_size_gb(file_list[0])
+    # Arbitrary multiplier by 2
+    file_size_to_decon *= 2
 
     from constants import SLURM_PARAMETERS_DECON as PARAMS
     # Extract required parameters into simple names
     PARTITION = PARAMS.get('PARTITION')
     CPUS = PARAMS.get('CPUS')
     JOB_LABEL = PARAMS.get('JOB_LABEL')
-    RAM_GB = PARAMS.get('RAM_GB')
+
+    if PARAMS.get('RAM_GB'):
+        # Effectively decon RAM_GB in config is a max value
+        # If file_size_to_decon is less than PARAMS.get('RAM_GB') use file_size_to_decon
+        # If the max size is used there is a change that the decon will fail with out of memory error, need to test
+        RAM_GB = file_size_to_decon if file_size_to_decon <= PARAMS.get('RAM_GB') else PARAMS.get('RAM_GB')
+    else:
+        RAM_GB = PARAMS.get('RAM_GB')
+
     GRES = PARAMS.get('GRES')
     NICE = PARAMS.get('NICE')
     TIME_LIMIT = PARAMS.get('TIME_LIMIT')
