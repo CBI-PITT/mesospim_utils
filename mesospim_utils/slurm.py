@@ -55,7 +55,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         # If the max size is used there is a change that the decon will fail with out of memory error, need to test
         RAM_GB = file_size_to_decon if file_size_to_decon <= PARAMS.get('RAM_GB') else PARAMS.get('RAM_GB')
     else:
-        RAM_GB = PARAMS.get('RAM_GB')
+        RAM_GB = file_size_to_decon
 
     GRES = PARAMS.get('GRES')
     NICE = PARAMS.get('NICE')
