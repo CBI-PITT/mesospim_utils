@@ -6,7 +6,7 @@ import os
 
 from imaris import convert_ims, nested_list_tile_files_sorted_by_color
 from rl import decon
-from utils import path_to_wine_mappings, ensure_path
+from utils import path_to_wine_mappings, ensure_path, get_user
 
 app = typer.Typer()
 
@@ -49,6 +49,10 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     GRES = PARAMS.get('GRES')
     NICE = PARAMS.get('NICE')
     TIME_LIMIT = PARAMS.get('TIME_LIMIT')
+    username = get_user(dir_loc)
+
+    jobname = f'{username}' if username else ""
+    jobname = f'{jobname}{"-" if jobname else ""}{JOB_LABEL}' if JOB_LABEL else jobname
 
     if num_parallel is None:
         PARALLEL_JOBS = PARAMS.get('PARALLEL_JOBS', 1)
@@ -163,13 +167,15 @@ def convert_ims_dir_mesospim_tiles_slurm(dir_loc: Path, file_type: str='.btf', r
 
     # after_slurm_jobs = parse_job_numbers(after_slurm_jobs)
 
+    username = get_user(dir_loc)
+
     tiles = nested_list_tile_files_sorted_by_color(dir_loc=dir_loc, file_type=file_type)
     job_numbers = []
     for ii in tiles:
         current_script, log_location, out_dir = convert_ims(ii, res=res, run_conversion=False)
         job_number = wrap_slurm(current_script,
                                 slurm_parameters_dictionary, log_location,
-                                after_slurm_jobs=after_slurm_jobs)
+                                after_slurm_jobs=after_slurm_jobs, username=username)
         # job_number = wrap_slurm(current_script, SLURM_PARTITION, SLURM_CPUS, SLURM_RAM_MB, SLURM_JOB_LABEL, log_location,
         #                         after_slurm_jobs=None)
         job_numbers.append(job_number)
@@ -196,6 +202,8 @@ def convert_ims_dir_mesospim_tiles_slurm_array(dir_loc: Path, file_type: str='.b
 
     # after_slurm_jobs = parse_job_numbers(after_slurm_jobs)
 
+    username = get_user(dir_loc)
+
     tiles = nested_list_tile_files_sorted_by_color(dir_loc=dir_loc, file_type=file_type)
     commands = []
     for ii in tiles:
@@ -205,7 +213,7 @@ def convert_ims_dir_mesospim_tiles_slurm_array(dir_loc: Path, file_type: str='.b
 
     # job_number = submit_array(commands, dir_loc, SLURM_PARTITION, SLURM_CPUS, SLURM_RAM_MB, SLURM_JOB_LABEL, SLURM_GRES, log_location, SLURM_PARALLEL_JOBS, after_slurm_jobs = None)
     job_number = submit_array(commands, dir_loc, slurm_parameters_dictionary,
-                              log_location, after_slurm_jobs=after_slurm_jobs)
+                              log_location, after_slurm_jobs=after_slurm_jobs, username=username)
 
     return job_number, out_dir
 
@@ -217,14 +225,14 @@ def convert_ims_dir_mesospim_tiles_slurm_array(dir_loc: Path, file_type: str='.b
 
 
 def wrap_slurm(cmd: str, slurm_parameters_dictionary, log_location,
-               after_slurm_jobs: list[int] = None):
+               after_slurm_jobs: list[int] = None, username: str = ""):
     '''
     Given a command (cmd) string, wrap the command in a sbatch script and submit it to slurm
     If the command should not run until after another job(s) pass these job number in a list to after_slurm_jobs
     '''
 
     # Sbatch command wrapping each ims build
-    sbatch_cmd = format_sbatch_wrap(slurm_parameters_dictionary=slurm_parameters_dictionary, log_location=log_location)
+    sbatch_cmd = format_sbatch_wrap(slurm_parameters_dictionary=slurm_parameters_dictionary, log_location=log_location, username=username)
     sbatch_cmd = sbatch_cmd.format(cmd)
     sbatch_cmd = sbatch_depends(sbatch_cmd, after_slurm_jobs)
     print(sbatch_cmd)
@@ -236,7 +244,7 @@ def wrap_slurm(cmd: str, slurm_parameters_dictionary, log_location,
     return job_number
 
 def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_dictionary, log_location,
-               after_slurm_jobs: list[int] = None):
+               after_slurm_jobs: list[int] = None, username: str = ""):
     '''
     Given a list of commands (cmd), wrap the commands in a sbatch script and submit it as an array to slurm
     If the command should not run until after another job(s) pass these job number in a list to after_slurm_jobs
@@ -264,7 +272,7 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
 
     # Sbatch command wrapping each ims build
     sbatch_cmd = format_sbatch_wrap(slurm_parameters_dictionary=slurm_parameters_dictionary, log_location=log_location,
-                                    array_len=len(cmd), bash=True)
+                                    array_len=len(cmd), bash=True, username=username)
     sbatch_cmd = sbatch_cmd.format(name_of_sbatch_script)
     sbatch_cmd = sbatch_depends(sbatch_cmd, after_slurm_jobs)
     print(sbatch_cmd)
@@ -278,7 +286,7 @@ def get_job_number_from_slurm_out(output):
 
 
 @app.command()
-def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, array_len=None, bash=False):
+def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, array_len=None, bash=False, username=""):
     '''
     This function takes slurm_parameters_dictionary and outputs a sbatch command designed to wrap a single line command
     --wrap={commands}.  No commands are included, just the prologue required to configure parameters needed for slurm
@@ -338,13 +346,16 @@ def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, arra
     NICE = PARAMS.get('NICE')
     TIME_LIMIT = PARAMS.get('TIME_LIMIT')
 
+    jobname = f'{username}' if username else ""
+    jobname = f'{jobname}{"-" if jobname else ""}{JOB_LABEL}' if JOB_LABEL else jobname
+
     # Build sbatch wrapper components
     sbatch_options = [
         f"-p {PARTITION}" if PARTITION is not None else "",
         f"-n {CPUS}" if CPUS is not None else "",
         f"--gres={GRES}" if GRES is not None else "",
         f"--mem={RAM_GB}G" if RAM_GB is not None else "",
-        f"-J {JOB_LABEL}" if JOB_LABEL is not None else "",
+        f"-J {jobname}" if jobname else "",
         f"--array=0-{array_len-1}" + (f"%{PARALLEL_JOBS}" if PARALLEL_JOBS else "") if array_len is not None else "",
         f"--nice={NICE}" if NICE is not None else "",
         f"--time={TIME_LIMIT}" if TIME_LIMIT is not None else "",

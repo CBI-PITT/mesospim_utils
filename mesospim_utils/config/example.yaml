@@ -36,6 +36,9 @@ general:
     '627-730': [ 1, 0, 0.75 ]
     '731-2000': [ 0.75, 0, 1 ]
 
+  username_pattern: '[\\/]([a-z]+-[a-z])[\\/]'
+    # example: holmes-s
+
 
 decon:
   script: 'rl.py'
