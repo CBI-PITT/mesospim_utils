@@ -219,8 +219,8 @@ def get_user(pth):
 
     return ""
 
-def get_file_size_gb(path: Path) -> float:
+def get_file_size_gb(path: Path) -> int:
     path = ensure_path(path)
     size_bytes = path.stat().st_size
     size_gb = size_bytes / (1024 ** 3)
-    return size_gb
+    return int(size_gb)
