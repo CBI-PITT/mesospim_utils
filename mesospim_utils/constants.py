@@ -46,6 +46,8 @@ EMISSION_TO_RGB = general.get('emission_to_rgb')
 
 VERBOSE = general.get('verbose')
 
+USERNAME_PATTERN = general.get('username_pattern')
+
 # Dependencies are tasks that run lightweight commands that spin off other processes
 # Very little resources are required
 # Used to coordinate between DECON, IMARIS conversion

@@ -6,7 +6,7 @@ import psutil
 from collections import namedtuple
 from datetime import datetime
 
-from constants import EMISSION_TO_RGB
+from constants import EMISSION_TO_RGB, USERNAME_PATTERN
 
 def map_wavelength_to_RGB(wavelength):
     '''
@@ -200,3 +200,21 @@ def write_file(filepath, content):
         f.write(content)
     if os.name != 'nt':
         os.chmod(filepath, 0o775)
+
+
+def get_user(pth):
+
+    if not USERNAME_PATTERN:
+        return ""
+
+    if isinstance(pth, Path):
+        pth = pth.as_posix()
+    elif not isinstance(pth, str):
+        pth = str(pth)
+
+    pattern = r"{}".format(USERNAME_PATTERN)
+    match = re.findall(pattern, pth)
+    if len(match):
+        return match[0]
+
+    return ""
