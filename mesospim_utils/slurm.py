@@ -2,6 +2,7 @@ import typer
 from pathlib import Path
 import subprocess
 import os
+import math
 
 
 from imaris import convert_ims, nested_list_tile_files_sorted_by_color
@@ -25,7 +26,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     import subprocess
 
     from constants import ENV_PYTHON_LOC
-    from constants import DECON_SCRIPT
+    from constants import DECON_SCRIPT, MAX_VRAM
 
     path = Path(dir_loc)
     if out_dir:
@@ -49,13 +50,16 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     CPUS = PARAMS.get('CPUS')
     JOB_LABEL = PARAMS.get('JOB_LABEL')
 
+    RAM_GB = file_size_to_decon
+    if MAX_VRAM:
+        MAX_VRAM_GB = MAX_VRAM / 1024 / 2
+        RAM_GB = MAX_VRAM_GB if MAX_VRAM_GB < RAM_GB else RAM_GB
     if PARAMS.get('RAM_GB'):
         # Effectively decon RAM_GB in config is a max value
         # If file_size_to_decon is less than PARAMS.get('RAM_GB') use file_size_to_decon
         # If the max size is used there is a change that the decon will fail with out of memory error, need to test
-        RAM_GB = file_size_to_decon if file_size_to_decon <= PARAMS.get('RAM_GB') else PARAMS.get('RAM_GB')
-    else:
-        RAM_GB = file_size_to_decon
+        RAM_GB = RAM_GB if RAM_GB <= PARAMS.get('RAM_GB') else PARAMS.get('RAM_GB')
+    RAM_GB = math.ceil(RAM_GB)
 
     GRES = PARAMS.get('GRES')
     NICE = PARAMS.get('NICE')

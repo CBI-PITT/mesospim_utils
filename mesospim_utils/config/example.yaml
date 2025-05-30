@@ -96,9 +96,9 @@ slurm:
   decon:
     # Deconvolution tasks require a CUDA GPU
     'PARTITION': 'gpu' #multiple partitions can be specified with comma separation part1,par2
-    'CPUS':
+    'CPUS': 1
     'JOB_LABEL': 'ms_decon'
-    'RAM_GB':
+    'RAM_GB': 1300 # Acts of max RAM allocation based on how it is implemented in rl.py
     'GRES': 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 32 # In a slurm array, how many jobs will run in parallel
     'NICE': 0
