@@ -8,7 +8,7 @@ import json
 from collections import namedtuple
 
 from utils import ensure_path, dict_to_json_file, json_file_to_dict, convert_paths_to_posix, convert_paths, \
-    convert_str_to_nums
+    convert_str_to_nums, get_user
 from utils import map_wavelength_to_RGB
 
 from constants import EMISSION_MAP, METADATA_FILENAME, METADATA_ANNOTATED_FILENAME, VERBOSE
@@ -186,6 +186,8 @@ def annotate_metadata(metadata_by_channel, location=None):
 
             if location:
                 entry['file_path'] = location / entry['file_name']
+            if entry.get('file_path'):
+                entry['username'] = get_user(entry.get('file_path'))
 
     metadata_by_channel = get_affine_transform(metadata_by_channel)
     return metadata_by_channel
