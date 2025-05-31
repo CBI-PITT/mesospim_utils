@@ -186,8 +186,8 @@ def annotate_metadata(metadata_by_channel, location=None):
 
             if location:
                 entry['file_path'] = location / entry['file_name']
-            if entry.get('file_path'):
-                entry['username'] = get_user(entry.get('file_path'))
+
+            entry['username'] = get_user(entry.get('file_path',"")) # Default "" if no entry['file_path']
 
     metadata_by_channel = get_affine_transform(metadata_by_channel)
     return metadata_by_channel
