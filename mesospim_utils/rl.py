@@ -576,58 +576,60 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
     FRAMES_PER_DECON = FRAMES_PER_DECON - ideal_overlap_top - ideal_overlap_btm
 
     num_decon_chunks = len(range(0,stack.shape[0],FRAMES_PER_DECON))
-    with tifffile.TiffWriter(out_location, bigtiff=True) as tif:
-        for idx, z_start in enumerate(range(0,stack.shape[0],FRAMES_PER_DECON)):
+    first_chunk = True
+    for idx, z_start in enumerate(range(0,stack.shape[0],FRAMES_PER_DECON)):
 
-            chunk_start_time = time_report(start_time=None)
+        chunk_start_time = time_report(start_time=None)
 
-            z_end = min(z_start + FRAMES_PER_DECON, stack.shape[0])
+        z_end = min(z_start + FRAMES_PER_DECON, stack.shape[0])
 
-            if VERBOSE: print('Reading next chunk')
-            to_decon = get_chunk_with_padding(stack, z_start, z_end,
-                                              (ideal_overlap_top,ideal_overlap_btm), axis = 0)
+        if VERBOSE: print('Reading next chunk')
+        to_decon = get_chunk_with_padding(stack, z_start, z_end,
+                                          (ideal_overlap_top,ideal_overlap_btm), axis = 0)
 
-            to_decon = np.expand_dims(to_decon,0)
-            to_decon = np.expand_dims(to_decon,0)
-            to_decon = img_as_float32(to_decon)
-            if half_precision:
-                to_decon = to_decon.astype(np.float16)
-            to_decon = torch.from_numpy(to_decon).cuda()
+        to_decon = np.expand_dims(to_decon,0)
+        to_decon = np.expand_dims(to_decon,0)
+        to_decon = img_as_float32(to_decon)
+        if half_precision:
+            to_decon = to_decon.astype(np.float16)
+        to_decon = torch.from_numpy(to_decon).cuda()
 
-            # Decon the chunk
-            to_decon = richardson_lucy_3d(to_decon, psf, iterations=ITERATIONS, sigma=SIGMA)
+        # Decon the chunk
+        to_decon = richardson_lucy_3d(to_decon, psf, iterations=ITERATIONS, sigma=SIGMA)
 
-            if sharpen:
-                if VERBOSE: print('Unsharpening')
-                to_decon = unsharp(to_decon, amount=2, sigma=2)
+        if sharpen:
+            if VERBOSE: print('Unsharpening')
+            to_decon = unsharp(to_decon, amount=2, sigma=2)
 
-            to_decon = to_decon.cpu()
-            to_decon = to_decon.numpy()
+        to_decon = to_decon.cpu()
+        to_decon = to_decon.numpy()
 
-            to_decon = np.clip(to_decon, 0, 1)
-            to_decon = img_as_uint(to_decon)
-            to_decon = to_decon[0,0]
+        to_decon = np.clip(to_decon, 0, 1)
+        to_decon = img_as_uint(to_decon)
+        to_decon = to_decon[0,0]
 
 
 
-            # Trim top:bottom padding
-            # to_decon = to_decon[ideal_overlap_top:-ideal_overlap_btm]
+        # Trim top:bottom padding
+        # to_decon = to_decon[ideal_overlap_top:-ideal_overlap_btm]
 
-            # Trim padding
-            to_decon = to_decon[ideal_overlap_top:-ideal_overlap_btm,ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1], ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
+        # Trim padding
+        to_decon = to_decon[ideal_overlap_top:-ideal_overlap_btm,ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1], ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
 
-            if VERBOSE: print(f'Writing Chunk {idx+1} of {num_decon_chunks}')
+        if VERBOSE: print(f'Writing Chunk {idx+1} of {num_decon_chunks}')
 
+        with tifffile.TiffWriter(out_location, bigtiff=True, append=not first_chunk) as tif:
             for img in to_decon:
                 tif.write(img[np.newaxis, ...], contiguous=False)
+        first_chunk = False
+        
+        torch.cuda.empty_cache()
 
-            torch.cuda.empty_cache()
+        chunk_total_time = time_report(start_time=chunk_start_time, to_print=False)
+        if VERBOSE: print(f'Chunk {idx+1} of {num_decon_chunks}: {round(chunk_total_time, 2)} minutes')
 
-            chunk_total_time = time_report(start_time=chunk_start_time, to_print=False)
-            if VERBOSE: print(f'Chunk {idx+1} of {num_decon_chunks}: {round(chunk_total_time, 2)} minutes')
-
-            accumulated_time = time_report(start_time=start_time, to_print=False)
-            if VERBOSE: print(f'Accumulated Time: {round(accumulated_time, 2)} minutes')
+        accumulated_time = time_report(start_time=start_time, to_print=False)
+        if VERBOSE: print(f'Accumulated Time: {round(accumulated_time, 2)} minutes')
 
     if VERBOSE: print('Deconvolution complete')
 
