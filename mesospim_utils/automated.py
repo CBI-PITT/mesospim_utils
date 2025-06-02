@@ -5,7 +5,7 @@ import subprocess
 from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY
 from metadata import collect_all_metadata, get_first_entry
 from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap
-from utils import ensure_path, get_user
+from utils import ensure_path
 
 
 mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
@@ -28,15 +28,16 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
     '''
 
     dir_loc = ensure_path(dir_loc)
-    username = get_user(dir_loc)
 
     # Ensure that metadata json is produced which will be used by downstream processes
     metadata_by_channel = collect_all_metadata(dir_loc)
 
+    first_metadata_entry = get_first_entry(metadata_by_channel)
+    username = first_metadata_entry.get('username', "")
+
     job_number = None
     out_dir = dir_loc
     if not refractive_index and decon:
-        first_metadata_entry = get_first_entry(metadata_by_channel)
         refractive_index = first_metadata_entry.get('refractive_index')
 
     if refractive_index and decon:
@@ -66,7 +67,7 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
     res = first_metadata_entry.get('resolution')
     print(f'Resolution of mesospim tiles: {res}')
 
-    username = get_user(dir_loc)
+    username = first_metadata_entry.get('username',"")
 
     job_number = None
     out_dir = dir_loc
