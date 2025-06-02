@@ -443,7 +443,7 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
     if not isinstance(out_location, Path):
         out_location = Path(out_location)
     if VERBOSE: print(f'Output File: {out_location}')
-    # exit()
+
     out_location.parent.mkdir(parents=True, exist_ok=True)
     final_out_location = out_location
     # Make out location a .TMP file
@@ -495,6 +495,7 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         stack = stack[start_index:stop_index]
 
     assert 'stack' in locals(), 'Image file has not been loaded, perhaps it is an unsupported format'
+    origional_shape = stack.shape
 
     if VERBOSE > 1: print(f'FILE_SHAPE: {stack.shape}')
 
@@ -531,7 +532,7 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
     # Pad array based on psf size
     ARRAY_PADDING = [[int((x * 2) + 1) for z in [1, 1]] for x in psf.shape]
-    stack = np.pad(stack, ARRAY_PADDING, mode='reflect')
+    stack = np.pad(stack, [[0,0], *ARRAY_PADDING[1:]], mode='reflect')
     if VERBOSE > 1: print(f'PADDED_SHAPE: {stack.shape}')
 
     ## Attempt to determine the number of frames that will max out vRAM for most efficient processing.
@@ -570,40 +571,30 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
     ideal_overlap_top = ARRAY_PADDING[0][0]
     ideal_overlap_btm = ARRAY_PADDING[0][1]
 
-    canvas = np.zeros(stack.shape, dtype=stack.dtype)
+    TOTAL_FRAMES_FOR_CHUNK = FRAMES_PER_DECON
 
     FRAMES_PER_DECON = FRAMES_PER_DECON - ideal_overlap_top - ideal_overlap_btm
 
     num_decon_chunks = len(range(0,stack.shape[0],FRAMES_PER_DECON))
-    for idx, current in enumerate(range(0,stack.shape[0],FRAMES_PER_DECON)):
+    first_chunk = True
+    for idx, z_start in enumerate(range(0,stack.shape[0],FRAMES_PER_DECON)):
+
         chunk_start_time = time_report(start_time=None)
 
-        max_frames_above = current
-        max_frames_below = stack.shape[0] - current
+        z_end = min(z_start + FRAMES_PER_DECON, stack.shape[0])
 
-        start_z = current - (ideal_overlap_top if max_frames_above > ideal_overlap_top else max_frames_above)
-        start_chunk_idx = current-start_z
-        stop_z = current + (ideal_overlap_btm if max_frames_below > ideal_overlap_btm else max_frames_below)
-        new_end = stop_z + FRAMES_PER_DECON
-        stop_z = new_end if new_end < stack.shape[0] else stack.shape[0]
-        if VERBOSE: print(f'START: {start_z}, STOP: {stop_z}')
-        if VERBOSE: print(f'Processing chunk {idx+1} of {num_decon_chunks}')
-
-        # Reading in parallel show funky mix-ups with zlayers and image shift. This is attempt at loading 1 plane a time.
-        to_decon_shape = stack[start_z:stop_z].shape
-        to_decon = np.zeros(to_decon_shape, dtype=stack.dtype)
         if VERBOSE: print('Reading next chunk')
-        for img_idx, img in enumerate(stack[start_z:stop_z]):
-            to_decon[img_idx] = img.compute()
-        # to_decon = stack[start_z:stop_z]
-        # to_decon = to_decon.compute()
+        to_decon = get_chunk_with_padding(stack, z_start, z_end,
+                                          (ideal_overlap_top,ideal_overlap_btm), axis = 0)
+
         to_decon = np.expand_dims(to_decon,0)
         to_decon = np.expand_dims(to_decon,0)
         to_decon = img_as_float32(to_decon)
         if half_precision:
             to_decon = to_decon.astype(np.float16)
         to_decon = torch.from_numpy(to_decon).cuda()
-        #print(f"Prior Mean: {to_decon.mean()}, MIN: {to_decon.min()}, MAX: {to_decon.max()}")
+
+        # Decon the chunk
         to_decon = richardson_lucy_3d(to_decon, psf, iterations=ITERATIONS, sigma=SIGMA)
 
         if sharpen:
@@ -617,10 +608,21 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         to_decon = img_as_uint(to_decon)
         to_decon = to_decon[0,0]
 
-        to_decon = to_decon[start_chunk_idx:]
 
-        canvas[current:stop_z] = to_decon
 
+        # Trim top:bottom padding
+        # to_decon = to_decon[ideal_overlap_top:-ideal_overlap_btm]
+
+        # Trim padding
+        to_decon = to_decon[ideal_overlap_top:-ideal_overlap_btm,ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1], ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
+
+        if VERBOSE: print(f'Writing Chunk {idx+1} of {num_decon_chunks}')
+
+        with tifffile.TiffWriter(out_location, bigtiff=True, append=not first_chunk) as tif:
+            for img in to_decon:
+                tif.write(img[np.newaxis, ...], contiguous=False)
+        first_chunk = False
+        
         torch.cuda.empty_cache()
 
         chunk_total_time = time_report(start_time=chunk_start_time, to_print=False)
@@ -631,15 +633,6 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
     if VERBOSE: print('Deconvolution complete')
 
-    # unpad canavs
-    canvas = canvas[ARRAY_PADDING[0][0]:-ARRAY_PADDING[0][1], ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1],ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
-
-    if VERBOSE: print(f'Saving Deconvolved output: {out_location}')
-    #save_image(out_location, canvas)
-    with tifffile.TiffWriter(out_location, bigtiff=True) as tif:
-        for img in canvas:
-            tif.write(img[np.newaxis, ...], contiguous=False)
-
     if out_location.is_file():
         if VERBOSE: print(f'Renaming File: {out_location.name} to {final_out_location.name}')
         out_location.rename(final_out_location)
@@ -647,10 +640,12 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
     if save_pre_post:
         stack = stack[ARRAY_PADDING[0][0]:-ARRAY_PADDING[0][1], ARRAY_PADDING[1][0]:-ARRAY_PADDING[1][1],
                 ARRAY_PADDING[2][0]:-ARRAY_PADDING[2][1]]
+
         if VERBOSE: print(f'Saving Pre-Decon image: {pre_location}')
         with tifffile.TiffWriter(pre_location, bigtiff=True) as tif:
             for img in stack:
                 tif.write(img[np.newaxis, ...], contiguous=False)
+
         if pre_location.is_file():
             new_name = pre_location.parent / (pre_location.stem + '.tif')
             if VERBOSE: print(f'Renaming File: {pre_location.name} to {new_name.name}')
@@ -663,7 +658,41 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
     time_report(start_time=start_time, to_print=True)
 
+def get_chunk_with_padding(darr, z_start, z_end, pad: tuple, axis=0):
+    """
+    darr: Dask array of shape (Z, Y, X)
+    z_start, z_end: indices for chunk slicing (without padding)
+    pad: number of slices (before,after), or int
+    """
+    Z = darr.shape[0]
+    if isinstance(pad, int):
+        pad = (pad,pad)
 
+    # Compute padded bounds
+    pad_before = max(0, z_start - pad[0])
+    pad_after = min(Z, z_end + pad[1])
+
+    # Extract the padded chunk
+    chunk = darr[pad_before:pad_after]
+    chunk = np.zeros(chunk.shape,chunk.dtype)
+    for img_idx, img in enumerate(darr[pad_before:pad_after]):
+        chunk[img_idx] = img.compute()
+
+    # chunk = darr[pad_before:pad_after].compute()
+
+    # Mirror padding if needed
+    missing_before = pad[0] - (z_start - pad_before)
+    missing_after = (z_end + pad[1]) - pad_after
+
+    if missing_before > 0:
+        reflect_before = chunk[missing_before-1::-1]
+        chunk = np.concatenate([reflect_before, chunk], axis=0)
+
+    if missing_after > 0:
+        reflect_after = chunk[-1:-missing_after-1:-1]
+        chunk = np.concatenate([chunk, reflect_after], axis=0)
+
+    return chunk
 
 def calculate_max_frames_per_chunk(y_x_shape: tuple, y_x_overlap: tuple):
     current_size = 0

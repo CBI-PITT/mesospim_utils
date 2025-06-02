@@ -55,7 +55,7 @@ def collect_all_metadata(location: Path, prepare=True):
         annotated_name = save_json_path.with_name(METADATA_ANNOTATED_FILENAME)
         dict_to_json_file(metadata_by_channel, annotated_name)
 
-    if VERBOSE: print(metadata_by_channel)
+    if VERBOSE > 1: print(metadata_by_channel)
 
     return metadata_by_channel
 
@@ -97,21 +97,21 @@ def sort_meta_list(meta_list):
     for entry in meta_list:
         file_path = Path(entry["Metadata for file"])  # Convert to Path object
         file_name = file_path.name.lower()
-        print(f'{file_name=}')
+        if VERBOSE > 1: print(f'{file_name=}')
 
         # Extract tile number
         tile_match = tile_pattern.search(file_name)  # Extract tile number from filename
         tile_number = int(tile_match.group(1)) if tile_match else None
-        print(f'{tile_number=}')
+        if VERBOSE > 1: print(f'{tile_number=}')
 
         # Extract channel number
         channel_match = channel_pattern.search(file_name)  # Extract channel wavelength from filename
-        print(f'{channel_match=}')
+        if VERBOSE > 1: print(f'{channel_match=}')
         if channel_match:
             channel_number = channel_match.group(1) + channel_match.group(2)  # e.g., '561b'
         else:
             channel_number = None
-        print(f'{channel_number=}')
+        if VERBOSE > 1: print(f'{channel_number=}')
         # channel_number = channel_match.group(1) if channel_match else None
         # channel_number = int(channel_number)
 
@@ -129,7 +129,7 @@ def sort_meta_list(meta_list):
     # Ensure keys of metadata dictionary are always sorted in order of channel excitation
     sorted_data = dict(sorted(sorted_data.items(), key=lambda item: sort_key(item[0])))
 
-    if VERBOSE: print(sorted_data)
+    if VERBOSE > 1: print(sorted_data)
 
     return sorted_data
 
