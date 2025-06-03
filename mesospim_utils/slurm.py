@@ -59,7 +59,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     else:
         PARALLEL_JOBS = num_parallel
 
-    files_not_done = [x for x in file_list if not os.path.exists(str(out_dir / (x.stem + out_file_type)))]
+    files_not_done = [x for x in file_list if not (out_dir / (x.stem + out_file_type)).exists()]
 
     if files_not_done:
         SBATCH_ARG = '#SBATCH {}\n'
