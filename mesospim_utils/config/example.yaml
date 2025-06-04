@@ -92,7 +92,7 @@ slurm:
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 1
     'NICE': 0
-    'TIME_LIMIT': '0-00:02:00' # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+    'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
   decon:
     # Deconvolution tasks require a CUDA GPU
     'PARTITION': 'gpu' #multiple partitions can be specified with comma separation part1,par2

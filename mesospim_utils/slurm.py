@@ -74,50 +74,55 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
     else:
         PARALLEL_JOBS = num_parallel
 
-    SBATCH_ARG = '#SBATCH {}\n'
-    # to_run = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon", f'-o {log_dir} / %A_%a.log', f'--array=0-{num_files-1}']
-    commands = "#!/bin/bash\n"
-    commands += SBATCH_ARG.format(f'-p {PARTITION}') if PARTITION is not None else ""
-    commands += SBATCH_ARG.format(f'-n {CPUS}') if CPUS is not None else ""
-    commands += SBATCH_ARG.format(f'--mem={RAM_GB}GB') if RAM_GB is not None else ""
-    commands += SBATCH_ARG.format(f'--gres={GRES}') if GRES is not None else ""
-    commands += SBATCH_ARG.format(f'-J {jobname}') if jobname else ""
-    commands += SBATCH_ARG.format(f'--nice={NICE}') if NICE is not None else ""
-    commands += SBATCH_ARG.format(f'-t {TIME_LIMIT}') if TIME_LIMIT is not None else ""
-    commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
-    commands += SBATCH_ARG.format(f'--array=0-{num_files - 1}{"%" + str(PARALLEL_JOBS) if PARALLEL_JOBS > 0 else ""}')
-    commands += "\n"
+    files_not_done = [x for x in file_list if not (out_dir / (x.stem + out_file_type)).exists()]
 
-    commands += "commands=("
-    #Build each command
-    for p in file_list:
-        commands += '\n\t'
-        commands += '"'
-        commands += f'{ENV_PYTHON_LOC} -u {DECON_SCRIPT} decon'
-        commands += f' {p.as_posix()}'
-        commands += f' {refractive_index}'
-        commands += f' --out-location {out_dir / (p.stem + out_file_type)}'
-        #commands += f'{" --queue-ims" if queue_ims else ""}'
-        commands += f'{" --sharpen" if sharpen else ""}'
-        commands += f'{f" --denoise-sigma {denoise_sigma}" if denoise_sigma else ""}'
-        commands += f'{" --half-precision" if half_precision else " --no-half-precision"}'
-        commands += f' --psf-shape {psf_shape[0]} {psf_shape[1]} {psf_shape[2]}'
-        commands += f' --iterations {iterations}'
-        commands += f' --frames-per-chunk {frames_per_chunk}' if frames_per_chunk is not None else ''
-        commands += '"'
+    if files_not_done:
+        SBATCH_ARG = '#SBATCH {}\n'
+        # to_run = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon", f'-o {log_dir} / %A_%a.log', f'--array=0-{num_files-1}']
+        commands = "#!/bin/bash\n"
+        commands += SBATCH_ARG.format(f'-p {PARTITION}') if PARTITION is not None else ""
+        commands += SBATCH_ARG.format(f'-n {CPUS}') if CPUS is not None else ""
+        commands += SBATCH_ARG.format(f'--mem={RAM_GB}GB') if RAM_GB is not None else ""
+        commands += SBATCH_ARG.format(f'--gres={GRES}') if GRES is not None else ""
+        commands += SBATCH_ARG.format(f'-J {JOB_LABEL}') if JOB_LABEL is not None else ""
+        commands += SBATCH_ARG.format(f'--nice={NICE}') if NICE is not None else ""
+        commands += SBATCH_ARG.format(f'-t {TIME_LIMIT}') if TIME_LIMIT is not None else ""
+        commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
+        commands += SBATCH_ARG.format(f'--array=0-{len(files_not_done) - 1}{"%" + str(PARALLEL_JOBS) if PARALLEL_JOBS > 0 else ""}')
+        commands += "\n"
 
-    commands += '\n)\n\n'
-    commands += 'echo "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"\n'
-    commands += 'eval "${commands[$SLURM_ARRAY_TASK_ID]}"'
+        commands += "commands=("
+        #Build each command
+        for p in files_not_done:
+            commands += '\n\t'
+            commands += '"'
+            commands += f'{ENV_PYTHON_LOC} -u {DECON_SCRIPT} decon'
+            commands += f' {p.as_posix()}'
+            commands += f' {refractive_index}'
+            commands += f' --out-location {out_dir / (p.stem + out_file_type)}'
+            #commands += f'{" --queue-ims" if queue_ims else ""}'
+            commands += f'{" --sharpen" if sharpen else ""}'
+            commands += f'{f" --denoise-sigma {denoise_sigma}" if denoise_sigma else ""}'
+            commands += f'{" --half-precision" if half_precision else " --no-half-precision"}'
+            commands += f' --psf-shape {psf_shape[0]} {psf_shape[1]} {psf_shape[2]}'
+            commands += f' --iterations {iterations}'
+            commands += f' --frames-per-chunk {frames_per_chunk}' if frames_per_chunk is not None else ''
+            commands += '"'
 
-    file_to_run = out_dir / 'slurm_array.sh'
-    with open(file_to_run, 'w') as f:
-        f.write(commands)
+        commands += '\n)\n\n'
+        commands += 'echo "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"\n'
+        commands += 'eval "${commands[$SLURM_ARRAY_TASK_ID]}"'
 
-    output = subprocess.run(f'sbatch {file_to_run}', shell=True, capture_output=True)
-    prefix_len = len(b'Submitted batch job ')
-    job_number = int(output.stdout[prefix_len:-1])
-    print(f'SBATCH Job #: {job_number}')
+        file_to_run = out_dir / 'slurm_array.sh'
+        with open(file_to_run, 'w') as f:
+            f.write(commands)
+
+        output = subprocess.run(f'sbatch {file_to_run}', shell=True, capture_output=True)
+        prefix_len = len(b'Submitted batch job ')
+        job_number = int(output.stdout[prefix_len:-1])
+        print(f'SBATCH Job #: {job_number}')
+    else:
+        job_number = None
 
     return job_number, out_dir
 
@@ -261,6 +266,7 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
     '''
     if not cmd:
         return
+
     ## Wrap all commands in a bash array 'commands' and call each element as a separate job in the SLURM array
     commands = 'commands=('
     for ii in cmd:
