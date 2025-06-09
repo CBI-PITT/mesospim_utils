@@ -146,11 +146,12 @@ def build_ims_resample_input(x_min, x_max, y_min, y_max, z_min, z_max, directory
 
     metadata_entry = get_first_entry(metadata_by_channel)
     grid_y, grid_x  = metadata_entry.get('grid_size')
+    stage_direction = metadata_entry.get('stage_direction')
 
     input = f'<ImageList>\n'
     tile_num = 0
-    for x in range(grid_x):
-        for y in range(grid_y):
+    for x in range(grid_x)[::stage_direction[1]]:
+        for y in range(grid_y)[::stage_direction[0]]:
             file_name = tile_file_name_list[tile_num]
             new = f'<Image MinX="{x_min[x, y]:.6f}" MinY="{y_min[x, y]:.6f}" MinZ="{z_min[x, y]:.6f}" MaxX="{x_max[x, y]:.6f}" MaxY="{y_max[x, y]:.6f}" MaxZ="{z_max[x, y]:.6f}">{file_name}</Image>\n'
             input += new

@@ -63,6 +63,7 @@ def build_align_inputs(metadata_by_channel: dict, dir_with_ims_files: Path, over
         resolution = sample_tile['tile_size_um']
 
         grid_y, grid_x  = sample_tile['grid_size']
+        stage_direction = sample_tile['stage_direction']
 
 
         ## Build input file for alignment:
@@ -72,17 +73,30 @@ def build_align_inputs(metadata_by_channel: dict, dir_with_ims_files: Path, over
         MinZ = 0.0
         MaxX = float(resolution.x)
         MaxZ = float(resolution.z)
-        file_idx = 0
-        for x in range(grid_x):
+        # file_idx = 0
+        # for x in range(grid_x):
+        #     MinY = 0.0
+        #     MaxY = float(resolution.y)
+        #     for y in range(grid_y):
+        #         new = f'<Image MinX="{MinX:.6f}" MinY="{MinY:.6f}" MinZ="{MinZ:.6f}" MaxX="{MaxX:.6f}" MaxY="{MaxY:.6f}" MaxZ="{MaxZ:.6f}">{ims_files[file_idx]}</Image>\n'
+        #         MinY = MinY + (resolution.y * (1-overlap))
+        #         MaxY = MinY + resolution.y
+        #         input = input + new
+        #         file_idx += 1
+        #     MinX = MinX + (resolution.x * (1-overlap))
+        #     MaxX = MinX + resolution.x
+        # input = input + '</ImageList>'
+
+        for x in range(grid_x)[::stage_direction[1]]:
             MinY = 0.0
             MaxY = float(resolution.y)
-            for y in range(grid_y):
+            for y in range(grid_y)[::stage_direction[0]]:
+                file_idx = (x*grid_x) + y
                 new = f'<Image MinX="{MinX:.6f}" MinY="{MinY:.6f}" MinZ="{MinZ:.6f}" MaxX="{MaxX:.6f}" MaxY="{MaxY:.6f}" MaxZ="{MaxZ:.6f}">{ims_files[file_idx]}</Image>\n'
-                MinY = MinY + (resolution.y * (1-overlap))
+                MinY = MinY + (resolution.y * (1 - overlap))
                 MaxY = MinY + resolution.y
                 input = input + new
-                file_idx += 1
-            MinX = MinX + (resolution.x * (1-overlap))
+            MinX = MinX + (resolution.x * (1 - overlap))
             MaxX = MinX + resolution.x
         input = input + '</ImageList>'
 

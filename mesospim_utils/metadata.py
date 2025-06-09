@@ -13,7 +13,6 @@ from utils import map_wavelength_to_RGB
 
 from constants import EMISSION_MAP, METADATA_FILENAME, METADATA_ANNOTATED_FILENAME, VERBOSE
 
-
 def collect_all_metadata(location: Path, prepare=True):
     """
     Collect all relevant metadata from mesospim Tile metadata files, sort by channel
@@ -58,7 +57,6 @@ def collect_all_metadata(location: Path, prepare=True):
     if VERBOSE > 1: print(metadata_by_channel)
 
     return metadata_by_channel
-
 
 def remove_max_projections(list_of_paths: list[Path]) -> list[Path]:
     list_of_paths = [ensure_path(x) for x in list_of_paths]
@@ -155,6 +153,9 @@ def annotate_metadata(metadata_by_channel, location=None):
         # Collect grid size information to be appended to each metadata parameter
         grid_size = determine_grid_size(data)
 
+        # Collect direction of stage movement to be appended to each metadata parameter
+        stage_direction = get_stage_direction(data, grid_size)
+
         # Find Overlap
         overlap = determine_overlap(data)
 
@@ -169,6 +170,7 @@ def annotate_metadata(metadata_by_channel, location=None):
             entry['rgb_representation'] = map_wavelength_to_RGB(emission_wavelength)
             entry['grid_size'] = grid_size
             entry['grid_location'] = get_grid_location(entry['grid_size'], entry['tile_number'])
+            entry['stage_direction'] = stage_direction
             entry['overlap'] = overlap
             entry['resolution'] = determine_xyz_resolution(entry)
             entry['tile_shape'] = determine_tile_shape(entry)
@@ -191,6 +193,26 @@ def annotate_metadata(metadata_by_channel, location=None):
 
     metadata_by_channel = get_affine_transform(metadata_by_channel)
     return metadata_by_channel
+
+
+def get_stage_direction(channel_data, grid_size):
+    # Outputs tuple (y,x) where y and x are 1 or -1,
+    # 1 is that the stage positions are advancing in the positive direction
+    # -1 is that the stage positions are advancing in the negative direction
+
+    y, x = 1, 1
+    if grid_size[0] > 1:
+        t0 = channel_data[0]["POSITION"]["y_pos"]
+        t1 = channel_data[1]["POSITION"]["y_pos"]
+        if t1 < t0:
+            y = -1
+    if grid_size[1] > 1:
+        t0 = channel_data[0]["POSITION"]["x_pos"]
+        t1 = channel_data[grid_size[1]]["POSITION"]["x_pos"]
+        if t1 < t0:
+            x = -1
+    StageDirection = namedtuple('StageDirection', ['y', 'x'])
+    return StageDirection(y=y, x=x)
 
 
 def get_anchor_tile_entry(metadata_by_channel):
@@ -528,8 +550,8 @@ def get_all_tile_entries(meta_dict, tile_num):
 
 
 if __name__ == "__main__":
-    location = '/CBI_FastStore/tmp/mesospim/brain'
-    location = '/CBI_FastStore/Acquire/MesoSPIM/alan_testch1'
-    location = '/CBI_FastStore/Acquire/MesoSPIM/alan_test'
-    metadata_by_channel = collect_all_metadata(location)
+    import typer
+    app = typer.Typer()
+    collect_all_metadata = app.command()(collect_all_metadata)
+    app()
 
