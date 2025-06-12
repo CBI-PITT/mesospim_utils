@@ -362,6 +362,7 @@ def align_ims_files(directory_with_mesospim_metadata, directory_with_ims_tiles, 
     resolution_um = get_first_entry(metadata_by_channel).get('resolution')  # (z,y,x)
     overlap = get_first_entry(metadata_by_channel).get('overlap')
     # tile_shape = get_first_entry(metadata_by_channel).get('tile_shape')  # (z,y,x)
+    stage_direction = get_first_entry(metadata_by_channel).get('stage_direction')
 
     # List IMS files in tile order
     ims_files = list(directory_with_ims_tiles.glob('*Tile*.ims'))
@@ -378,12 +379,12 @@ def align_ims_files(directory_with_mesospim_metadata, directory_with_ims_tiles, 
 
     # Place files in a grid shape, as nested lists. Each list represents a row of files in the x-axis,
     # the list index is the y-axis location
-    file_name_grid_layout = [[] for x in range(grid_y)]
+    file_name_grid_layout = [[None]*grid_x for x in range(grid_y)]
     idx = 0
-    for x in range(grid_x):
-        for y in range(grid_y):
+    for x in range(grid_x)[::stage_direction[1]]:
+        for y in range(grid_y)[::stage_direction[0]]:
             current_file = ims_files[idx]
-            file_name_grid_layout[y].append(current_file)
+            file_name_grid_layout[y][x] = current_file
             idx += 1
 
     # Align 1 row (overs)
