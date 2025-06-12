@@ -84,7 +84,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         commands += SBATCH_ARG.format(f'-n {CPUS}') if CPUS is not None else ""
         commands += SBATCH_ARG.format(f'--mem={RAM_GB}GB') if RAM_GB is not None else ""
         commands += SBATCH_ARG.format(f'--gres={GRES}') if GRES is not None else ""
-        commands += SBATCH_ARG.format(f'-J {JOB_LABEL}') if JOB_LABEL is not None else ""
+        commands += SBATCH_ARG.format(f'-J {jobname}') if jobname else ""
         commands += SBATCH_ARG.format(f'--nice={NICE}') if NICE is not None else ""
         commands += SBATCH_ARG.format(f'-t {TIME_LIMIT}') if TIME_LIMIT is not None else ""
         commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
