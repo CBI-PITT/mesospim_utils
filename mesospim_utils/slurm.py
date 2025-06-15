@@ -52,7 +52,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
 
     RAM_GB = file_size_to_decon
     if MAX_VRAM:
-        MAX_VRAM_GB = MAX_VRAM / 1024 / 2
+        MAX_VRAM_GB = MAX_VRAM // 1024
         RAM_GB = MAX_VRAM_GB if MAX_VRAM_GB < RAM_GB else RAM_GB
     if PARAMS.get('RAM_GB'):
         # Effectively decon RAM_GB in config is a max value
