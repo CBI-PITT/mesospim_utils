@@ -27,7 +27,8 @@ from constants import (
     OFFSET_METRIC,
     REMOVE_OUTLIERS,
     ALIGN_ALL_OUTPUT_FILE_NAME,
-    ALIGN_METRIC_OUTPUT_FILE_NAME
+    ALIGN_METRIC_OUTPUT_FILE_NAME,
+    OVERIDE_STAGE_DIRECTION
 )
 
 # INIT typer cmdline interface
@@ -362,7 +363,7 @@ def align_ims_files(directory_with_mesospim_metadata, directory_with_ims_tiles, 
     resolution_um = get_first_entry(metadata_by_channel).get('resolution')  # (z,y,x)
     overlap = get_first_entry(metadata_by_channel).get('overlap')
     # tile_shape = get_first_entry(metadata_by_channel).get('tile_shape')  # (z,y,x)
-    stage_direction = get_first_entry(metadata_by_channel).get('stage_direction')
+    stage_direction = get_first_entry(metadata_by_channel).get('stage_direction') if not OVERIDE_STAGE_DIRECTION else (1,1)
 
     # List IMS files in tile order
     ims_files = list(directory_with_ims_tiles.glob('*Tile*.ims'))

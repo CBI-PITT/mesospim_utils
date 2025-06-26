@@ -5,6 +5,7 @@ general:
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'
   verbose: 1 # true/false or 0-2. 0=off, 1-2 are increasing levels of verbosity. true==1
+  overide_stage_direction: true
 
   # Drive mappings for linux directories in wine for ims file conversions
   windows_mappings: #linux_path:windows_mapped_drive_letter:

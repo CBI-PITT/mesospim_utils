@@ -27,7 +27,8 @@ from constants import (
     USE_SEPARATE_ALIGN_DATA_PER_SHEET,
     VERBOSE,
     ALIGN_ALL_OUTPUT_FILE_NAME,
-    ALIGN_METRIC_OUTPUT_FILE_NAME
+    ALIGN_METRIC_OUTPUT_FILE_NAME,
+    OVERIDE_STAGE_DIRECTION
 )
 from string_templates import WIN_RESAMPLE_BAT
 
@@ -146,7 +147,7 @@ def build_ims_resample_input(x_min, x_max, y_min, y_max, z_min, z_max, directory
 
     metadata_entry = get_first_entry(metadata_by_channel)
     grid_y, grid_x  = metadata_entry.get('grid_size')
-    stage_direction = metadata_entry.get('stage_direction')
+    stage_direction = metadata_entry.get('stage_direction') if not OVERIDE_STAGE_DIRECTION else (1,1)
 
     input = f'<ImageList>\n'
     tile_num = 0

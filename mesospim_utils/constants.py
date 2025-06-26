@@ -48,6 +48,8 @@ VERBOSE = general.get('verbose')
 
 USERNAME_PATTERN = general.get('username_pattern')
 
+OVERIDE_STAGE_DIRECTION = general.get('overide_stage_direction')
+
 # Dependencies are tasks that run lightweight commands that spin off other processes
 # Very little resources are required
 # Used to coordinate between DECON, IMARIS conversion
