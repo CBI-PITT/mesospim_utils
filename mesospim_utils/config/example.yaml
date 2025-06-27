@@ -5,14 +5,14 @@ general:
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'
   verbose: 1 # true/false or 0-2. 0=off, 1-2 are increasing levels of verbosity. true==1
-  overide_stage_direction: true
+  overide_stage_direction: true # true, don't use stage direction for stitch/resample
 
-  # Drive mappings for linux directories in wine for ims file conversions
+  # Drive mappings for linux directories in WINDOWS for ims file conversions
   windows_mappings: #linux_path:windows_mapped_drive_letter:
     '/h20': 'i:'
     '/CBI_FastStore': 'z:'
 
-  # Drive mappings for linux directories in wine for ims file conversions
+  # Drive mappings for linux directories in WINE for ims file conversions
   wine_mappings: #linux_path:wine_drive_letter:
     '/h20': 'h:'
     '/CBI_FastStore': 'f:'
