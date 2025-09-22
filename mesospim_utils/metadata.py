@@ -203,12 +203,12 @@ def get_stage_direction(channel_data, grid_size):
     y, x = 1, 1
     if grid_size[0] > 1:
         t0 = channel_data[0]["POSITION"]["y_pos"]
-        t1 = channel_data[1]["POSITION"]["y_pos"]
+        t1 = channel_data[grid_size[1]]["POSITION"]["y_pos"]
         if t1 < t0:
             y = -1
-    if grid_size[1] > 1:
+    if len(grid_size) > 1 and grid_size[1] > 1:
         t0 = channel_data[0]["POSITION"]["x_pos"]
-        t1 = channel_data[grid_size[1]]["POSITION"]["x_pos"]
+        t1 = channel_data[1]["POSITION"]["x_pos"]
         if t1 < t0:
             x = -1
     StageDirection = namedtuple('StageDirection', ['y', 'x'])
