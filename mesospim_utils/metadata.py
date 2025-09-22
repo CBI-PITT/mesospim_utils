@@ -344,20 +344,23 @@ def determine_xyz_resolution(metadata_entry):
 
 
 def determine_overlap(single_channel_metadata):
-    for metadata in single_channel_metadata:
-        if metadata['tile_number'] == 0:
-            loc0 = metadata['POSITION']["y_pos"]
-        if metadata['tile_number'] == 1:
-            loc1 = metadata['POSITION']["y_pos"]
-
-    resolution = single_channel_metadata[0]["CFG"]["Pixelsize in um"]
-    cam_pixels = single_channel_metadata[0]["CAMERA PARAMETERS"]["y_pixels"]
-
-    distance_moved = abs(loc1 - loc0)
-    distance_fov = resolution * cam_pixels
-    overlap_percent = 1 - (distance_moved / distance_fov)
-    overlap_percent = round(overlap_percent, 2)
-    return overlap_percent
+        loc0 = None
+        loc1 = None
+        for metadata in single_channel_metadata:
+            if metadata['tile_number'] == 0:
+                loc0 = metadata['POSITION']["y_pos"]
+            if metadata['tile_number'] == 1:
+                loc1 = metadata['POSITION']["y_pos"]
+        if loc0 and loc1:  # there can be only 1 tile
+            resolution = single_channel_metadata[0]["CFG"]["Pixelsize in um"]
+            cam_pixels = single_channel_metadata[0]["CAMERA PARAMETERS"]["y_pixels"]
+            distance_moved = abs(loc1 - loc0)
+            distance_fov = resolution * cam_pixels
+            overlap_percent = 1 - (distance_moved / distance_fov)
+            overlap_percent = round(overlap_percent, 2)
+        else:
+            overlap_percent = 0
+        return overlap_percent
 
 
 def determine_grid_size(single_channel_metadata):
