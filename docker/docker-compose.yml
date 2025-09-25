@@ -1,0 +1,32 @@
+version: "3.8"
+
+x-defaults:
+  &svc
+  hostname: ${CONTAINER_HOSTNAME}
+  tty: true
+
+x-build-args: &args
+  args:
+    - BASE_DOCKER_REPO=${DOCKER_HUB_REPO}
+    - BASE_TAG=${TAG_BASE_ROOT}
+    - UBUNTU_VERSION=${CONTAINER_UBUNTU_VERSION}
+    - USERNAME=${CONTAINER_USERNAME}
+    - PASSWORD=${CONTAINER_PASSWORD}
+    - UID=${CONTAINER_UID}
+    - TIMEZONE=${CONTAINER_TIMEZONE}
+    - USER_PRIVILEGE_LEVEL=standard
+
+services:
+  #mesospim_utils:
+  #  << : *default-settings
+  #  image: ${DOCKER_HUB_REPO}:${TAG_FULL_STANDARD}
+  #  container_name: slurm-${TAG_FULL_STANDARD}
+
+  build-mesospim-utils:
+    <<: *svc
+    build:
+      context: .
+      <<: *args
+    image: ${DOCKER_HUB_REPO}:${TAG}
+    container_name: mesospim-utils
+
