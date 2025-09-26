@@ -15,6 +15,12 @@ x-build-args: &args
     - UID=${CONTAINER_UID}
     - TIMEZONE=${CONTAINER_TIMEZONE}
     - USER_PRIVILEGE_LEVEL=standard
+    - CONDA_DIR=${MINICONDA_DIR}
+    - CONDA_VERSION=${MINICONDA_VERSION}
+    - CONDA_OS=${MINICONDA_OS}
+    - CONDA_ARCH=${MINICONDA_ARCH}
+    - WINE_GITHUB=${WINE_GITHUB}
+    - WINE_COMMIT=${WINE_COMMIT}
 
 services:
   #mesospim_utils:
