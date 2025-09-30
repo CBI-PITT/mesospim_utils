@@ -86,11 +86,6 @@ RUN useradd --create-home --uid=${UID} ${USERNAME} -p "$(openssl passwd -1 ${PAS
     && chmod 0440 /etc/sudoers.d/startup \
     && visudo -c
 
-## Configure user permissions for startup script
-#RUN printf "${USERNAME} ALL=(root:root) NOPASSWD: /etc/startup.sh\n" >> /etc/sudoers.d/startup \
-#    && chmod 0440 /etc/sudoers.d/startup \
-#    && visudo -c
-
 # ---------------- Miniconda (system-wide) ----------------
 # You can override these at build time if desired
 ENV PATH=${CONDA_DIR}/bin:${PATH}
@@ -112,9 +107,9 @@ RUN set -eux; \
     rm -rf /root/.cache/conda /tmp/*; \
     chown -R ${USERNAME}:${USERNAME} ${CONDA_DIR}
 
-## Ensure the standard user can manage conda envs/pkgs
-## (optional but helpful when not running as root)
-#RUN chown -R ${USERNAME}:${USERNAME} ${CONDA_DIR}
+
+# Set standard user as default
+USER ${USERNAME}
 
 # --- Clone and editable-install mesospim_utils for ${USERNAME} ---
 ARG MESOSPIM_UTILS_REF=main
@@ -126,14 +121,13 @@ RUN set -eux; \
     # Use the python from /opt/conda (already on PATH); editable install
     python -m pip install --no-cache-dir -U pip setuptools wheel; \
     python -m pip install --no-cache-dir -e . psfmodels; \
-    rm -rf /root/.cache/pip /tmp/*
+    rm -rf /home/${USERNAME}/.cache/pip/* /tmp/*; \
+    chmod -R 775 ${CONDA_DIR}
 
 
 # --- Clone wine for ${USERNAME} ---
 ARG WINE_GITHUB=${WINE_GITHUB}
 ARG WINE_COMMIT=${WINE_COMMIT}
-# CPUs for wine build
-#ENV CPUS=$(nproc || echo 1); MAX=$((CPUS-2)); [ "$MAX" -lt 1 ] && MAX=1; echo "$MAX"
 ENV SRC_DIR="/home/${USERNAME}/src"
 RUN set -eux; \
     mkdir -p "${SRC_DIR}" && cd "${SRC_DIR}"; \
@@ -144,7 +138,8 @@ RUN set -eux; \
     git checkout --detach FETCH_HEAD; \
     ./configure --enable-win64 --without-x --without-freetype; \
     CPUS=$(nproc || echo 1); MAX=$((CPUS-2)); [ "$MAX" -lt 1 ] && MAX=1; echo "$MAX"; \
-    make -j${CPUS}
+    make -j${CPUS} \
+    ./wine64 winecfg #Init Wine to add dosdevices \
 
 # --- Clone ImarisConverter for ${USERNAME} ---
 ENV SRC_DIR="/home/${USERNAME}/src"
@@ -152,9 +147,6 @@ RUN set -eux; \
     mkdir -p "${SRC_DIR}" && cd "${SRC_DIR}"; \
     git clone --depth 1 --branch "main" "https://github.com/CBI-PITT/ImarisFileConverter_wine.git"; \
     cd ImarisFileConverter_wine
-
-# Set standard user as default
-USER ${USERNAME}
 
 # Enable colored Bash terminal prompt
 RUN sed -i -e 's/#force_color_prompt=yes/force_color_prompt=yes/' /home/${USERNAME}/.bashrc
