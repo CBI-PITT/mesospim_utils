@@ -201,16 +201,17 @@ def get_stage_direction(channel_data, grid_size):
     # -1 is that the stage positions are advancing in the negative direction
 
     y, x = 1, 1
-    if grid_size[0] > 1:  # several rows (in y)
-        t0 = channel_data[0]["POSITION"]["y_pos"]
-        t1 = channel_data[grid_size[1]]["POSITION"]["y_pos"]
-        if t1 < t0:
-            y = -1
-    if grid_size[1] > 1:  # several cols (in x)
-        t0 = channel_data[0]["POSITION"]["x_pos"]
-        t1 = channel_data[1]["POSITION"]["x_pos"]
-        if t1 < t0:
-            x = -1
+
+    first_tile_x = channel_data[0]["POSITION"]["x_pos"]
+    last_tile_x = channel_data[-1]["POSITION"]["x_pos"]
+    if last_tile_x < first_tile_x:
+        x = -1
+
+    first_tile_y = channel_data[0]["POSITION"]["y_pos"]
+    last_tile_y = channel_data[-1]["POSITION"]["y_pos"]
+    if last_tile_y < first_tile_y:
+        y = -1
+
     StageDirection = namedtuple('StageDirection', ['y', 'x'])
     return StageDirection(y=y, x=x)
 
