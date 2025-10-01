@@ -16,6 +16,10 @@ sed -i "s/<<MEMORY>>/$(if [[ "$(slurmd -C)" =~ RealMemory=([0-9]+) ]]; then echo
 service munge start
 service slurmd start
 service slurmctld start
+
+# Map volumes to wine letter drives
+/etc/map_wine.py
+chown -R docker:docker /home/docker/.wine
 SCRIPT
 
 # Revoke sudo permissions

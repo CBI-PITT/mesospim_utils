@@ -17,10 +17,19 @@ x-build-args: &args
     - CONDA_ARCH=${MINICONDA_ARCH}
     - WINE_GITHUB=${WINE_GITHUB}
     - WINE_COMMIT=${WINE_COMMIT}
+    - SLURM_VER=${SLURM_VER}
 
 services:
   mesospim_utils:
     image: cbipitt/mesospim_utils:test
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [ gpu ]
+              count: all # or specify a number, e.g., 1
     command: [
       "/bin/bash", "-lc",
       "sudo /etc/startup.sh; df -h; exec /bin/bash -l"
@@ -28,7 +37,7 @@ services:
 #    user: $(id -u):$(id -g)
 
     volumes:
-      - config_dir:/home/${CONTAINER_USERNAME}/src/mesospim_utils/mesospim_utils/config #Location to store mesospim_utils config
+      - config_dir:/opt/mesospim_utils/mesospim_utils/config #Location to store mesospim_utils config
       - h20:/h20
       - faststore:/CBI_FastStore
   build-mesospim-utils:

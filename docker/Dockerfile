@@ -51,19 +51,10 @@ RUN DEBIAN_FRONTEND=noninteractive \
                    bison \
     && apt autoremove -y && apt clean -y
 
-# Slurm configuration
-COPY slurm.conf /etc/slurm/slurm.conf
-RUN mkdir -p /var/spool/slurmctld \
-    && chown slurm:slurm /var/spool/slurmctld
-
-
-# Startup configuration
-COPY startup.sh /etc/startup.sh
-RUN sed -i 's/\r$//' /etc/startup.sh && chmod 555 /etc/startup.sh
-
 # Set working directory and default command when running container
 WORKDIR /root
-CMD /etc/startup.sh ; /bin/bash -l
+#CMD /etc/startup.sh ; /bin/bash -l
+CMD /bin/bash -l
 
 
 ## BUILD IMAGE: STANDARD USER ------------------------------------------------
@@ -86,6 +77,28 @@ RUN useradd --create-home --uid=${UID} ${USERNAME} -p "$(openssl passwd -1 ${PAS
     && chmod 0440 /etc/sudoers.d/startup \
     && visudo -c
 
+# --- Clone and install wine from source---
+# Compile wine from source and install in /usr/local/bin
+# Binary used for mesospim_utils /usr/local/bin/wine64
+# Final step, initialize wine for the primary user: default docker
+ARG WINE_GITHUB=${WINE_GITHUB}
+ARG WINE_COMMIT=${WINE_COMMIT}
+ENV SRC_DIR="/opt"
+RUN set -eux; \
+    #mkdir -p "${SRC_DIR}"; \
+    cd "${SRC_DIR}"; \
+    git init wine; \
+    cd wine; \
+    git remote add origin ${WINE_GITHUB}; \
+    git fetch --depth 1 origin ${WINE_COMMIT}; \
+    git checkout --detach FETCH_HEAD; \
+    ./configure --enable-win64 --without-x --without-freetype; \
+    CPUS=$(nproc || echo 1); MAX=$((CPUS-2)); [ "$MAX" -lt 1 ] && MAX=1; echo "$MAX"; \
+    make -j${CPUS}; \
+    make install; \
+    rm -r "${SRC_DIR}/wine"; \
+    sudo -u ${USERNAME} winecfg
+
 # ---------------- Miniconda (system-wide) ----------------
 # You can override these at build time if desired
 ENV PATH=${CONDA_DIR}/bin:${PATH}
@@ -105,15 +118,12 @@ RUN set -eux; \
     "${CONDA_DIR}"/bin/conda update -n base -c defaults conda; \
     "${CONDA_DIR}"/bin/conda clean -afy; \
     rm -rf /root/.cache/conda /tmp/*; \
-    chown -R ${USERNAME}:${USERNAME} ${CONDA_DIR}
-
-
-# Set standard user as default
-USER ${USERNAME}
+    chown -R ${USERNAME}:${USERNAME} ${CONDA_DIR}; \
+    chmod -R 775 ${CONDA_DIR}
 
 # --- Clone and editable-install mesospim_utils for ${USERNAME} ---
 ARG MESOSPIM_UTILS_REF=main
-ENV SRC_DIR="/home/${USERNAME}/src"
+ENV SRC_DIR="/opt"
 RUN set -eux; \
     mkdir -p "${SRC_DIR}" && cd "${SRC_DIR}"; \
     git clone --depth 1 --branch "${MESOSPIM_UTILS_REF}" "https://github.com/CBI-PITT/mesospim_utils.git"; \
@@ -121,39 +131,50 @@ RUN set -eux; \
     # Use the python from /opt/conda (already on PATH); editable install
     python -m pip install --no-cache-dir -U pip setuptools wheel; \
     python -m pip install --no-cache-dir -e . psfmodels; \
-    rm -rf /home/${USERNAME}/.cache/pip/* /tmp/*; \
-    chmod -R 775 ${CONDA_DIR}
+    #rm -rf /home/${USERNAME}/.cache/pip/* /tmp/*; \
+    rm -rf /root/.cache/pip/* /tmp/*; \
+    rm -r "${SRC_DIR}/mesospim_utils/.git"; \
+    rm -r "${SRC_DIR}/mesospim_utils/.eggs"; \
+    rm -r "${SRC_DIR}/mesospim_utils/images"; \
+    rm -r "${SRC_DIR}/mesospim_utils/notes"; \
+    chown -R ${USERNAME}:${USERNAME} ${SRC_DIR}/mesospim_utils; \
+    chmod -R 775 ${SRC_DIR}/mesospim_utils
 
 
-# --- Clone wine for ${USERNAME} ---
-ARG WINE_GITHUB=${WINE_GITHUB}
-ARG WINE_COMMIT=${WINE_COMMIT}
-ENV SRC_DIR="/home/${USERNAME}/src"
-RUN set -eux; \
-    mkdir -p "${SRC_DIR}" && cd "${SRC_DIR}"; \
-    git init wine; \
-    cd wine; \
-    git remote add origin ${WINE_GITHUB}; \
-    git fetch --depth 1 origin ${WINE_COMMIT}; \
-    git checkout --detach FETCH_HEAD; \
-    ./configure --enable-win64 --without-x --without-freetype; \
-    CPUS=$(nproc || echo 1); MAX=$((CPUS-2)); [ "$MAX" -lt 1 ] && MAX=1; echo "$MAX"; \
-    make -j${CPUS} \
-    ./wine64 winecfg #Init Wine to add dosdevices \
 
 # --- Clone ImarisConverter for ${USERNAME} ---
-ENV SRC_DIR="/home/${USERNAME}/src"
+ENV SRC_DIR="/opt"
 RUN set -eux; \
     mkdir -p "${SRC_DIR}" && cd "${SRC_DIR}"; \
     git clone --depth 1 --branch "main" "https://github.com/CBI-PITT/ImarisFileConverter_wine.git"; \
-    cd ImarisFileConverter_wine
+    cd ImarisFileConverter_wine; \
+    rm -r "${SRC_DIR}/ImarisFileConverter_wine/.git"; \
+    chown -R ${USERNAME}:${USERNAME} ${SRC_DIR}/ImarisFileConverter_wine; \
+    chmod -R 775 ${SRC_DIR}/ImarisFileConverter_wine
+
+
+# Slurm configuration
+COPY slurm.conf /etc/slurm/slurm.conf
+COPY slurm.conf /etc/slurm/slurm.conf
+RUN mkdir -p /var/spool/slurmctld \
+    && chown slurm:slurm /var/spool/slurmctld
+
+# Startup configuration
+COPY startup.sh /etc/startup.sh
+RUN sed -i 's/\r$//' /etc/startup.sh && chmod 555 /etc/startup.sh
+
+COPY map_wine.py /etc/map_wine.py
+RUN sed -i 's/\r$//' /etc/map_wine.py && chmod 555 /etc/map_wine.py
+
+# Set standard user as default
+USER ${USERNAME}
 
 # Enable colored Bash terminal prompt
 RUN sed -i -e 's/#force_color_prompt=yes/force_color_prompt=yes/' /home/${USERNAME}/.bashrc
 
 # Set working directory and default command when running container
 WORKDIR /home/${USERNAME}
-CMD sudo /etc/startup.sh ; /bin/bash -l
+CMD sudo /etc/startup.sh
 
 
 # SELECT DESIRED USER PRIVILEGE LEVEL ----------------------------------------

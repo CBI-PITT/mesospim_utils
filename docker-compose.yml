@@ -1,0 +1,14 @@
+
+services:
+  test:
+    image: ubuntu:24.04
+    volumes:
+      - type: bind
+#        source: "Z:\\cbiPythonTools\\mesospim_utils"   # replace with your absolute path on Windows
+        source: "C:\\code"   # replace with your absolute path on Windows
+        target: /opt/test
+#        target: /opt/config
+        read_only: false
+        bind:
+          create_host_path: false        # fail fast if the host file isn't found
+
