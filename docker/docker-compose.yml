@@ -22,6 +22,7 @@ x-build-args: &args
 services:
   mesospim_utils:
     image: cbipitt/mesospim_utils:test
+    network_mode: "host"
     runtime: nvidia
     deploy:
       resources:
@@ -32,14 +33,15 @@ services:
               count: all # or specify a number, e.g., 1
     command: [
       "/bin/bash", "-lc",
-      "sudo /etc/startup.sh; df -h; exec /bin/bash -l"
+      "sudo /etc/startup.sh; exec /bin/bash -l"
     ]
 #    user: $(id -u):$(id -g)
 
     volumes:
       - config_dir:/opt/mesospim_utils/mesospim_utils/config #Location to store mesospim_utils config
-      - h20:/h20
-      - faststore:/CBI_FastStore
+      - c:/test_data:/test_data
+      #- h20:/h20
+      #- faststore:/CBI_FastStore
   build-mesospim-utils:
     <<: *svc
     build:
@@ -55,16 +57,16 @@ volumes:
       type: cifs
       device: "//faststore.cbi.pitt.edu/CBI_FastStore/cbiPythonTools/mesospim_utils/docker/config"
       o: "vers=3.0,guest,noperm,file_mode=0777,dir_mode=0777"
-  h20:
-    driver: local
-    driver_opts:
-      type: cifs
-      device: "//tn.cbi.pitt.edu/h20"
-      o: "vers=3.0,guest,noperm,file_mode=0777,dir_mode=0777"
-  faststore:
-    driver: local
-    driver_opts:
-      type: cifs
-      device: "//faststore.cbi.pitt.edu/CBI_FastStore"
-      o: "vers=3.0,guest,noperm,file_mode=0777,dir_mode=0777"
+#  h20:
+#    driver: local
+#    driver_opts:
+#      type: cifs
+#      device: "//tn.cbi.pitt.edu/h20"
+#      o: "vers=3.0,guest,noperm,file_mode=0777,dir_mode=0777"
+#  faststore:
+#    driver: local
+#    driver_opts:
+#      type: cifs
+#      device: "//faststore.cbi.pitt.edu/CBI_FastStore"
+#      o: "vers=3.0,guest,noperm,file_mode=0777,dir_mode=0777"
 
