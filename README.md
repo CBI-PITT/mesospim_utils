@@ -71,7 +71,7 @@ first_metadata_entry = get_first_entry(metadata_dict_stored_by_channel)
 first_metadata_entry.keys()
 
 '''
-## Keys for each metadata category will be present mirroring the origional file.
+## Each annotated key will be present for every tile entry.
 ## Annotation keys added by the module include:
 "tile_number":          # From file name _Tile{#}_
 "channel":              # From file name _Ch{#}_
