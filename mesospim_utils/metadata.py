@@ -201,16 +201,17 @@ def get_stage_direction(channel_data, grid_size):
     # -1 is that the stage positions are advancing in the negative direction
 
     y, x = 1, 1
-    if grid_size[0] > 1:
-        t0 = channel_data[0]["POSITION"]["y_pos"]
-        t1 = channel_data[1]["POSITION"]["y_pos"]
-        if t1 < t0:
-            y = -1
-    if grid_size[1] > 1:
-        t0 = channel_data[0]["POSITION"]["x_pos"]
-        t1 = channel_data[grid_size[1]]["POSITION"]["x_pos"]
-        if t1 < t0:
-            x = -1
+
+    first_tile_x = channel_data[0]["POSITION"]["x_pos"]
+    last_tile_x = channel_data[-1]["POSITION"]["x_pos"]
+    if last_tile_x < first_tile_x:
+        x = -1
+
+    first_tile_y = channel_data[0]["POSITION"]["y_pos"]
+    last_tile_y = channel_data[-1]["POSITION"]["y_pos"]
+    if last_tile_y < first_tile_y:
+        y = -1
+
     StageDirection = namedtuple('StageDirection', ['y', 'x'])
     return StageDirection(y=y, x=x)
 
@@ -344,20 +345,23 @@ def determine_xyz_resolution(metadata_entry):
 
 
 def determine_overlap(single_channel_metadata):
-    for metadata in single_channel_metadata:
-        if metadata['tile_number'] == 0:
-            loc0 = metadata['POSITION']["y_pos"]
-        if metadata['tile_number'] == 1:
-            loc1 = metadata['POSITION']["y_pos"]
-
-    resolution = single_channel_metadata[0]["CFG"]["Pixelsize in um"]
-    cam_pixels = single_channel_metadata[0]["CAMERA PARAMETERS"]["y_pixels"]
-
-    distance_moved = abs(loc1 - loc0)
-    distance_fov = resolution * cam_pixels
-    overlap_percent = 1 - (distance_moved / distance_fov)
-    overlap_percent = round(overlap_percent, 2)
-    return overlap_percent
+        loc0 = None
+        loc1 = None
+        for metadata in single_channel_metadata:
+            if metadata['tile_number'] == 0:
+                loc0 = metadata['POSITION']["y_pos"]
+            if metadata['tile_number'] == 1:
+                loc1 = metadata['POSITION']["y_pos"]
+        if loc0 and loc1:  # there can be only 1 tile
+            resolution = single_channel_metadata[0]["CFG"]["Pixelsize in um"]
+            cam_pixels = single_channel_metadata[0]["CAMERA PARAMETERS"]["y_pixels"]
+            distance_moved = abs(loc1 - loc0)
+            distance_fov = resolution * cam_pixels
+            overlap_percent = 1 - (distance_moved / distance_fov)
+            overlap_percent = round(overlap_percent, 2)
+        else:
+            overlap_percent = 0
+        return overlap_percent
 
 
 def determine_grid_size(single_channel_metadata):
