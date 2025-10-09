@@ -14,12 +14,12 @@ GRES=/etc/slurm/gres.conf
 SLURM_CONF=/etc/slurm/slurm.conf
 
 #######  AUTO CONFIGURE SLURM FOR EACH NEW CONTAINER  #######
-# Edit slurm.conf
+# Edit slurm.conf for basic cluster (CPU only)
 sed -i "s/<<HOSTNAME>>/$(hostname)/" "$SLURM_CONF"
 sed -i "s/<<CPU>>/$(nproc)/" "$SLURM_CONF"
 sed -i "s/<<MEMORY>>/$(if [[ "$(slurmd -C)" =~ RealMemory=([0-9]+) ]]; then echo "${BASH_REMATCH[1]}"; else exit 100; fi)/" "$SLURM_CONF"
 
-# Edit gres.conf
+# Setup GPU support if available, edit gres.conf and slurm.conf
 ## For Linux Hosts
 if compgen -G "/dev/nvidia[0-9]*" >/dev/null; then
   # --- Linux + NVIDIA devices ---
