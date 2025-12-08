@@ -124,3 +124,24 @@ slurm:
     'PARALLEL_JOBS': 20
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  bigstitcher:
+    'PARTITION': 'gpu,ai' #multiple partitions can be specified with comma separation part1,par2'
+    'CPUS': 56
+    'JOB_LABEL': 'ms_bigstitcher'
+    'RAM_GB': 1000
+    'GRES':
+    'PARALLEL_JOBS': 4
+    'NICE': 0
+    'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+bigstitcher:
+  fiji_install_folder: "/h20/home/lab/src/fiji/Fiji.app"
+  downsample_in_x: 4
+  downsample_in_y: 4
+  downsample_in_z: 4
+  blocksize_x: 256
+  blocksize_y: 256
+  blocksize_z: 256
+  blocksize_factor_x: 2
+  blocksize_factor_y: 2
+  blocksize_factor_z: 2
+  subsampling_factors: "{{1,1,1}, {2,2,2}, {4,4,4}, {8,8,8}, {16,16,16}, {32,32,32}}"

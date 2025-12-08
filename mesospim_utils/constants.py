@@ -129,3 +129,29 @@ LOCATION_OF_MESOSPIM_UTILS_INSTALL = Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL)
 ENV_PYTHON_LOC = Path(ENV_PYTHON_LOC)
 WINE_INSTALL_LOC = Path(WINE_INSTALL_LOC)
 IMARIS_CONVERTER_LOC = Path(IMARIS_CONVERTER_LOC)
+
+########################################################################################################################
+####  BigStitcher constants ###
+########################################################################################################################
+BIGSTITCHER = config.get('bigstitcher')
+
+FIJI_INSTALL_LOCATION = BIGSTITCHER.get('fiji_install_folder')
+if FIJI_INSTALL_LOCATION is None:
+    FIJI_EXECUTABLE = None
+else:
+    FIJI_EXECUTABLE = Path(FIJI_INSTALL_LOCATION) / "ImageJ-linux64"
+
+DOWNSAMPLE_IN_X = BIGSTITCHER.get('downsample_in_x')
+DOWNSAMPLE_IN_Y = BIGSTITCHER.get('downsample_in_y')
+DOWNSAMPLE_IN_Z = BIGSTITCHER.get('downsample_in_z')
+BLOCKSIZE_X = BIGSTITCHER.get('blocksize_x')
+BLOCKSIZE_Y = BIGSTITCHER.get('blocksize_y')
+BLOCKSIZE_Z = BIGSTITCHER.get('blocksize_z')
+BLOCKSIZE_FACTOR_X = BIGSTITCHER.get('blocksize_factor_x')
+BLOCKSIZE_FACTOR_Y = BIGSTITCHER.get('blocksize_factor_y')
+BLOCKSIZE_FACTOR_Z = BIGSTITCHER.get('blocksize_factor_z')
+SUBSAMPLING_FACTORS = BIGSTITCHER.get('subsampling_factors')
+
+SLURM_PARAMETERS_FOR_BIGSTITCHER = slurm.get('bigstitcher')
+
+########################################################################################################################

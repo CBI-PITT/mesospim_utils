@@ -2,6 +2,7 @@
 from constants import PATH_TO_IMARIS_STITCHER_FOLDER, PATH_TO_IMARIS_STITCHER_TEMP_FOLDER, NUM_CPUS_FOR_STITCH
 from constants import FRACTION_OF_RAM_FOR_PROCESSING
 from constants import IMS_STITCHER_COMPRESSION_LEVEL
+from constants import FIJI_EXECUTABLE
 from utils import get_ram_mb
 
 memlimit_for_processing = int(get_ram_mb() * FRACTION_OF_RAM_FOR_PROCESSING)
@@ -94,3 +95,27 @@ COLOR_RECORD_TEMPLATE = '''<Channel ChannelIndex="Channel {}" Selection="true" R
 <Color Red="{}" Green="{}" Blue="{}"/>
 </BaseColor>
 </Channel>'''
+
+
+#####################################################################################################################
+## BigStitcher related templates
+#####################################################################################################################
+
+BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE = f'''
+{FIJI_EXECUTABLE} --headless --console --ij2 --run "{'{}'}"
+'''
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

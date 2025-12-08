@@ -1,3 +1,5 @@
+# import typer
+
 # STD library imports
 from pathlib import Path
 
@@ -16,13 +18,176 @@ from constants import (
     OVERIDE_STAGE_DIRECTION
 )
 
-# # INIT typer cmdline interface
+from constants import (
+DOWNSAMPLE_IN_X,
+DOWNSAMPLE_IN_Y,
+DOWNSAMPLE_IN_Z,
+BLOCKSIZE_X,
+BLOCKSIZE_Y,
+BLOCKSIZE_Z,
+BLOCKSIZE_FACTOR_X,
+BLOCKSIZE_FACTOR_Y,
+BLOCKSIZE_FACTOR_Z,
+SUBSAMPLING_FACTORS
+)
+
+# INIT typer cmdline interface
 # app = typer.Typer()
 
+'''
+This module has functions to orchestrate BigStitcher for mesospim data.
+Assumptions are the data were acquired using the omezarr writer plugin for mesospim
+'''
+
+BIGSTITCHER_ALIGN_OMEZARR_OUT = '''
+// This is a ImageJ macro file that can be run headlessly in Fiji with BigStitcher installed
+
+
+// select= xml file path to the ome.zarr.xml file
+// downsample_in_x/y/z = downsampling factors for alignment (1 = no downsampling)
+
+run("Calculate pairwise shifts ...",
+"select={0} \
+process_angle=[All angles] \
+process_channel=[All channels] \
+process_illumination=[All illuminations] \
+process_tile=[All tiles] \
+process_timepoint=[All Timepoints] \
+method=[Phase Correlation] \
+channels=[Average Channels] \
+downsample_in_x={1} \
+downsample_in_y={2} \
+downsample_in_z={3}");
+
+// select= xml file path to the ome.zarr.xml file
+
+run("Optimize globally and apply shifts ...", 
+"select={0} \
+process_angle=[All angles] \
+process_channel=[All channels] \
+process_illumination=[All illuminations] \
+process_tile=[All tiles] \
+process_timepoint=[All Timepoints] \
+relative=2.500 \
+absolute=3.500 \
+global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
+fix_group_0-0");
+
+// select= xml file path to the ome.zarr.xml file
+// zarr_dataset_path= output path for fused ome.zarr file
+// block_size_x/y/z = block size for fused output
+// block_size_factor_x/y/z = block size factors for fused output
+// subsampling_factors= downsampling factors for multiscale output.
+
+run("Image Fusion", 
+"select={0} \
+process_angle=[All angles] \
+process_channel=[All channels] \
+process_illumination=[All illuminations] \
+process_tile=[All tiles] \
+process_timepoint=[All Timepoints] \
+bounding_box=[Currently Selected Views] \
+downsampling=1 \
+interpolation=[Linear Interpolation] \
+fusion_type=[Avg, Blending] \
+pixel_type=[16-bit unsigned integer] \
+interest_points_for_non_rigid=[-= Disable Non-Rigid =-] \
+produce=[Each timepoint & channel] \
+fused_image=[OME-ZARR/N5/HDF5 export using N5-API] \
+define_input=[Auto-load from input data (values shown below)] \
+export=OME-ZARR compression=Zstandard create_multi-resolution store zarr_dataset_path=file:{4} show_advanced_block_size_options block_size_x={5} block_size_y={6} block_size_z={7} block_size_factor_x={8} block_size_factor_y={9} block_size_factor_z={10} \
+subsampling_factors=[{11}]");
+'''
 
 '''
-This module has functions to orchestrate bigstitcher for mesospim data using.
+To use BIGSTITCHER_ALIGN_OMEZARR_OUT
+- format in order with:
+    - input ome.zarr.xml path
+    - downsample_in_x for alignment
+    - downsample_in_y for alignment
+    - downsample_in_z for alignment
+    - output fused ome.zarr path
+    - block_size_x for fused output
+    - block_size_y for fused output
+    - block_size_z for fused output
+    - block_size_factor_x for processing fused output (block_size multiplier)
+    - block_size_factor_y for processing fused output (block_size multiplier)
+    - block_size_factor_z for processing fused output (block_size multiplier)
+    - subsampling_factors string, e.g. { {1,1,1}, {2,2,2}, {4,4,4}, {8,8,8} }
+
+BIGSTITCHER_ALIGN_OMEZARR_OUT.format(0,1,2,3,4,5,6,7,8,9,10,11,12)
 '''
+
+def get_bigstitcher_omezarr_alignment_marco(
+    input_omezarr_xml_path: Path,
+    output_omezarr_path: Path,
+    path_to_write_macro: Path=None,
+    downsample_in_x: int=DOWNSAMPLE_IN_X,
+    downsample_in_y: int=DOWNSAMPLE_IN_Y,
+    downsample_in_z: int=DOWNSAMPLE_IN_Z,
+    block_size_x: int=BLOCKSIZE_X,
+    block_size_y: int=BLOCKSIZE_Y,
+    block_size_z: int=BLOCKSIZE_Z,
+    block_size_factor_x: int=BLOCKSIZE_FACTOR_X,
+    block_size_factor_y: int=BLOCKSIZE_FACTOR_Y,
+    block_size_factor_z: int=BLOCKSIZE_FACTOR_Z,
+    subsampling_factors: str=SUBSAMPLING_FACTORS
+):
+    '''
+    Generate BigStitcher macro for aligning omezarr data
+    Return the macro string
+    If given path_to_write_macro, also write the macro to that path
+    '''
+    macro = BIGSTITCHER_ALIGN_OMEZARR_OUT.format(
+        ensure_path(input_omezarr_xml_path).as_posix(),
+        downsample_in_x,
+        downsample_in_y,
+        downsample_in_z,
+        ensure_path(output_omezarr_path).as_posix(),
+        block_size_x,
+        block_size_y,
+        block_size_z,
+        block_size_factor_x,
+        block_size_factor_y,
+        block_size_factor_z,
+        subsampling_factors
+    )
+    if path_to_write_macro:
+        with open(path_to_write_macro, 'w') as f:
+            f.write(macro)
+    return macro
+
+def does_dir_contain_bigstitcher_metadata(path):
+    '''
+    Check if directory contains a .ome.zarr.xml file indicating BigStitcher metadata presence
+    Return None if not found, else return path to the xml file
+    '''
+    path = ensure_path(path)
+    zarr_xml_files = list(path.glob('*.ome.zarr.xml'))
+    if len(zarr_xml_files) == 0:
+        return None
+    return zarr_xml_files[0]
+
+
+
+if __name__ == '__main__':
+    write_big_stitcher_config_file('/CBI_FastStore/test_data/mesospim/04CL18_Stujenske_injection')
+    _make_fiji_install('/CBI_FastStore/test_data/mesospim/04CL18_Stujenske_injection/fiji_install.sh')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def write_big_stitcher_config_file(path):
     path = ensure_path(path)
@@ -176,51 +341,25 @@ chmod 755 "$FIJI_BIN"
 log "Initializing Fiji update system (headless) ..."
 "$FIJI_BIN" --ij2 --headless --eval 'System.exit(0);' >/dev/null 2>&1 || true
 ok "Initialization complete"
+log "Updating Fiji ... This may take awhile ... (headless) ..."
+"$FIJI_BIN" --headless --update update >/dev/null 2>&1 || true
+ok "Fiji update complete"
 
-# 5) Enable update sites (BigStitcher + BigDataViewer)
-UPD_DIR="$INSTALL_DIR/update-sites"
-mkdir -p "$UPD_DIR"
+# 5) Enable BigStitcher
+log "Installing BigStitcher (headless) ..."
+"$FIJI_BIN" --headless --update edit-update-site BigStitcher https://sites.imagej.net/BigStitcher/ >/dev/null 2>&1 || true
+ok "BigStitcher Installed"
 
-log "Enabling BigStitcher update site ..."
-cat > "$UPD_DIR/bigstitcher.properties" <<'EOF'
-name=BigStitcher
-url=https://sites.imagej.net/BigStitcher/
-enabled=true
-EOF
-ok "BigStitcher site enabled"
-
-log "Enabling BigDataViewer update site ..."
-cat > "$UPD_DIR/bdv.properties" <<'EOF'
-name=BigDataViewer
-url=https://sites.imagej.net/BigDataViewer/
-enabled=true
-EOF
-ok "BigDataViewer site enabled"
-
-# Optional: add other useful sites (uncomment if desired)
-# cat > "$UPD_DIR/bigdataprocessor2.properties" <<'EOF'
-# name=BigDataProcessor2
-# url=https://sites.imagej.net/BigDataProcessor2/
-# enabled=true
-# EOF
-
-# 6) Run Fiji updater headlessly
-log "Running Fiji updater (headless). This may take a few minutes ..."
-set +e
-"$FIJI_BIN" --update update > "$WORKDIR/update.log" 2>&1
-RET=$?
-set -e
-if [ $RET -ne 0 ]; then
-  warn "Updater exited with code $RET. Printing tail of log:"
-  tail -n 50 "$WORKDIR/update.log" || true
-  die "Fiji updater failed. See full log at: $WORKDIR/update.log"
-fi
-ok "Fiji updated with BigStitcher + dependencies"
+# 6): add other useful sites (uncomment if desired)
+log "Installing BigDataProcessor (headless) ..."
+"$FIJI_BIN" --headless --update edit-update-site BigDataProcessor2 https://sites.imagej.net/BigDataProcessor/ >/dev/null 2>&1 || true
+ok "BigDataProcessor Installed"
 
 # 7) Verify BigStitcher command is available
 log "Verifying BigStitcher availability (headless) ..."
 set +e
 OUT="$("$FIJI_BIN" --ij2 --headless --run "BigStitcher - Import Tiles from Configuration" 2>&1)"
+echo "$OUT"
 RET=$?
 set -e
 if echo "$OUT" | grep -qiE "No such command|Unknown command"; then
@@ -253,9 +392,4 @@ EOF
     script_path.chmod(0o755)
 
     str(script_path)
-
-
-if __name__ == '__main__':
-    write_big_stitcher_config_file('/CBI_FastStore/test_data/mesospim/04CL18_Stujenske_injection')
-    _make_fiji_install('/CBI_FastStore/test_data/mesospim/04CL18_Stujenske_injection/fiji_install.sh')
 
