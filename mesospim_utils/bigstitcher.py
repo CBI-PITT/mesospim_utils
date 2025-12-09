@@ -2,6 +2,7 @@
 
 # STD library imports
 from pathlib import Path
+import shutil
 
 # Local imports
 from metadata import collect_all_metadata, get_first_entry, get_all_tile_entries
@@ -39,12 +40,81 @@ This module has functions to orchestrate BigStitcher for mesospim data.
 Assumptions are the data were acquired using the omezarr writer plugin for mesospim
 '''
 
+# BIGSTITCHER_ALIGN_OMEZARR_OUT = '''
+# // This is a ImageJ macro file that can be run headlessly in Fiji with BigStitcher installed
+#
+#
+# // select= xml file path to the ome.zarr.xml file
+# // downsample_in_x/y/z = downsampling factors for alignment (1 = no downsampling)
+#
+# run("Calculate pairwise shifts ...",
+# "select={0} \
+# process_angle=[All angles] \
+# process_channel=[All channels] \
+# process_illumination=[All illuminations] \
+# process_tile=[All tiles] \
+# process_timepoint=[All Timepoints] \
+# method=[Phase Correlation] \
+# channels=[Average Channels] \
+# downsample_in_x={1} \
+# downsample_in_y={2} \
+# downsample_in_z={3}");
+#
+# // select= xml file path to the ome.zarr.xml file
+#
+# run("Optimize globally and apply shifts ...",
+# "select={0} \
+# process_angle=[All angles] \
+# process_channel=[All channels] \
+# process_illumination=[All illuminations] \
+# process_tile=[All tiles] \
+# process_timepoint=[All Timepoints] \
+# relative=2.500 \
+# absolute=3.500 \
+# global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
+# fix_group_0-0");
+#
+# // select= xml file path to the ome.zarr.xml file
+# // zarr_dataset_path= output path for fused ome.zarr file
+# // block_size_x/y/z = block size for fused output
+# // block_size_factor_x/y/z = block size factors for fused output
+# // subsampling_factors= downsampling factors for multiscale output.
+#
+# run("Image Fusion",
+# "select={0} \
+# process_angle=[All angles] \
+# process_channel=[All channels] \
+# process_illumination=[All illuminations] \
+# process_tile=[All tiles] \
+# process_timepoint=[All Timepoints] \
+# bounding_box=[Currently Selected Views] \
+# downsampling=1 \
+# interpolation=[Linear Interpolation] \
+# fusion_type=[Avg, Blending] \
+# pixel_type=[16-bit unsigned integer] \
+# interest_points_for_non_rigid=[-= Disable Non-Rigid =-] \
+# produce=[Each timepoint & channel] \
+# fused_image=[OME-ZARR/N5/HDF5 export using N5-API] \
+# define_input=[Auto-load from input data (values shown below)] \
+# export=OME-ZARR compression=Zstandard create_multi-resolution store zarr_dataset_path=file:{4} show_advanced_block_size_options block_size_x={5} block_size_y={6} block_size_z={7} block_size_factor_x={8} block_size_factor_y={9} block_size_factor_z={10} \
+# subsampling_factors=[{11}]");
+#
+# // hard-exit JVM so Slurm releases resources
+# call("java.lang.System.exit", "0");
+# '''
+
 BIGSTITCHER_ALIGN_OMEZARR_OUT = '''
 // This is a ImageJ macro file that can be run headlessly in Fiji with BigStitcher installed
 
+// --------------------------------------------------------------------
+// STAGE 1: Tile alignment using channels=[Average Channels]
+// --------------------------------------------------------------------
 
+// Run Tile Alignment
 // select= xml file path to the ome.zarr.xml file
 // downsample_in_x/y/z = downsampling factors for alignment (1 = no downsampling)
+
+print("Stage 1: Calculate pairwise shifts (Average Channels)");
 
 run("Calculate pairwise shifts ...",
 "select={0} \
@@ -59,7 +129,10 @@ downsample_in_x={1} \
 downsample_in_y={2} \
 downsample_in_z={3}");
 
+// Run Global Tile Optimization
 // select= xml file path to the ome.zarr.xml file
+
+print("Stage 1: Optimize globally and apply shifts (tile geometry)");
 
 run("Optimize globally and apply shifts ...", 
 "select={0} \
@@ -72,6 +145,34 @@ relative=2.500 \
 absolute=3.500 \
 global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
 fix_group_0-0");
+
+// --------------------------------------------------------------------
+// STAGE 2: Channel alignment with fixed tile positions
+// --------------------------------------------------------------------
+
+print("Stage 2: Optimize per channel with fixed tile positions (chromatic alignment)");
+
+// Run Global Channel Optimization
+// select= xml file path to the ome.zarr.xml file
+
+run("Optimize globally and apply shifts ...", 
+"select={0} \
+process_angle=[All angles] \
+process_channel=[All channels] \
+process_illumination=[All illuminations] \
+process_tile=[All tiles] \
+process_timepoint=[All Timepoints] \
+relative=2.500 \
+absolute=3.500 \
+global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
+show_expert_grouping_options \
+how_to_treat_timepoints=[treat individually] \
+how_to_treat_channels=compare \
+how_to_treat_illuminations=group \
+how_to_treat_angles=[treat individually] \
+how_to_treat_tiles=group \
+fix_group_0-0,");
+
 
 // select= xml file path to the ome.zarr.xml file
 // zarr_dataset_path= output path for fused ome.zarr file
@@ -97,7 +198,26 @@ fused_image=[OME-ZARR/N5/HDF5 export using N5-API] \
 define_input=[Auto-load from input data (values shown below)] \
 export=OME-ZARR compression=Zstandard create_multi-resolution store zarr_dataset_path=file:{4} show_advanced_block_size_options block_size_x={5} block_size_y={6} block_size_z={7} block_size_factor_x={8} block_size_factor_y={9} block_size_factor_z={10} \
 subsampling_factors=[{11}]");
+
+// hard-exit JVM so Slurm releases resources
+call("java.lang.System.exit", "0");
 '''
+
+
+
+
+'''
+run("Calculate pairwise shifts ...", "select=/CBI_FastStore/test_data/mesospim/omezarr/embryo-ome-zarr//Mag8x_Ch488_Ch561_Ch640.ome.zarr.xml process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] method=[Phase Correlation] show_expert_grouping_options how_to_treat_timepoints=[treat individually] how_to_treat_channels=group how_to_treat_illuminations=group how_to_treat_angles=[treat individually] how_to_treat_tiles=compare channels=[Average Channels] downsample_in_x=8 downsample_in_y=8 downsample_in_z=4");
+
+run("Optimize globally and apply shifts ...", "select=/CBI_FastStore/test_data/mesospim/omezarr/embryo-ome-zarr//Mag8x_Ch488_Ch561_Ch640.ome.zarr.xml process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] relative=2.500 absolute=3.500 global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] show_expert_grouping_options how_to_treat_timepoints=[treat individually] how_to_treat_channels=group how_to_treat_illuminations=group how_to_treat_angles=[treat individually] how_to_treat_tiles=compare fix_group_0-0");
+
+run("Calculate pairwise shifts ...", "select=/CBI_FastStore/test_data/mesospim/omezarr/embryo-ome-zarr//Mag8x_Ch488_Ch561_Ch640.ome.zarr.xml process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] method=[Phase Correlation] show_expert_grouping_options how_to_treat_timepoints=[treat individually] how_to_treat_channels=compare how_to_treat_illuminations=group how_to_treat_angles=[treat individually] how_to_treat_tiles=group illuminations=[Average Illuminations] tiles=[Average Tiles] downsample_in_x=8 downsample_in_y=8 downsample_in_z=4");
+
+
+run("Optimize globally and apply shifts ...", "select=/CBI_FastStore/test_data/mesospim/omezarr/embryo-ome-zarr//Mag8x_Ch488_Ch561_Ch640.ome.zarr.xml process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] relative=2.500 absolute=3.500 global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] show_expert_grouping_options how_to_treat_timepoints=[treat individually] how_to_treat_channels=compare how_to_treat_illuminations=group how_to_treat_angles=[treat individually] how_to_treat_tiles=group fix_group_0-0,");
+
+'''
+
 
 '''
 To use BIGSTITCHER_ALIGN_OMEZARR_OUT
@@ -168,11 +288,36 @@ def does_dir_contain_bigstitcher_metadata(path):
         return None
     return zarr_xml_files[0]
 
+def make_bigstitcher_slurm_dir_and_macro(path):
+    '''
+    Takes path where bigstitcher metadata xml and
+    makes a bigsitcher dir, backup of xml file,
+    macrofile, and is the dir is used for SLURM logfiles
+    '''
+    omezarr_xml = does_dir_contain_bigstitcher_metadata(path)
+    if not omezarr_xml:
+        return None
+    omezarr_xml = ensure_path(omezarr_xml)
+    bigstitcher_dir = path / 'bigstitcher'
+    bigstitcher_dir.mkdir(parents=True, exist_ok=True)
+    backup_xml = bigstitcher_dir / (omezarr_xml.name + '.backup')
+    shutil.copy(omezarr_xml, backup_xml)
+
+    fused_out_dir = str(omezarr_xml).removesuffix('.ome.zarr.xml')
+    fused_out_dir = fused_out_dir + '_montage.ome.zarr'
+
+    macro_file = bigstitcher_dir / 'macro.ijm'
+
+    # Writes macro file
+    _ = get_bigstitcher_omezarr_alignment_marco(omezarr_xml, fused_out_dir, macro_file)
+
+    return bigstitcher_dir, fused_out_dir, macro_file
 
 
 if __name__ == '__main__':
-    write_big_stitcher_config_file('/CBI_FastStore/test_data/mesospim/04CL18_Stujenske_injection')
-    _make_fiji_install('/CBI_FastStore/test_data/mesospim/04CL18_Stujenske_injection/fiji_install.sh')
+    pass
+    # write_big_stitcher_config_file('/CBI_FastStore/test_data/mesospim/04CL18_Stujenske_injection')
+    # _make_fiji_install('/CBI_FastStore/test_data/mesospim/04CL18_Stujenske_injection/fiji_install.sh')
 
 
 

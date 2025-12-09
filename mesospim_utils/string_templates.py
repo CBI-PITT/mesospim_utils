@@ -101,8 +101,12 @@ COLOR_RECORD_TEMPLATE = '''<Channel ChannelIndex="Channel {}" Selection="true" R
 ## BigStitcher related templates
 #####################################################################################################################
 
+# BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE = f'''
+# {FIJI_EXECUTABLE} --headless --console --ij2 --run "{'{}'}"
+# '''
+
 BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE = f'''
-{FIJI_EXECUTABLE} --headless --console --ij2 --run "{'{}'}"
+{FIJI_EXECUTABLE} --headless -batch "{'{}'}"
 '''
 
 
