@@ -208,7 +208,7 @@ export=OME-ZARR \
 compression=Zstandard \
 create_multi-resolution \
 store \
-zarr_dataset_path='file:{4}' \
+zarr_dataset_path='{4}' \
 show_advanced_block_size_options \
 block_size_x={5} \
 block_size_y={6} \
@@ -223,6 +223,7 @@ call("java.lang.System.exit", "0");
 '''
 
 '''
+file:
 To use BIGSTITCHER_ALIGN_OMEZARR_OUT
 - format in order with:
     - input ome.zarr.xml path
@@ -262,8 +263,21 @@ def get_bigstitcher_omezarr_alignment_marco(
     If given path_to_write_macro, also write the macro to that path
     '''
 
-    if SUBSAMPLING_FACTORS.lower() == 'automated':
-        scale_factors_zyx, subsampling_factors = determine_sampling_factors_for_bigstitcher(input_omezarr_xml_path)
+    automated_downsample = any([x.lower()=='automated' for x in [downsample_in_x, downsample_in_y, downsample_in_z]])
+    automated_subsampling = subsampling_factors.lower() == 'automated'
+
+    if automated_downsample or automated_subsampling:
+        _, scale_factors_list_zyx, subsampling_str = determine_sampling_factors_for_bigstitcher(input_omezarr_xml_path)
+
+    if automated_subsampling:
+        subsampling_factors = subsampling_str
+
+    if automated_subsampling:
+        scale_for_downsample_zyx = scale_factors_list_zyx[2]
+        downsample_in_x = scale_for_downsample_zyx[2]
+        downsample_in_y = scale_for_downsample_zyx[1]
+        downsample_in_z = scale_for_downsample_zyx[0]
+
 
     macro = BIGSTITCHER_ALIGN_OMEZARR_OUT.format(
         ensure_path(input_omezarr_xml_path).as_posix(),
@@ -401,7 +415,7 @@ def determine_sampling_factors_for_bigstitcher(omezarr_xml_path: Path) -> tuple[
             ========================================================================================
             ''')
 
-    return scales_list, subsampling_factors_str
+    return scales_list, scale_factors_list, subsampling_factors_str
 
 @app.command()
 def adjust_scale_in_bigstitcher_produced_ome_zarr(omezarr_xml_or_acquisition_path: Path,
@@ -421,7 +435,7 @@ def adjust_scale_in_bigstitcher_produced_ome_zarr(omezarr_xml_or_acquisition_pat
         omezarr_xml = does_dir_contain_bigstitcher_metadata(omezarr_xml_or_acquisition_path)
         omezarr_xml = ensure_path(omezarr_xml)
 
-    scales_list_zyx, _ = determine_sampling_factors_for_bigstitcher(omezarr_xml)
+    scales_list_zyx, _, _ = determine_sampling_factors_for_bigstitcher(omezarr_xml)
     target_zattr_path = omezarr_produced_by_bigstitcher_path / '.zattrs'
     target_zattr = json.loads(target_zattr_path.read_text())
     print(f'{target_zattr=}')
