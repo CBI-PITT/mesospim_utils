@@ -151,7 +151,9 @@ BLOCKSIZE_FACTOR_X = BIGSTITCHER.get('blocksize_factor_x')
 BLOCKSIZE_FACTOR_Y = BIGSTITCHER.get('blocksize_factor_y')
 BLOCKSIZE_FACTOR_Z = BIGSTITCHER.get('blocksize_factor_z')
 SUBSAMPLING_FACTORS = BIGSTITCHER.get('subsampling_factors')
+BS_RAM_FRACTION = BIGSTITCHER.get('ram_fraction')
 
 SLURM_PARAMETERS_FOR_BIGSTITCHER = slurm.get('bigstitcher')
+
 
 ########################################################################################################################

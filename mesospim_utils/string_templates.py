@@ -101,14 +101,19 @@ COLOR_RECORD_TEMPLATE = '''<Channel ChannelIndex="Channel {}" Selection="true" R
 ## BigStitcher related templates
 #####################################################################################################################
 
-# BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE = f'''
-# {FIJI_EXECUTABLE} --headless --console --ij2 --run "{'{}'}"
-# '''
-from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
-ram_bs = SLURM_PARAMETERS_FOR_BIGSTITCHER.get('RAM_GB')
-ram_bs_formatting = f' -Xmx{ram_bs}g' if ram_bs is not None else ''
+from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER, BS_RAM_FRACTION
 
-BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE = f'{FIJI_EXECUTABLE} --headless{ram_bs_formatting} -batch "{'{}'}"'
+# ./ImageJ-linux64 [<Java options>.. --] [<ImageJ options>..] [<files>..]
+# --heap, --mem, --memory <amount> set Java's heap size to <amount> (e.g. 512M)
+
+# Determine RAM for BigStitcher Fiji process
+ram_bs = SLURM_PARAMETERS_FOR_BIGSTITCHER.get('RAM_GB')
+if ram_bs:
+    ram_bs = round(ram_bs * BS_RAM_FRACTION)  # Leave some headroom for Fiji overhead
+# ram_bs_formatting = f' -Xmx{ram_bs}g --' if ram_bs is not None else ''
+ram_bs_formatting = f' --mem {ram_bs}G --' if ram_bs is not None else ''
+
+BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE = f'{FIJI_EXECUTABLE}{ram_bs_formatting} --headless -batch "{'{}'}"'
 
 
 
