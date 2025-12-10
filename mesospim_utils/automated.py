@@ -9,7 +9,8 @@ from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_sl
 from utils import ensure_path
 from bigstitcher import (does_dir_contain_bigstitcher_metadata,
                          get_bigstitcher_omezarr_alignment_marco,
-                         make_bigstitcher_slurm_dir_and_macro)
+                         make_bigstitcher_slurm_dir_and_macro,
+                         adjust_scale_in_bigstitcher_produced_ome_zarr)
 
 
 mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
@@ -87,6 +88,7 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
     elif omezarr_xml:
         print('Setting up script to run omezarr alignment')
         from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
+        from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
         from string_templates import BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE
         bigstitcher_dir, fused_out_dir, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc)
         cmd = BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE.format(macro_file)
@@ -94,6 +96,13 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, bigstitcher_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username)
         print(f'BigStitcher process number: {job_number}')
+
+        cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
+        cmd += f' {dir_loc} {fused_out_dir}'
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, bigstitcher_dir,
+                                after_slurm_jobs=[job_number] if job_number else None, username=username)
+        print(f'BigStitcher Fix OME-Zarr Metadata Scale: {job_number}')
+
 
 
 @app.command()

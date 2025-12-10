@@ -1,8 +1,14 @@
-# import typer
+from typing import Any
+
+import typer
 
 # STD library imports
 from pathlib import Path
 import shutil
+import json
+
+# Installed Package imports
+import zarr
 
 # Local imports
 from metadata import collect_all_metadata, get_first_entry, get_all_tile_entries
@@ -33,109 +39,60 @@ SUBSAMPLING_FACTORS
 )
 
 # INIT typer cmdline interface
-# app = typer.Typer()
+app = typer.Typer()
 
 '''
 This module has functions to orchestrate BigStitcher for mesospim data.
 Assumptions are the data were acquired using the omezarr writer plugin for mesospim
 '''
 
-# BIGSTITCHER_ALIGN_OMEZARR_OUT = '''
-# // This is a ImageJ macro file that can be run headlessly in Fiji with BigStitcher installed
-#
-#
-# // select= xml file path to the ome.zarr.xml file
-# // downsample_in_x/y/z = downsampling factors for alignment (1 = no downsampling)
-#
-# run("Calculate pairwise shifts ...",
-# "select={0} \
-# process_angle=[All angles] \
-# process_channel=[All channels] \
-# process_illumination=[All illuminations] \
-# process_tile=[All tiles] \
-# process_timepoint=[All Timepoints] \
-# method=[Phase Correlation] \
-# channels=[Average Channels] \
-# downsample_in_x={1} \
-# downsample_in_y={2} \
-# downsample_in_z={3}");
-#
-# // select= xml file path to the ome.zarr.xml file
-#
-# run("Optimize globally and apply shifts ...",
-# "select={0} \
-# process_angle=[All angles] \
-# process_channel=[All channels] \
-# process_illumination=[All illuminations] \
-# process_tile=[All tiles] \
-# process_timepoint=[All Timepoints] \
-# relative=2.500 \
-# absolute=3.500 \
-# global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
-# fix_group_0-0");
-#
-# // select= xml file path to the ome.zarr.xml file
-# // zarr_dataset_path= output path for fused ome.zarr file
-# // block_size_x/y/z = block size for fused output
-# // block_size_factor_x/y/z = block size factors for fused output
-# // subsampling_factors= downsampling factors for multiscale output.
-#
-# run("Image Fusion",
-# "select={0} \
-# process_angle=[All angles] \
-# process_channel=[All channels] \
-# process_illumination=[All illuminations] \
-# process_tile=[All tiles] \
-# process_timepoint=[All Timepoints] \
-# bounding_box=[Currently Selected Views] \
-# downsampling=1 \
-# interpolation=[Linear Interpolation] \
-# fusion_type=[Avg, Blending] \
-# pixel_type=[16-bit unsigned integer] \
-# interest_points_for_non_rigid=[-= Disable Non-Rigid =-] \
-# produce=[Each timepoint & channel] \
-# fused_image=[OME-ZARR/N5/HDF5 export using N5-API] \
-# define_input=[Auto-load from input data (values shown below)] \
-# export=OME-ZARR compression=Zstandard create_multi-resolution store zarr_dataset_path=file:{4} show_advanced_block_size_options block_size_x={5} block_size_y={6} block_size_z={7} block_size_factor_x={8} block_size_factor_y={9} block_size_factor_z={10} \
-# subsampling_factors=[{11}]");
-#
-# // hard-exit JVM so Slurm releases resources
-# call("java.lang.System.exit", "0");
-# '''
 
 BIGSTITCHER_ALIGN_OMEZARR_OUT = '''
-// This is a ImageJ macro file that can be run headlessly in Fiji with BigStitcher installed
+// This is a ImageJ macro file for running BigStitcher alignment
+// It can be run headlessly in Fiji with BigStitcher installed
 
 // --------------------------------------------------------------------
 // STAGE 1: Tile alignment using channels=[Average Channels]
 // --------------------------------------------------------------------
 
-// Run Tile Alignment
 // select= xml file path to the ome.zarr.xml file
 // downsample_in_x/y/z = downsampling factors for alignment (1 = no downsampling)
 
+print("");
+print("----------------------------------------------------------------------------------------");
 print("Stage 1: Calculate pairwise shifts (Average Channels)");
+print("----------------------------------------------------------------------------------------");
+print("");
 
 run("Calculate pairwise shifts ...",
-"select={0} \
+"select='{0}' \
 process_angle=[All angles] \
 process_channel=[All channels] \
 process_illumination=[All illuminations] \
 process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 method=[Phase Correlation] \
+show_expert_grouping_options \
+how_to_treat_timepoints=[treat individually] \
+how_to_treat_channels=group \
+how_to_treat_illuminations=group \
+how_to_treat_angles=[treat individually] \
+how_to_treat_tiles=compare \
 channels=[Average Channels] \
 downsample_in_x={1} \
 downsample_in_y={2} \
 downsample_in_z={3}");
 
-// Run Global Tile Optimization
 // select= xml file path to the ome.zarr.xml file
 
+print("");
+print("----------------------------------------------------------------------------------------");
 print("Stage 1: Optimize globally and apply shifts (tile geometry)");
+print("----------------------------------------------------------------------------------------");
+print("");
 
-run("Optimize globally and apply shifts ...", 
-"select={0} \
+run("Optimize globally and apply shifts ...",
+"select='{0}' \
 process_angle=[All angles] \
 process_channel=[All channels] \
 process_illumination=[All illuminations] \
@@ -144,19 +101,58 @@ process_timepoint=[All Timepoints] \
 relative=2.500 \
 absolute=3.500 \
 global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
+show_expert_grouping_options \
+how_to_treat_timepoints=[treat individually] \
+how_to_treat_channels=group \
+how_to_treat_illuminations=group \
+how_to_treat_angles=[treat individually] \
+how_to_treat_tiles=compare \
 fix_group_0-0");
 
 // --------------------------------------------------------------------
 // STAGE 2: Channel alignment with fixed tile positions
 // --------------------------------------------------------------------
 
-print("Stage 2: Optimize per channel with fixed tile positions (chromatic alignment)");
+// select= xml file path to the ome.zarr.xml file
+// downsample_in_x/y/z = downsampling factors for alignment (1 = no downsampling)
 
-// Run Global Channel Optimization
+print("");
+print("----------------------------------------------------------------------------------------");
+print("Stage 2: Optimize per channel with fixed tile positions (Channel alignment)");
+print("----------------------------------------------------------------------------------------");
+print("");
+
+run("Calculate pairwise shifts ...",
+"select='{0}' \
+process_angle=[All angles] \
+process_channel=[All channels] \
+process_illumination=[All illuminations] \
+process_tile=[All tiles] \
+process_timepoint=[All Timepoints] \
+method=[Phase Correlation] \
+show_expert_grouping_options \
+how_to_treat_timepoints=[treat individually] \
+how_to_treat_channels=compare \
+how_to_treat_illuminations=group \
+how_to_treat_angles=[treat individually] \
+how_to_treat_tiles=group \
+illuminations=[Average Illuminations] \
+tiles=[Average Tiles] \
+downsample_in_x={1} \
+downsample_in_y={2} \
+downsample_in_z={3}");
+
+
 // select= xml file path to the ome.zarr.xml file
 
-run("Optimize globally and apply shifts ...", 
-"select={0} \
+print("");
+print("----------------------------------------------------------------------------------------");
+print("Stage 2: Optimize globally and apply shifts (Channel geometry)");
+print("----------------------------------------------------------------------------------------");
+print("");
+
+run("Optimize globally and apply shifts ...",
+"select='{0}' \
 process_angle=[All angles] \
 process_channel=[All channels] \
 process_illumination=[All illuminations] \
@@ -171,7 +167,12 @@ how_to_treat_channels=compare \
 how_to_treat_illuminations=group \
 how_to_treat_angles=[treat individually] \
 how_to_treat_tiles=group \
-fix_group_0-0,");
+fix_group_0-0");
+
+
+// --------------------------------------------------------------------
+// STAGE 3: Image Fusion into OME-Zarr
+// --------------------------------------------------------------------
 
 
 // select= xml file path to the ome.zarr.xml file
@@ -180,8 +181,14 @@ fix_group_0-0,");
 // block_size_factor_x/y/z = block size factors for fused output
 // subsampling_factors= downsampling factors for multiscale output.
 
-run("Image Fusion", 
-"select={0} \
+print("");
+print("----------------------------------------------------------------------------------------");
+print("Creating Fused Dataset to OME-Zarr");
+print("----------------------------------------------------------------------------------------");
+print("");
+
+run("Image Fusion",
+"select='{0}' \
 process_angle=[All angles] \
 process_channel=[All channels] \
 process_illumination=[All illuminations] \
@@ -193,31 +200,27 @@ interpolation=[Linear Interpolation] \
 fusion_type=[Avg, Blending] \
 pixel_type=[16-bit unsigned integer] \
 interest_points_for_non_rigid=[-= Disable Non-Rigid =-] \
+preserve_original \
 produce=[Each timepoint & channel] \
 fused_image=[OME-ZARR/N5/HDF5 export using N5-API] \
 define_input=[Auto-load from input data (values shown below)] \
-export=OME-ZARR compression=Zstandard create_multi-resolution store zarr_dataset_path=file:{4} show_advanced_block_size_options block_size_x={5} block_size_y={6} block_size_z={7} block_size_factor_x={8} block_size_factor_y={9} block_size_factor_z={10} \
+export=OME-ZARR \
+compression=Zstandard \
+create_multi-resolution \
+store \
+zarr_dataset_path='file:{4}' \
+show_advanced_block_size_options \
+block_size_x={5} \
+block_size_y={6} \
+block_size_z={7} \
+block_size_factor_x={8} \
+block_size_factor_y={9} \
+block_size_factor_z={10} \
 subsampling_factors=[{11}]");
 
 // hard-exit JVM so Slurm releases resources
 call("java.lang.System.exit", "0");
 '''
-
-
-
-
-'''
-run("Calculate pairwise shifts ...", "select=/CBI_FastStore/test_data/mesospim/omezarr/embryo-ome-zarr//Mag8x_Ch488_Ch561_Ch640.ome.zarr.xml process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] method=[Phase Correlation] show_expert_grouping_options how_to_treat_timepoints=[treat individually] how_to_treat_channels=group how_to_treat_illuminations=group how_to_treat_angles=[treat individually] how_to_treat_tiles=compare channels=[Average Channels] downsample_in_x=8 downsample_in_y=8 downsample_in_z=4");
-
-run("Optimize globally and apply shifts ...", "select=/CBI_FastStore/test_data/mesospim/omezarr/embryo-ome-zarr//Mag8x_Ch488_Ch561_Ch640.ome.zarr.xml process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] relative=2.500 absolute=3.500 global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] show_expert_grouping_options how_to_treat_timepoints=[treat individually] how_to_treat_channels=group how_to_treat_illuminations=group how_to_treat_angles=[treat individually] how_to_treat_tiles=compare fix_group_0-0");
-
-run("Calculate pairwise shifts ...", "select=/CBI_FastStore/test_data/mesospim/omezarr/embryo-ome-zarr//Mag8x_Ch488_Ch561_Ch640.ome.zarr.xml process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] method=[Phase Correlation] show_expert_grouping_options how_to_treat_timepoints=[treat individually] how_to_treat_channels=compare how_to_treat_illuminations=group how_to_treat_angles=[treat individually] how_to_treat_tiles=group illuminations=[Average Illuminations] tiles=[Average Tiles] downsample_in_x=8 downsample_in_y=8 downsample_in_z=4");
-
-
-run("Optimize globally and apply shifts ...", "select=/CBI_FastStore/test_data/mesospim/omezarr/embryo-ome-zarr//Mag8x_Ch488_Ch561_Ch640.ome.zarr.xml process_angle=[All angles] process_channel=[All channels] process_illumination=[All illuminations] process_tile=[All tiles] process_timepoint=[All Timepoints] relative=2.500 absolute=3.500 global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] show_expert_grouping_options how_to_treat_timepoints=[treat individually] how_to_treat_channels=compare how_to_treat_illuminations=group how_to_treat_angles=[treat individually] how_to_treat_tiles=group fix_group_0-0,");
-
-'''
-
 
 '''
 To use BIGSTITCHER_ALIGN_OMEZARR_OUT
@@ -258,6 +261,10 @@ def get_bigstitcher_omezarr_alignment_marco(
     Return the macro string
     If given path_to_write_macro, also write the macro to that path
     '''
+
+    if SUBSAMPLING_FACTORS.lower() == 'automated':
+        scale_factors_zyx, subsampling_factors = determine_sampling_factors_for_bigstitcher(input_omezarr_xml_path)
+
     macro = BIGSTITCHER_ALIGN_OMEZARR_OUT.format(
         ensure_path(input_omezarr_xml_path).as_posix(),
         downsample_in_x,
@@ -313,11 +320,127 @@ def make_bigstitcher_slurm_dir_and_macro(path):
 
     return bigstitcher_dir, fused_out_dir, macro_file
 
+def list_mesospim_ome_zarr_tile_dirs(path_to_mesospim_omezarr:Path):
+    '''
+    Given the path to a ome-zarr directory produce by mesospim,
+    return a list of directories for each tile
+    '''
+    path_to_mesospim_omezarr = ensure_path(path_to_mesospim_omezarr)
+    tile_dir_list = path_to_mesospim_omezarr.glob('*')
+    tile_dir_list = [p for p in tile_dir_list if p.is_dir()]
+    return tile_dir_list
+
+def list_mesospim_ome_zarr_zattrs(path_to_mesospim_omezarr:Path):
+    '''
+    Given the path to a ome-zarr directory produce by mesospim,
+    return a list of .zattrs files for each tile
+    '''
+    path_to_mesospim_omezarr = ensure_path(path_to_mesospim_omezarr)
+    tile_dir_list = list_mesospim_ome_zarr_tile_dirs(path_to_mesospim_omezarr)
+    zattrs_list = [x / '.zattrs' for x in tile_dir_list]
+    zattrs_list = [x for x in zattrs_list if x.is_file()]
+    return zattrs_list
+
+@app.command()
+def determine_sampling_factors_for_bigstitcher(omezarr_xml_path: Path) -> tuple[list[Any], str]:
+    '''
+    Determine subsampling factors string for BigStitcher from ome-zarr zattrs
+    Return string in format: {{1,1,1},{2,2,2},{4,4,4},{8,8,8}}
+    '''
+    omezarr_xml_path = ensure_path(omezarr_xml_path)
+    zarr_dir = str(omezarr_xml_path).removesuffix('.xml')
+    zattrs_list = list_mesospim_ome_zarr_zattrs(zarr_dir)
+    zattr_file = zattrs_list[0]
+    zattr_data = json.loads(zattr_file.read_text())
+    multiscales_dict = zattr_data.get('multiscales',[])[0]
+    datasets_list = multiscales_dict.get('datasets',[])
+
+    # Extract a list of scales for each multiscale
+    scales_list = []
+    for scale in datasets_list:
+        for coord_transform in scale.get('coordinateTransformations'):
+            if coord_transform.get('type') == 'scale':
+                scales = coord_transform.get('scale')
+                scales_list.append(scales)
+
+
+    scale_factors_list = []
+    for idx, _ in enumerate(scales_list):
+        if idx == 0:
+            scale_factors_list.append([1,1,1])
+        else:
+            factors = [
+                round(scales_list[idx][0] / scales_list[idx-1][0]),
+                round(scales_list[idx][1] / scales_list[idx-1][1]),
+                round(scales_list[idx][2] / scales_list[idx-1][2])
+            ]
+            scale_factors_list.append(factors)
+
+    print(f'''
+        ========================================================================================
+        {scale_factors_list=}
+        ========================================================================================
+        ''')
+
+    for idx, _ in enumerate(scale_factors_list):
+        if idx == 0:
+            scale_factors_list[idx] = (scale_factors_list[0])
+        else:
+            scale_factors_list[idx] = [x*y for x,y in zip(scale_factors_list[idx-1], scale_factors_list[idx])]
+
+
+    # Format to BigStitcher string
+    subsampling_factors_str = '{'
+    for factors in scale_factors_list:
+        subsampling_factors_str += '{' + f'{factors[2]},{factors[1]},{factors[0]}' + '},' # XYZ order
+    subsampling_factors_str = subsampling_factors_str.rstrip(',') + '}'
+
+    print(f'''
+            ========================================================================================
+            {subsampling_factors_str=}
+            ========================================================================================
+            ''')
+
+    return scales_list, subsampling_factors_str
+
+@app.command()
+def adjust_scale_in_bigstitcher_produced_ome_zarr(omezarr_xml_or_acquisition_path: Path,
+                                                  omezarr_produced_by_bigstitcher_path: Path):
+    '''
+    Given the path to a bigstitcher xml OR a mesospim acquisition directory,
+    Extract scale information from the origional .ome.zarr and transfer the
+    scale to the bigstitcher-produced ome-zarr
+    This is because bigstitcher does not embed scale information in ome-zarr.
+    '''
+    omezarr_xml_or_acquisition_path = ensure_path(omezarr_xml_or_acquisition_path)
+    omezarr_produced_by_bigstitcher_path = ensure_path(omezarr_produced_by_bigstitcher_path)
+
+    if omezarr_xml_or_acquisition_path.as_posix().endswith('.ome.zarr.xml'):
+        omezarr_xml = omezarr_xml_or_acquisition_path
+    else:
+        omezarr_xml = does_dir_contain_bigstitcher_metadata(omezarr_xml_or_acquisition_path)
+        omezarr_xml = ensure_path(omezarr_xml)
+
+    scales_list_zyx, _ = determine_sampling_factors_for_bigstitcher(omezarr_xml)
+    target_zattr_path = omezarr_produced_by_bigstitcher_path / '.zattrs'
+    target_zattr = json.loads(target_zattr_path.read_text())
+    print(f'{target_zattr=}')
+
+    for dataset in target_zattr.get('multiscales',[])[0].get('datasets',[]):
+        idx = dataset.get('path')
+        idx = int(idx)
+        dataset['coordinateTransformations'][0]['scale'] = [1,1] + scales_list_zyx[idx]
+
+    print(f'{target_zattr=}')
+
+    with open(target_zattr_path, "w") as json_file:
+        json.dump(target_zattr, json_file, indent=4)
+
+
+
 
 if __name__ == '__main__':
-    pass
-    # write_big_stitcher_config_file('/CBI_FastStore/test_data/mesospim/04CL18_Stujenske_injection')
-    # _make_fiji_install('/CBI_FastStore/test_data/mesospim/04CL18_Stujenske_injection/fiji_install.sh')
+    app()
 
 
 

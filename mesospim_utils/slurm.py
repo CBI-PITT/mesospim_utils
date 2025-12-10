@@ -374,7 +374,7 @@ def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, arra
         f"--array=0-{array_len-1}" + (f"%{PARALLEL_JOBS}" if PARALLEL_JOBS else "") if array_len is not None else "",
         f"--nice={NICE}" if NICE is not None else "",
         f"--time={TIME_LIMIT}" if TIME_LIMIT is not None else "",
-        f"-o {log_location}",
+        f'-o "{log_location}"',
         "--wrap='bash -c \"{}\"'" if bash else "--wrap='{}'"
     ]
 

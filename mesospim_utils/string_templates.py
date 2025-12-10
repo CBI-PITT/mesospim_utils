@@ -104,11 +104,11 @@ COLOR_RECORD_TEMPLATE = '''<Channel ChannelIndex="Channel {}" Selection="true" R
 # BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE = f'''
 # {FIJI_EXECUTABLE} --headless --console --ij2 --run "{'{}'}"
 # '''
+from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
+ram_bs = SLURM_PARAMETERS_FOR_BIGSTITCHER.get('RAM_GB')
+ram_bs_formatting = f' -Xmx{ram_bs}g' if ram_bs is not None else ''
 
-BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE = f'''
-{FIJI_EXECUTABLE} --headless -batch "{'{}'}"
-'''
-
+BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE = f'{FIJI_EXECUTABLE} --headless{ram_bs_formatting} -batch "{'{}'}"'
 
 
 
