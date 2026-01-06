@@ -328,7 +328,10 @@ def determine_emission_wavelength(metadata_entry):
     # Extract 3 digit wavelength, if it doesn't exist reference EMISSION_MAP in the constants module
     emission_wavelength = metadata_entry['CFG']['Filter'][0:3]
     try:
-        emission_wavelength = int(emission_wavelength)
+        if emission_wavelength.lower() == 'emp': # function grabs first 3 characters, 'Empty' filter case
+            emission_wavelength = None
+        else:
+            emission_wavelength = int(emission_wavelength)
     except Exception:
         assert emission_wavelength.lower() in EMISSION_MAP, f"No emission wavelength found for channel: {color}"
         emission_wavelength = EMISSION_MAP.get(emission_wavelength.lower())

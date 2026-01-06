@@ -17,7 +17,8 @@ def map_wavelength_to_RGB(wavelength):
     '''
 
     RGB = namedtuple('RGB', ['R', 'G', 'B'])
-    default = RGB(R=0.5, G=0.5, B=0.5)
+    r,g,b = EMISSION_TO_RGB.get('default', (0.5,0.5,0.5))
+    default = RGB(R=r, G=g, B=b)
 
     if wavelength is None:
         # Default to white

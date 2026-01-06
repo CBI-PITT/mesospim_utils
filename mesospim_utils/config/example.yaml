@@ -31,6 +31,7 @@ general:
     # Mapping emission range to RGB colors
     # Keys are wavelength ranges in nm
     # Values are (R,G,B)
+    'default': [ 0.5, 0.5, 0.5 ]
     '300-479': [ 0, 0, 1 ]
     '480-540': [ 0, 1, 0 ]
     '541-625': [ 1, 0, 0 ]
@@ -134,14 +135,15 @@ slurm:
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
 bigstitcher:
-  fiji_install_folder: "/h20/home/lab/src/fiji/Fiji.app"
-  downsample_in_x: 4
-  downsample_in_y: 4
-  downsample_in_z: 4
+  fiji_install_folder: "" # If empty "", will use Fiji installed with mesospim_utils
+  downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
+  downsample_in_y: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
+  downsample_in_z: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
   blocksize_x: 256
   blocksize_y: 256
   blocksize_z: 256
   blocksize_factor_x: 2
   blocksize_factor_y: 2
   blocksize_factor_z: 2
-  subsampling_factors: "{{1,1,1}, {2,2,2}, {4,4,4}, {8,8,8}, {16,16,16}, {32,32,32}}"
+  subsampling_factors: 'automated' # "{{1,1,1}, {2,2,2}, {4,4,4}, {8,8,8}, {16,16,16}, {32,32,32}}"
+  ram_fraction: 0.95 # 0-1, Fraction of allocated RAM to allocate to bigstitcher Java heap

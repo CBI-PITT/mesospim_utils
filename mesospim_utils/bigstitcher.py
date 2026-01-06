@@ -205,7 +205,7 @@ produce=[Each timepoint & channel] \
 fused_image=[OME-ZARR/N5/HDF5 export using N5-API] \
 define_input=[Auto-load from input data (values shown below)] \
 export=OME-ZARR \
-compression=Zstandard \
+compression=Zstandard compression_level=5 \
 create_multi-resolution \
 store \
 zarr_dataset_path='{4}' \

@@ -34,20 +34,15 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
 
     dir_loc = ensure_path(dir_loc)
 
-    omezarr_xml = does_dir_contain_bigstitcher_metadata(dir_loc)
+    # Ensure that metadata json is produced which will be used by downstream processes
+    metadata_by_channel = collect_all_metadata(dir_loc)
+    first_metadata_entry = get_first_entry(metadata_by_channel)
+    username = first_metadata_entry.get('username', "")
 
-    if omezarr_xml is None:
-        # Ensure that metadata json is produced which will be used by downstream processes
-        metadata_by_channel = collect_all_metadata(dir_loc)
-        first_metadata_entry = get_first_entry(metadata_by_channel)
-        username = first_metadata_entry.get('username', "")
+    if not refractive_index and decon:
+        refractive_index = first_metadata_entry.get('refractive_index')
 
-        if not refractive_index and decon:
-            refractive_index = first_metadata_entry.get('refractive_index')
-    else:
-        # FOR TESTING NEED TO FIX
-        metadata_by_channel = collect_all_metadata(dir_loc, prepare=False)
-        username = None
+    omezarr_xml = does_dir_contain_bigstitcher_metadata(dir_loc)  # returns path to omezarr xml if found, else None
 
     job_number = None
     out_dir = dir_loc
@@ -71,20 +66,6 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
                                 after_slurm_jobs=[job_number] if job_number else None, username=username)
         print(f'Dependency process number: {job_number}')
 
-    # elif omezarr_xml:
-    #     print('Setting up script to run omezarr alignment')
-    #     from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
-    #     from string_templates import BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE
-    #     shutil.copy(omezarr_xml, str(omezarr_xml) + '.backup')
-    #     out_dir = str(omezarr_xml).removesuffix('.ome.zarr.xml')
-    #     out_dir = out_dir + '_montage.ome.zarr'
-    #     macro_file = out_dir + '_macro.ijm'
-    #     _ = get_bigstitcher_omezarr_alignment_marco(omezarr_xml, out_dir, macro_file)
-    #     cmd = BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE.format(macro_file)
-    #     print(f'{cmd=}')
-    #     job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, dir_loc,
-    #                             after_slurm_jobs=[job_number] if job_number else None, username=username)
-    #     print(f'BigStitcher process number: {job_number}')
     elif omezarr_xml:
         print('Setting up script to run omezarr alignment')
         from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
@@ -92,13 +73,14 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
         from string_templates import BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE
         bigstitcher_dir, fused_out_dir, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc)
         cmd = BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE.format(macro_file)
-        print(f'{cmd=}')
+        # print(f'{cmd=}')
+
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, bigstitcher_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username)
         print(f'BigStitcher process number: {job_number}')
 
         cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
-        cmd += f' {dir_loc} {fused_out_dir}'
+        cmd += f' "{dir_loc}" "{fused_out_dir}"'
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, bigstitcher_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username)
         print(f'BigStitcher Fix OME-Zarr Metadata Scale: {job_number}')
