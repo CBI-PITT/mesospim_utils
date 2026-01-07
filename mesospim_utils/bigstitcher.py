@@ -309,7 +309,8 @@ def does_dir_contain_bigstitcher_metadata(path):
         return None
     return zarr_xml_files[0]
 
-def make_bigstitcher_slurm_dir_and_macro(path):
+@app.command()
+def make_bigstitcher_slurm_dir_and_macro(path: Path):
     '''
     Takes path where bigstitcher metadata xml and
     makes a bigsitcher dir, backup of xml file,
@@ -451,6 +452,77 @@ def adjust_scale_in_bigstitcher_produced_ome_zarr(omezarr_xml_or_acquisition_pat
         json.dump(target_zattr, json_file, indent=4)
 
 
+from xml.etree import ElementTree as ET
+from pathlib import Path
+
+
+def get_ome_zarr_directory_from_xml(xml_path):
+    """
+    Extract the OME-Zarr directory path from an XML file.
+
+    Parameters
+    ----------
+    xml_path : str or Path
+        Path to the input XML file
+
+    Returns
+    -------
+    str
+        The OME-Zarr directory path
+    None
+        If xml_path is None or no relative zarr path is found
+    """
+    if not xml_path:
+        return None
+
+    xml_path = ensure_path(xml_path)
+
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+
+    for zarr in root.iter("zarr"):
+        if zarr.attrib.get("type") == "relative":
+            return xml_path.parent / zarr.text
+
+    return None
+
+def replace_xml_zarr_relative_group_name(
+    xml_path,
+    old_name,
+    new_name,
+    output_path=None
+):
+    """
+    Replace the text of a <zarr type="relative"> element in an XML file.
+
+    Parameters
+    ----------
+    xml_path : str or Path
+        Path to the input XML file
+    old_name : str
+        Existing zarr filename to replace
+    new_name : str
+        New zarr filename
+    output_path : str or Path, optional
+        If provided, write to this path; otherwise overwrite input file
+    """
+    xml_path = Path(xml_path)
+    output_path = Path(output_path) if output_path else xml_path
+
+    tree = ET.parse(xml_path)
+    root = tree.getroot()
+
+    replaced = False
+
+    for zarr in root.iter("zarr"):
+        if zarr.attrib.get("type") == "relative" and zarr.text == old_name:
+            zarr.text = new_name
+            replaced = True
+
+    if not replaced:
+        raise ValueError("No matching <zarr type='relative'> element found")
+
+    tree.write(output_path, encoding="utf-8", xml_declaration=True)
 
 
 if __name__ == '__main__':

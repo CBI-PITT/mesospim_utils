@@ -19,6 +19,8 @@ general:
 
   emission_map:
     #Mapping common names to emission wavelengths, only used if wavelength is not explicitly stated in metadata file
+    "dapi": 450
+    "hoechst": 450
     "gfp": 525
     "yfp": 525
     "green": 525
@@ -101,7 +103,7 @@ slurm:
     'CPUS': 1
     'JOB_LABEL': 'ms_decon'
     'RAM_GB': 1300 # Acts of max RAM allocation based on how it is implemented in rl.py
-    'GRES': 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'GRES': 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1", or shard:4, or None
     'PARALLEL_JOBS': 32 # In a slurm array, how many jobs will run in parallel
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority

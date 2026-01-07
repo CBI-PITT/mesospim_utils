@@ -17,7 +17,8 @@ app = typer.Typer()
 ######################################################################################################################
 
 @app.command()
-def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
+def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=None, out_dir: str=None,
+              out_file_type: str='.tif', file_type: str='.btf',
               denoise_sigma: float=None, sharpen: bool=False,
               half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=None,
               num_parallel: int=None
@@ -33,16 +34,25 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
     else:
-        out_dir = path / 'decon'
+        if str(path).endswith('.ome.zarr'):
+            out_dir = path.parent / 'decon' / path.name
+        else:
+            out_dir = path / 'decon'
     log_dir = out_dir / 'logs'
     log_dir.parent.mkdir(parents=True, exist_ok=True)
     file_list = list(path.glob('*' + file_type))
     num_files = len(file_list)
 
     # Dynamically determine how much RAM to allocate for SLURM to support decon, assumes all files are the same size.
-    file_size_to_decon = get_file_size_gb(file_list[0])
+    if Path(file_list[0]).is_file():
+        file_size_to_decon = get_file_size_gb(file_list[0])
+    elif str(file_list[0]).endswith('.ome.zarr'):
+        from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
+        file_size_to_decon = OmeZarrArray(file_list[0]).nbytes / (1024 ** 3)  # ensure it's a valid zarr
+
     # Arbitrary multiplier by 2
     file_size_to_decon *= 2
+    file_size_to_decon += 16  # Add 16GB overhead
 
     from constants import SLURM_PARAMETERS_DECON as PARAMS
     # Extract required parameters into simple names
@@ -94,12 +104,19 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         commands += "commands=("
         #Build each command
         for p in files_not_done:
+
+            if str(p).endswith('.ome.zarr'):
+                out_file_name = str(p.name).removesuffix('.ome.zarr') + out_file_type
+            else:
+                out_file_name = p.stem + out_file_type
+
             commands += '\n\t'
             commands += '"'
             commands += f'{ENV_PYTHON_LOC} -u {DECON_SCRIPT} decon'
             commands += f' {p.as_posix()}'
-            commands += f' {refractive_index}'
-            commands += f' --out-location {out_dir / (p.stem + out_file_type)}'
+            commands += f' --refractive-index {refractive_index}'
+            commands += f'{f" --emission-wavelength {emission_wavelength}" if emission_wavelength else ""}'
+            commands += f' --out-location {out_dir / out_file_name}'
             #commands += f'{" --queue-ims" if queue_ims else ""}'
             commands += f'{" --sharpen" if sharpen else ""}'
             commands += f'{f" --denoise-sigma {denoise_sigma}" if denoise_sigma else ""}'

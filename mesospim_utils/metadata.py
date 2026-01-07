@@ -323,18 +323,42 @@ def determine_tile_shape(metadata_entry):
 
     return TileShape(z=z, y=y, x=x)
 
+def extract_wavelength_from_filter(value:str) -> int | str:
+    '''
+    Given a filter string, extract the leading wavelength number if present
+    Examples:
+    "450/50 nm" -> 450
+    "450/50 (GFP)" -> 450
+    "450" -> 450
+    "empty" -> "empty"
+    "GFP" -> "GFP"
+    '''
+    value = value.strip()
+
+    # Match leading number (handles "450", "450/50", "450/50 nm", etc.)
+    # Match leading number, optionally followed by /number, then anything
+    match = re.match(r"^(\d+)(?:/\d+)?(?:\s+.*)?$", value)
+    if match:
+        return int(match.group(1))  # returns 450
+
+    # Otherwise return full name
+    return value
 
 def determine_emission_wavelength(metadata_entry):
     # Extract 3 digit wavelength, if it doesn't exist reference EMISSION_MAP in the constants module
-    emission_wavelength = metadata_entry['CFG']['Filter'][0:3]
-    try:
-        if emission_wavelength.lower() == 'emp': # function grabs first 3 characters, 'Empty' filter case
-            emission_wavelength = None
-        else:
-            emission_wavelength = int(emission_wavelength)
-    except Exception:
+    emission_wavelength = metadata_entry['CFG']['Filter']
+    emission_wavelength = extract_wavelength_from_filter(emission_wavelength)
+
+    if emission_wavelength == 'empty':
+        return None
+
+    if isinstance(emission_wavelength, int):
+        return emission_wavelength
+
+    if isinstance(emission_wavelength, str):
         assert emission_wavelength.lower() in EMISSION_MAP, f"No emission wavelength found for channel: {color}"
         emission_wavelength = EMISSION_MAP.get(emission_wavelength.lower())
+
     return emission_wavelength
 
 
@@ -349,15 +373,28 @@ def determine_xyz_resolution(metadata_entry):
 def determine_overlap(single_channel_metadata):
     for metadata in single_channel_metadata:
         if metadata['tile_number'] == 0:
-            loc0 = metadata['POSITION']["y_pos"]
+            loc0y = metadata['POSITION']["y_pos"]
+            loc0x = metadata['POSITION']["x_pos"]
         if metadata['tile_number'] == 1:
-            loc1 = metadata['POSITION']["y_pos"]
+            loc1y = metadata['POSITION']["y_pos"]
+            loc1x = metadata['POSITION']["x_pos"]
+
+    if 'loc1y' not in locals() and 'loc1x' not in locals():
+        # Only 1 tile present, no overlap
+        return 0.0
 
     resolution = single_channel_metadata[0]["CFG"]["Pixelsize in um"]
-    cam_pixels = single_channel_metadata[0]["CAMERA PARAMETERS"]["y_pixels"]
+    cam_pixelsy = single_channel_metadata[0]["CAMERA PARAMETERS"]["y_pixels"]
+    cam_pixelsx = single_channel_metadata[0]["CAMERA PARAMETERS"]["x_pixels"]
 
-    distance_moved = abs(loc1 - loc0)
-    distance_fov = resolution * cam_pixels
+    # Attempt to calculate overlap in y direction, if fails calculate in x direction
+    # May happen if only 1 row or 1 column of tiles
+    try:
+        distance_moved = abs(loc1y - loc0y)
+        distance_fov = resolution * cam_pixelsy
+    except Exception:
+        distance_moved = abs(loc1x - loc0x)
+        distance_fov = resolution * cam_pixelsx
     overlap_percent = 1 - (distance_moved / distance_fov)
     overlap_percent = round(overlap_percent, 2)
     return overlap_percent

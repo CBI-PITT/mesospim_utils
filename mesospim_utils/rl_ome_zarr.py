@@ -2,6 +2,10 @@ from pprint import pprint as print
 import zarr
 from pathlib import Path
 
+from dask import __main__
+
+from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
+
 # Set array zattrs
 def set_zattrs_recursive(target: dict, source: dict):
     for key, value in source.items():
@@ -15,42 +19,18 @@ def set_zattrs_recursive(target: dict, source: dict):
 
 # Open zarr tile group
 origional_tile_path = '/CBI_FastStore/Acquire/MesoSPIM/alan-test/new/test_Mag2x_Ch488_Ch561_Ch638.ome.zarr/Mag2_Tile1_Ch561_Sh1_Rot0.ome.zarr'
-# origional_tile_path = '/CBI_FastStore/Acquire/MesoSPIM/alan-test/new/test_Mag2x_Ch488_Ch561_Ch638.ome.zarr/test_Mag2x_Ch488_Ch561_Ch638_montage.ome.zarr'
-origional_tile_path = Path(origional_tile_path)
-origional_tile_group = zarr.open(origional_tile_path)
 
-# Extract zarr version
-ZARR_VERSION = origional_tile_group.info._zarr_format
+# Open with OmeZarrArray to ensure compatibility
+ome_zarr_input = OmeZarrArray(origional_tile_path)
+origional_tile_path = Path(ome_zarr_input.store_path)  # get the actual zarr path
+ome_zarr_input.resolution_level = 0  # set to full resolution
+# ome_zarr_input.timepoint_lock = 0  # set to first timepoint (should be no timepoints for mesospim data, but this doesn't hurt).
 
-# Extract OME metadata
-origional_ome_metadata = dict(origional_tile_group.attrs)
+# Get output zarr path and create output structure
+out_dir = origional_tile_path.parents[1] / 'decon' / origional_tile_path.parts[-2] / origional_tile_path.parts[-1]
+ome_zarr_output = ome_zarr_input.omezarr_like(out_dir) # create output zarr structure like input to write all deconned data
 
-# Get full resolution array
-full_res_array = origional_tile_group['0']
-full_res_zattrs = dict(full_res_array.attrs)
+if __name__ ==  "__main__":
+    pass
 
-# Get output zarr path
-out_dir = origional_tile_path.parents[1] / 'decon' / origional_tile_path.parts[-2] / origional_tile_path.name
-out_group = out_dir.parent
-out_group.mkdir(parents=True, exist_ok=True)
 
-# Open or create output zarr group
-out_group = zarr.open_group(out_group, mode="a", zarr_version=ZARR_VERSION)
-set_zattrs_recursive(out_group.attrs, origional_ome_metadata)
-
-# Open or create full resolution array in output group
-a = zarr.create(
-    shape=full_res_array.shape,
-    chunks=full_res_array.chunks,
-    dtype=full_res_array.dtype,
-    compressor=full_res_array.compressor,
-    overwrite = False,
-    store = out_group.store,  # same store as the group
-    path = out_dir.name,  # create under store
-    zarr_format = ZARR_VERSION,  # 2 or 3
-    dimension_separator = "/",  # nested directories in .zarray
-    )
-
-set_zattrs_recursive(a.attrs, full_res_zattrs)
-
-a[:] = full_res_array[:]

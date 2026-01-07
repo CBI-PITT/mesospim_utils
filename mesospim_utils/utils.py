@@ -25,6 +25,8 @@ def map_wavelength_to_RGB(wavelength):
         return default
 
     for key, item in EMISSION_TO_RGB.items():
+        if key == 'default':
+            continue
         low, high = [int(x) for x in key.split('-')]
         if wavelength >= low and wavelength < high:
             return RGB(*item)

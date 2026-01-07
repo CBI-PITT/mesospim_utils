@@ -21,6 +21,7 @@ from typing import Union
 import numpy as np
 import tifffile
 import skimage
+import shutil
 from skimage import img_as_float32, img_as_uint
 import zarr
 
@@ -32,6 +33,7 @@ from constants import DECON_SCRIPT as LOC_OF_THIS_SCRIPT
 from constants import VRAM_PER_VOXEL, MAX_VRAM
 from constants import VERBOSE
 
+from bigstitcher import replace_xml_zarr_relative_group_name
 
 ims_conv_module_name = Path(LOC_OF_THIS_SCRIPT).parent / 'slurm.py'
 
@@ -416,7 +418,7 @@ def trim_psf(psf):
 
 
 @app.command()
-def decon(file_location: Path, refractive_index: float, out_location: Path=None, resolution: tuple[float,float,float]=None,
+def decon(file_location: Path, refractive_index: float=None, out_location: Path=None, resolution: tuple[float,float,float]=None,
           emission_wavelength: int=None, na: float=None, ri: float=None,
           start_index: int=None, stop_index: int=None, save_pre_post: bool=False, queue_ims: bool=False,
           denoise_sigma: float=None, sharpen: bool=False, half_precision: bool=False,
@@ -439,7 +441,10 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
     if not out_location:
         if VERBOSE: print('Making out_location')
-        out_location = file_location.parent / 'decon' / ('DECON_' + file_location.name)
+        if str(file_location).endswith('.btf'):
+            out_location = file_location.parent / 'decon' / ('DECON_' + file_location.name)
+        elif str(file_location).endswith('.ome.zarr'):
+            out_location = file_location.parents[1] / 'decon' / (file_location.parent.name.removesuffix(".ome.zarr") + '_DECON.ome.zarr')/ file_location.name
 
     if not isinstance(out_location, Path):
         out_location = Path(out_location)
@@ -454,45 +459,59 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         pre_location = out_location.parent / ('PRE_' + out_location.stem + TMP_EXT)
         pre_location.parent.mkdir(parents=True, exist_ok=True)
 
-    if not resolution:
-        z_res = y_res = x_res = None
-
-    if '.btf' in str(file_location):
-        if VERBOSE: print('Is mesospim big tiff file')
-
-        # Imaging parameters to be passes to psf
-        na = 0.2
-        # sample_ri = 1.47 #CUBIC
-        sample_ri = refractive_index
-        objective_immersion_ri_design = 1.000293 # Air
-        objective_immersion_ri_actual = 1.000293 # Air
-        objective_working_distance = 45 * 1000 #in microns
-        coverslip_ri_design = 1.000293 # objective design
-        coverslip_ri_actual = 1.515 # during experiment
-        coverslip_thickness_actual = 1 * 1000 # in microns
-        coverslip_thickness_design = 0
-
-        psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
-
-        # Extract imaging parameter from metadata file if it exists
-        meta_dir = file_location.parent
-        meta_dict = mesospim_meta_data(meta_dir)
+    if not resolution or not emission_wavelength:
+        # Extract metadata file
+        meta_dict = mesospim_meta_data(file_location) # Extract metadata from mesospim acquisition directory, will search backwards from file location until it finds mesospim_metadata.json
         file_name = file_location.name
-        meta_entry = get_entry_for_file_name(meta_dict,file_name)
-        # ch, file_idx = get_ch_entry_for_file_name(meta_dict,file_location.name)
-        # ch0 = list(meta_dict.keys())[file_idx]
-        z_res, y_res, x_res = meta_entry.get('resolution')
-        res = (z_res, y_res, x_res)
+        meta_entry = get_entry_for_file_name(meta_dict, file_name)
 
+    if not resolution:
+        z_res, y_res, x_res = meta_entry.get('resolution')
+
+    if not emission_wavelength:
         emission_wavelength = meta_entry.get('emission_wavelength')
 
 
+    # Set imaging parameters hardcoded for now
+    # Imaging parameters to be passes to psf
+    na = 0.2
+    # sample_ri = 1.47 #CUBIC
+    sample_ri = refractive_index
+    objective_immersion_ri_design = 1.000293  # Air
+    objective_immersion_ri_actual = 1.000293  # Air
+    objective_working_distance = 45 * 1000  # in microns
+    coverslip_ri_design = 1.000293  # objective design
+    coverslip_ri_actual = 1.515  # during experiment
+    coverslip_thickness_actual = 1 * 1000  # in microns
+    coverslip_thickness_design = 0
+
+    psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
+
     assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
 
-    if '.btf' in str(file_location):
+    if str(file_location).endswith('.btf'):
         if VERBOSE: print('Opening File as mesospim_btf_helper')
         stack = mesospim_btf_helper(file_location)
         stack = stack.lazy_array
+        stack = stack[start_index:stop_index]
+
+    elif str(file_location).endswith('.ome.zarr'):
+        from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
+        if VERBOSE: print('Opening File as OmeZarrArray')
+        input_omezarr = OmeZarrArray(file_location)
+        out_ome_zarr = input_omezarr.omezarr_like(out_location) # create output zarr structure like input to write all deconned data
+        if str(file_location.parent).endswith('.ome.zarr'):
+            print('ISSSSSSSSSSS ZARRRRRRRRRRRRRR')
+            zgroup_file = file_location.parent / '.zgroup'
+            zattrs_file = file_location.parent / '.zattrs'
+            print(f'{zgroup_file=}, {zattrs_file=}')
+            if zgroup_file.is_file():
+                shutil.copy2(zgroup_file, out_location.parent / '.zgroup')
+            if zattrs_file.is_file():
+                shutil.copy2(zattrs_file, out_location.parent / '.zattrs')
+
+        out_ome_zarr.mode = 'a'  # set to append mode to write data
+        stack = input_omezarr.to_dask()
         stack = stack[start_index:stop_index]
 
     assert 'stack' in locals(), 'Image file has not been loaded, perhaps it is an unsupported format'
@@ -619,9 +638,14 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
         if VERBOSE: print(f'Writing Chunk {idx+1} of {num_decon_chunks}')
 
-        with tifffile.TiffWriter(out_location, bigtiff=True, append=not first_chunk) as tif:
-            for img in to_decon:
-                tif.write(img[np.newaxis, ...], contiguous=False)
+        if str(file_location).endswith('.btf'):
+            with tifffile.TiffWriter(out_location, bigtiff=True, append=not first_chunk) as tif:
+                for img in to_decon:
+                    tif.write(img[np.newaxis, ...], contiguous=False)
+
+        elif str(file_location).endswith('.ome.zarr'):
+            out_ome_zarr[z_start:z_end] = to_decon
+
         first_chunk = False
         
         torch.cuda.empty_cache()
@@ -634,7 +658,20 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
     if VERBOSE: print('Deconvolution complete')
 
-    if out_location.is_file():
+    if str(file_location).endswith('.ome.zarr'):
+        if VERBOSE: print(f'Generating .ome.zarr multiscales: {out_location.name}')
+        out_ome_zarr.create_multiscales(async_close=False) # Blocking until all multiscales are created.
+
+        # Replicate bigstitcher xml with updated zarr group name
+        if VERBOSE: print(f'Generating BigStitcher XML for .ome.zarr: {final_out_location.name}')
+        replace_xml_zarr_relative_group_name(
+            str(Path(file_location).parent) +'.xml',        # xml name
+            Path(file_location).parent.name,                # original zarr group name
+            Path(out_location).parent.name,                 # new zarr group name
+            str(Path(final_out_location).parent) + '.xml'   # new xml location
+        )
+
+    if out_location.exists():
         if VERBOSE: print(f'Renaming File: {out_location.name} to {final_out_location.name}')
         out_location.rename(final_out_location)
 
