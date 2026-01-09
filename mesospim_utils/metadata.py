@@ -195,6 +195,32 @@ def annotate_metadata(metadata_by_channel, location=None):
     return metadata_by_channel
 
 
+# def get_stage_direction(channel_data, grid_size):
+#     # Outputs tuple (y,x) where y and x are 1 or -1,
+#     # 1 is that the stage positions are advancing in the positive direction
+#     # -1 is that the stage positions are advancing in the negative direction
+#
+#     y, x = 1, 1
+#     if grid_size[0] > 1:
+#         t0 = channel_data[0]["POSITION"]["y_pos"]
+#         t1 = channel_data[1]["POSITION"]["y_pos"]
+#         if t1 < t0:
+#             y = -1
+#     if grid_size[1] > 1:
+#         t0 = channel_data[0]["POSITION"]["x_pos"]
+#         t1 = channel_data[grid_size[1]]["POSITION"]["x_pos"]
+#         if t1 < t0:
+#             x = -1
+#     StageDirection = namedtuple('StageDirection', ['y', 'x'])
+#     return StageDirection(y=y, x=x)
+#
+#
+# def get_anchor_tile_entry(metadata_by_channel):
+#     for _, data in metadata_by_channel.items():
+#         for entry in data:
+#             if entry.get('anchor_tile'):
+#                 return entry
+
 def get_stage_direction(channel_data, grid_size):
     # Outputs tuple (y,x) where y and x are 1 or -1,
     # 1 is that the stage positions are advancing in the positive direction
@@ -203,12 +229,12 @@ def get_stage_direction(channel_data, grid_size):
     y, x = 1, 1
     if grid_size[0] > 1:
         t0 = channel_data[0]["POSITION"]["y_pos"]
-        t1 = channel_data[1]["POSITION"]["y_pos"]
+        t1 = channel_data[-1]["POSITION"]["y_pos"]
         if t1 < t0:
             y = -1
     if grid_size[1] > 1:
         t0 = channel_data[0]["POSITION"]["x_pos"]
-        t1 = channel_data[grid_size[1]]["POSITION"]["x_pos"]
+        t1 = channel_data[-1]["POSITION"]["x_pos"]
         if t1 < t0:
             x = -1
     StageDirection = namedtuple('StageDirection', ['y', 'x'])

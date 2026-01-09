@@ -552,7 +552,17 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
 
     # Pad array based on psf size
     ARRAY_PADDING = [[int((x * 2) + 1) for z in [1, 1]] for x in psf.shape]
-    stack = np.pad(stack, [[0,0], *ARRAY_PADDING[1:]], mode='reflect')
+    # print("PRE PADDING:")
+    # print("shape:", stack.shape)
+    # print("chunks:", stack.chunks)
+    # print("nblocks:", np.prod([len(c) for c in stack.chunks]))
+    # print("graph tasks:", len(stack.__dask_graph__()))
+    stack = da.pad(stack, [[0,0], *ARRAY_PADDING[1:]], mode='reflect')
+    # print("POST PADDING:")
+    # print("shape:", stack.shape)
+    # print("chunks:", stack.chunks)
+    # print("nblocks:", np.prod([len(c) for c in stack.chunks]))
+    # print("graph tasks:", len(stack.__dask_graph__()))
     if VERBOSE > 1: print(f'PADDED_SHAPE: {stack.shape}')
 
     ## Attempt to determine the number of frames that will max out vRAM for most efficient processing.
@@ -711,10 +721,11 @@ def get_chunk_with_padding(darr, z_start, z_end, pad: tuple, axis=0):
     pad_after = min(Z, z_end + pad[1])
 
     # Extract the padded chunk
-    chunk = darr[pad_before:pad_after]
-    chunk = np.zeros(chunk.shape,chunk.dtype)
-    for img_idx, img in enumerate(darr[pad_before:pad_after]):
-        chunk[img_idx] = img.compute()
+    # chunk = darr[pad_before:pad_after]
+    # chunk = np.zeros(chunk.shape,chunk.dtype)
+    # for img_idx, img in enumerate(darr[pad_before:pad_after]):
+    #     chunk[img_idx] = img.compute()
+    chunk = darr[pad_before:pad_after].compute() # Monitor the for btf files, it may cause incorrect reading.
 
     # chunk = darr[pad_before:pad_after].compute()
 
