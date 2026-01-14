@@ -3,6 +3,8 @@ from pathlib import Path
 import subprocess
 import shutil
 
+from numpy.f2py.auxfuncs import throw_error
+
 from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY
 from metadata import collect_all_metadata, get_first_entry
 from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap
@@ -19,7 +21,16 @@ mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_IN
 app = typer.Typer()
 
 @app.command()
-def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iterations: int=20, frames_per_chunk: int=None, file_type: str = '.btf', decon: bool=True, num_parallel: int=None):
+def automated_method_slurm(dir_loc: Path,
+                           # Input options: None, .ome.zarr, .btf. If None, will auto-detect based on contents of dir_loc
+                           file_type: str=None,
+
+                           # Final output options: omezarr, hdf5
+                           final_file_type: str='omezarr',
+
+                           # Deconvolution Options: if decon==True, refractive_index is found in metadata or must be provided. No RI means no decon
+                           decon: bool=True, refractive_index: float=None, iterations: int=20, frames_per_chunk: int=None, num_parallel: int=None
+                           ):
     '''
     Automate the processing of all data in a mesospim directory using slurm
     Stitching must be completed on windows which requires the separate stitch:run_windows_auto_stitch_client to be running
@@ -46,7 +57,13 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
     omezarr_xml = does_dir_contain_bigstitcher_metadata(dir_loc)  # returns path to omezarr xml if found, else None
     omezarr_path = get_ome_zarr_directory_from_xml(omezarr_xml) # returns path to omezarr_data relative to xml, else None
     dir_loc = omezarr_path if omezarr_path else dir_loc # switch to omezarr path if found
-    file_type = '.ome.zarr' if omezarr_path else file_type
+
+    if omezarr_path:
+        file_type = '.ome.zarr'
+    elif file_type is None and len(dir_loc.glob('*.btf')) > 0:
+        file_type = '.btf'
+    else:
+        raise FileNotFoundError(f"Supported file types [.ome.zarr, .btf] were not found: '{dir_loc}'")
 
     job_number = None
     out_dir = dir_loc
@@ -78,6 +95,7 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
         cmd = ''
         cmd += f'{mesospim_root_application}/automated.py big-stitcher-align'
         cmd += f' {Path(out_dir).parent}'
+        cmd += f' --format {final_file_type}'
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username)
         print(f'Dependency process number: {job_number}')
@@ -85,11 +103,11 @@ def automated_method_slurm(dir_loc: Path, refractive_index: float=None, iteratio
 
 
 @app.command()
-def big_stitcher_align(dir_loc: Path):
+def big_stitcher_align(dir_loc: Path, format: str='omezarr'):
     print('Setting up script to run omezarr alignment')
     from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
     from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
-    from string_templates import BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE
+    from string_templates import BIGSTITCHER_ALIGN_TEMPLATE
 
     print(f'Extracting metadata from {dir_loc}')
     metadata_by_channel = collect_all_metadata(dir_loc)
@@ -97,8 +115,8 @@ def big_stitcher_align(dir_loc: Path):
 
     username = first_metadata_entry.get('username', "")
 
-    bigstitcher_dir, fused_out_dir, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc)
-    cmd = BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE.format(macro_file)
+    bigstitcher_dir, fused_out_dir, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=format)
+    cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
 
     job_number = None
     job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, bigstitcher_dir,

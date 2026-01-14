@@ -113,7 +113,7 @@ if ram_bs:
 # ram_bs_formatting = f' -Xmx{ram_bs}g --' if ram_bs is not None else ''
 ram_bs_formatting = f' --mem {ram_bs}G --' if ram_bs is not None else ''
 
-BIGSTITCHER_ALIGN_OMEZARR_TEMPLATE = f'{FIJI_EXECUTABLE}{ram_bs_formatting} --headless -batch "{'{}'}"'
+BIGSTITCHER_ALIGN_TEMPLATE = f'{FIJI_EXECUTABLE}{ram_bs_formatting} --headless -batch "{'{}'}"'
 
 
 

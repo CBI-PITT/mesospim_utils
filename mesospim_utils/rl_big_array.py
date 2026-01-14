@@ -109,8 +109,13 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         commands += ims_auto_queue
 
     commands += '\n)\n\n'
-    commands += 'echo "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"\n'
-    commands += 'eval "${commands[$SLURM_ARRAY_TASK_ID]}"'
+    commands += 'cmd="${commands[$SLURM_ARRAY_TASK_ID]}"\n'
+    commands += r'cmd="${cmd//(/\\(}"' + "\n"
+    commands += r'cmd="${cmd//)/\\)}"' + "\n"
+    commands += 'echo "Running command: $cmd"\n'
+    commands += 'bash -lc "$cmd"'
+
+
 
     file_to_run = out_dir / 'slurm_array.sh'
     with open(file_to_run, 'w') as f:

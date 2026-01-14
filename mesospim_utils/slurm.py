@@ -127,8 +127,11 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
             commands += '"'
 
         commands += '\n)\n\n'
-        commands += 'echo "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"\n'
-        commands += 'eval "${commands[$SLURM_ARRAY_TASK_ID]}"'
+        commands += 'cmd="${commands[$SLURM_ARRAY_TASK_ID]}"\n'
+        commands += r'cmd="${cmd//(/\\(}"' + "\n"
+        commands += r'cmd="${cmd//)/\\)}"' + "\n"
+        commands += 'echo "Running command: $cmd"\n'
+        commands += 'bash -lc "$cmd"'
 
         file_to_run = out_dir / 'slurm_array.sh'
         with open(file_to_run, 'w') as f:
@@ -292,9 +295,13 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
         commands += '"'
         # commands = commands.replace('"', '\\"')
         # commands = f'{commands}\n\t{ii}'
-    commands = f'{commands}\n)'
+    commands = f'{commands}\n\n)'
     # commands += '\n\necho "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"'
-    commands += '\neval "${commands[$SLURM_ARRAY_TASK_ID]}"'
+    commands += 'cmd="${commands[$SLURM_ARRAY_TASK_ID]}"\n'
+    commands += r'cmd="${cmd//(/\\(}"' + "\n"
+    commands += r'cmd="${cmd//)/\\)}"' + "\n"
+    commands += 'echo "Running command: $cmd"\n'
+    commands += 'bash -lc "$cmd"'
 
     location_for_sbatch_script = ensure_path(location_for_sbatch_script)
     name_of_sbatch_script = location_for_sbatch_script / 'ims_conv_sbatch.sh'
