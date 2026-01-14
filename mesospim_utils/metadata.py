@@ -195,32 +195,6 @@ def annotate_metadata(metadata_by_channel, location=None):
     return metadata_by_channel
 
 
-# def get_stage_direction(channel_data, grid_size):
-#     # Outputs tuple (y,x) where y and x are 1 or -1,
-#     # 1 is that the stage positions are advancing in the positive direction
-#     # -1 is that the stage positions are advancing in the negative direction
-#
-#     y, x = 1, 1
-#     if grid_size[0] > 1:
-#         t0 = channel_data[0]["POSITION"]["y_pos"]
-#         t1 = channel_data[1]["POSITION"]["y_pos"]
-#         if t1 < t0:
-#             y = -1
-#     if grid_size[1] > 1:
-#         t0 = channel_data[0]["POSITION"]["x_pos"]
-#         t1 = channel_data[grid_size[1]]["POSITION"]["x_pos"]
-#         if t1 < t0:
-#             x = -1
-#     StageDirection = namedtuple('StageDirection', ['y', 'x'])
-#     return StageDirection(y=y, x=x)
-#
-#
-# def get_anchor_tile_entry(metadata_by_channel):
-#     for _, data in metadata_by_channel.items():
-#         for entry in data:
-#             if entry.get('anchor_tile'):
-#                 return entry
-
 def get_stage_direction(channel_data, grid_size):
     # Outputs tuple (y,x) where y and x are 1 or -1,
     # 1 is that the stage positions are advancing in the positive direction
@@ -321,14 +295,19 @@ def determine_refractive_index_from_ETL_file_name(metadata_entry):
     etl_file_name = metadata_entry["ETL PARAMETERS"]["ETL CFG File"]
     etl_file_name = str(etl_file_name.name)
     etl_file_name = etl_file_name.lower()
-    split_ri = etl_file_name.split('_ri_')[-1]
-    split_ri = split_ri.split('_')[0]
-    try:
-        ri = float(split_ri)
-        return ri
-    except Exception:
+
+    match = re.search(
+        r'ri[^0-9+-]*([+-]?\d+(?:\.\d+)?)',
+        etl_file_name,
+        re.IGNORECASE
+    )
+
+    output = float(match.group(1)) if match else None
+    if output is None:
         if VERBOSE: print('No RI found in the ETL cfg file')
         return None
+    else:
+        return output
 
 
 def determine_tile_size_um(metadata_entry):
