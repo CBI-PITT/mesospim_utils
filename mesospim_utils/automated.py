@@ -1,5 +1,6 @@
 import typer
 from pathlib import Path
+from typing import Annotated
 import subprocess
 import shutil
 
@@ -23,13 +24,17 @@ app = typer.Typer()
 @app.command()
 def automated_method_slurm(dir_loc: Path,
                            # Input options: None, .ome.zarr, .btf. If None, will auto-detect based on contents of dir_loc
-                           file_type: str=None,
+                           file_type: Annotated[str,typer.Option(help="Input file type: .ome.zarr, .btf. Default is automatically detected")]=None,
 
                            # Final output options: omezarr, hdf5
-                           final_file_type: str='omezarr',
+                           final_file_type: Annotated[str,typer.Option(help="Bigstitcher compatible output file format: omezarr, hdf5")]='omezarr',
 
                            # Deconvolution Options: if decon==True, refractive_index is found in metadata or must be provided. No RI means no decon
-                           decon: bool=True, refractive_index: float=None, iterations: int=20, frames_per_chunk: int=None, num_parallel: int=None
+                           decon: Annotated[bool,typer.Option(help="Deconvolution will proceed if refractive index is discovered in the metadata or provided manually")]=True,
+                           refractive_index: Annotated[float,typer.Option(help="Is discovered automatically in the metadata but can be provided manually")]=None,
+                           iterations: Annotated[int,typer.Option(help="Deconvolution iterations")]=20,
+                           frames_per_chunk: Annotated[int,typer.Option(help="How many z-planes are deconvolved at once. Best to let this be automatically determined")]=None,
+                           num_parallel: Annotated[int,typer.Option(help="How many MesoSPIM tiles will be deconvolved in parallel on SLURM")]=None
                            ):
     '''
     Automate the processing of all data in a mesospim directory using slurm
@@ -39,9 +44,9 @@ def automated_method_slurm(dir_loc: Path,
     downstream processes.
 
     Default:
-    decon
-    ims_conversion
-    stitching
+    deconvolution if RI information is found in metadata
+    stitching via bigstitcher alignment of omezarr
+    fusion of data into a single omezarr file
     '''
 
     dir_loc = ensure_path(dir_loc)
