@@ -561,15 +561,15 @@ def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr'):
 
     # Writes macro file
     if format == 'omezarr':
-        fused_out_dir = str(omezarr_xml).removesuffix('.ome.zarr.xml')
-        fused_out_dir = fused_out_dir + '_montage.ome.zarr'
-        _ = get_bigstitcher_omezarr_alignment_marco(omezarr_xml, fused_out_dir, macro_file)
+        fused_out_dir_or_file = str(omezarr_xml).removesuffix('.ome.zarr.xml')
+        fused_out_dir_or_file = fused_out_dir_or_file + '_montage.ome.zarr'
+        _ = get_bigstitcher_omezarr_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
     elif format == 'hdf5':
-        fused_out_dir = str(omezarr_xml).removesuffix('.ome.zarr.xml')
-        fused_out_dir = fused_out_dir + '_montage.h5'
-        _ = get_bigstitcher_hdf5_alignment_marco(omezarr_xml, fused_out_dir, macro_file)
+        fused_out_dir_or_file = str(omezarr_xml).removesuffix('.ome.zarr.xml')
+        fused_out_dir_or_file = fused_out_dir_or_file + '_montage.h5'
+        _ = get_bigstitcher_hdf5_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
 
-    return bigstitcher_dir, fused_out_dir, macro_file
+    return bigstitcher_dir, fused_out_dir_or_file, macro_file
 
 def list_mesospim_ome_zarr_tile_dirs(path_to_mesospim_omezarr:Path):
     '''

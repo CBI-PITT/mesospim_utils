@@ -49,7 +49,7 @@ app = typer.Typer()
 
 
 @app.command()
-def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1),
+def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1), out_dir: Path=None,
                             after_slurm_jobs: list[str]=None, run_conversion=True):
     '''
     Convert a single imaris file using a subprocess OR 
@@ -72,16 +72,14 @@ def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1),
     file = [Path(x) for x in file if not isinstance(x,Path)]
 
     ext = file[0].suffix
-    inputformat = None
+    inputformat = None # For .h5 files this stays None
     if ext == '.tif' or ext == '.tiff' or ext == '.btf':
         inputformat = 'TiffSeries'
 
-    out_dir = file[0].parent / 'ims_files'
+    if not out_dir:
+        out_dir = file[0].parent / 'ims_files'
     out_file = out_dir / (file[0].stem + '.ims')
     out_file.parent.mkdir(parents=True, exist_ok=True)
-
-    layout_path = out_file.parent / 'ims_convert_layouts' / (out_file.stem + '_layout.txt')
-    layout_path.parent.mkdir(parents=True, exist_ok=True)
 
     log_location = out_file.parent / 'ims_convert_logs' / (out_file.stem + '.txt')
     log_location.parent.mkdir(parents=True, exist_ok=True)
@@ -89,16 +87,21 @@ def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1),
     if out_file.exists():
         return None, log_location, out_dir
 
-    line = f'<FileSeriesLayout>'
-    for c, f in enumerate(file):
-        line += f'\n<ImageIndex name="{path_to_wine_mappings(f)}" x="0" y="0" z="0" c="{c}" t="0"/>'
-    line += '</FileSeriesLayout>'
+    if inputformat == 'TiffSeries':
 
-    with layout_path.open("w") as f:
-        f.write(line)
+        layout_path = out_file.parent / 'ims_convert_layouts' / (out_file.stem + '_layout.txt')
+        layout_path.parent.mkdir(parents=True, exist_ok=True)
+
+        line = f'<FileSeriesLayout>'
+        for c, f in enumerate(file):
+            line += f'\n<ImageIndex name="{path_to_wine_mappings(f)}" x="0" y="0" z="0" c="{c}" t="0"/>'
+        line += '</FileSeriesLayout>'
+
+        with layout_path.open("w") as f:
+            f.write(line)
 
     # Main ims converter command
-    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file[0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" -il "{path_to_wine_mappings(layout_path)}" --logprogress --nthreads {SLURM_CPUS} --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
+    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file[0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" {f' -il "{path_to_wine_mappings(layout_path)}"' if inputformat else ""} --logprogress --nthreads {SLURM_CPUS} --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
 
     # BASH script if/then statements to rename the .ims.part file to .ims
     lines = lines + f'\n\nif [ -f "{out_file}.part" ]; then\n  mv "{out_file}.part" "{out_file}"\n  echo "File renamed to {out_file}"\nelse\n  echo "File {out_file} does not exist."\nfi'

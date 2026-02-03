@@ -7,9 +7,10 @@ import shutil
 from numpy.f2py.auxfuncs import throw_error
 
 from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY
-from metadata import collect_all_metadata, get_first_entry
+from metadata import collect_all_metadata, get_first_entry, determine_xyz_resolution
 from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap
 from utils import ensure_path
+from imaris import convert_ims
 from bigstitcher import (does_dir_contain_bigstitcher_metadata,
                          get_ome_zarr_directory_from_xml,
                          get_bigstitcher_omezarr_alignment_marco,
@@ -27,7 +28,7 @@ def automated_method_slurm(dir_loc: Path,
                            file_type: Annotated[str,typer.Option(help="Input file type: .ome.zarr, .btf. Default is automatically detected")]=None,
 
                            # Final output options: omezarr, hdf5
-                           final_file_type: Annotated[str,typer.Option(help="Bigstitcher compatible output file format: omezarr, hdf5")]='omezarr',
+                           final_file_type: Annotated[str,typer.Option(help="Bigstitcher compatible output file format: omezarr, hdf5, ims")]='omezarr',
 
                            # Deconvolution Options: if decon==True, refractive_index is found in metadata or must be provided. No RI means no decon
                            decon: Annotated[bool,typer.Option(help="Deconvolution will proceed if refractive index is discovered in the metadata or provided manually")]=True,
@@ -95,20 +96,28 @@ def automated_method_slurm(dir_loc: Path,
 
     elif omezarr_path:
         # Dependency process that kicks off Bigstitcher alignment following DECON
+        # This process also creates a fused final montage image.
+        # final_file_type can be omezarr or hdf5 or ims
+        # if ims, a hdf5 file is built and then a ims conversion is initiated from the hdf5 file.
         print('Setting up script to manage Bigstitcher conversions after DECON')
         from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
+
+        if final_file_type.lower() == 'ims':
+            fused_file_type = 'hdf5'
+        else:
+            fused_file_type = final_file_type
+
         cmd = ''
         cmd += f'{mesospim_root_application}/automated.py big-stitcher-align'
         cmd += f' {Path(out_dir).parent}'
-        cmd += f' --format {final_file_type}'
+        cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username)
         print(f'Dependency process number: {job_number}')
 
 
-
 @app.command()
-def big_stitcher_align(dir_loc: Path, format: str='omezarr'):
+def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file_type: str='omezarr'):
     print('Setting up script to run omezarr alignment')
     from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
     from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
@@ -120,7 +129,7 @@ def big_stitcher_align(dir_loc: Path, format: str='omezarr'):
 
     username = first_metadata_entry.get('username', "")
 
-    bigstitcher_dir, fused_out_dir, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=format)
+    bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type)
     cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
 
     job_number = None
@@ -128,11 +137,24 @@ def big_stitcher_align(dir_loc: Path, format: str='omezarr'):
                             after_slurm_jobs=[job_number] if job_number else None, username=username)
     print(f'BigStitcher process number: {job_number}')
 
-    cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
-    cmd += f' "{dir_loc}" "{fused_out_dir}"'
-    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, bigstitcher_dir,
-                            after_slurm_jobs=[job_number] if job_number else None, username=username)
-    print(f'BigStitcher Fix OME-Zarr Metadata Scale: {job_number}')
+    if final_file_type.lower() == 'omezarr':
+        cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
+        cmd += f' "{dir_loc}" "{fused_out_dir_or_file}"'
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, bigstitcher_dir,
+                                after_slurm_jobs=[job_number] if job_number else None, username=username)
+        print(f'BigStitcher Fix OME-Zarr Metadata Scale: {job_number}')
+
+    elif fused_file_type.lower() == 'hdf5' and final_file_type.lower() == 'ims':
+        from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
+        metadata = collect_all_metadata(dir_loc)
+        first_entry = get_first_entry(metadata)
+        res = determine_xyz_resolution(first_entry) #zyx
+
+        current_script, log_location, out_dir = convert_ims(fused_out_dir_or_file, res=res, run_conversion=False)
+        job_number = wrap_slurm(current_script,
+                                SLURM_PARAMETERS_IMARIS_CONVERTER, log_location,
+                                after_slurm_jobs=[job_number] if job_number else None, username=username)
+        print(f'BigStitcher HDF5 Convert to IMS: {job_number}')
 
 
 
