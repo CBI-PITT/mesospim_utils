@@ -15,15 +15,12 @@ pip install -e /location/of/library
 
 import typer
 from pathlib import Path
-import subprocess
-from typing import Union
 
 import numpy as np
 import tifffile
 import skimage
 import shutil
 from skimage import img_as_float32, img_as_uint
-import zarr
 
 from psf import get_psf
 from metadata import collect_all_metadata, get_ch_entry_for_file_name, get_entry_for_file_name
@@ -62,7 +59,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         num_files += 1
 
     SBATCH_ARG = '#SBATCH {}\n'
-    to_run = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon", f'-o {log_dir} / %A_%a.log', f'--array=0-{num_files-1}']
+
     commands = "#!/bin/bash\n"
     commands += SBATCH_ARG.format('-p gpu')
     commands += SBATCH_ARG.format('--gres=gpu:1')
@@ -101,7 +98,6 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
             pass
 
         ims_auto_queue = f'\n\t"sbatch -p compute -n 1 --mem 5G -o {log_dir}/%A.log --dependency=afterok:$SLURM_JOB_ID -J ims_queue --kill-on-invalid-dep=yes --wrap=\''
-        # ims_auto_queue += f'{ENV_PYTHON_LOC} -u {ims_conv_module_name} convert-ims-dir-mesospim-tiles '
         ims_auto_queue += f'{ENV_PYTHON_LOC} -u {ims_conv_module_name} convert-ims-dir-mesospim-tiles-slurm-array '
         ims_auto_queue += f'{out_dir} '
         ims_auto_queue += f'--file-type {out_file_type} '
@@ -254,86 +250,6 @@ def richardson_lucy_3d(input_data, psf, iterations=50, sigma=None):
 ## IMAGE PROCESSING FUNCTIONS ##
 ###################################################################################################################
 
-def read_mesospim_btf(file_location: Union[str, Path], frame_start: int = None, frame_stop: int = None):
-
-    #if frame_start or frame_stop:
-    with tifffile.TiffFile(file_location) as tif:
-        if VERBOSE > 1 : print(f'File contains {len(tif.series)} frames')
-        stack = np.stack(tuple((x.asarray()[0] for x in tif.series[frame_start:frame_stop])))
-        return stack
-
-    # from io import BytesIO
-    # with open(file_location, 'rb') as f:
-    #     file_data = BytesIO(f.read())
-    # with tifffile.TiffFile(file_data) as tif:
-    #     print(f'File contains {len(tif.series)} frames')
-    #     stack = np.stack(tuple((x.asarray()[0] for x in tif.series[frame_start:frame_stop])))
-    #     return stack
-
-    # with open(file_location, 'rb') as f:
-    #    from io import BytesIO
-    #    image_file = BytesIO(f.read())
-    # with tifffile.TiffFile(image_file) as tif:
-    #    print(f'File contains {len(tif.series)} frames')
-    #    stack = np.stack(tuple((x.asarray()[0] for x in tif.series[frame_start:frame_stop])))
-    #    return stack
-
-
-from dask import delayed
-import dask.array as da
-class mesospim_btf_helper:
-
-    def __init__(self,path: Union[str, Path]):
-        self.path = path if isinstance(path,Path) else Path(path)
-        self.tif = tifffile.TiffFile(self.path, mode='r')
-        self.sample_data = self.tif.series[0].asarray()
-        self.zdim = len(self.tif.series)
-
-        self.build_lazy_array()
-
-    def __getitem__(self, item):
-        return self.lazy_array[item].compute()
-
-    def build_lazy_array(self):
-        if VERBOSE: print('Building Array')
-        delayed_image_reads = [delayed(self.get_z_plane)(x) for x in range(self.zdim)]
-        delayed_arrays = [da.from_delayed(x, shape=self.sample_data.shape, dtype=self.sample_data.dtype)[0] for x in delayed_image_reads]
-        self.lazy_array = da.stack(delayed_arrays)
-        if VERBOSE > 1: print(self.lazy_array)
-
-    def get_z_plane(self,z_plane: int):
-        return self.tif.series[z_plane].asarray()
-
-    @property
-    def shape(self):
-        return self.lazy_array.shape
-
-    @property
-    def chunksize(self):
-        return self.lazy_array.chunksize
-
-    @property
-    def nbytes(self):
-        return self.lazy_array.nbytes
-
-    @property
-    def dtype(self):
-        return self.lazy_array.dtype
-
-    @property
-    def chunks(self):
-        return self.lazy_array.chunks
-
-    @property
-    def ndim(self):
-        return self.lazy_array.ndim
-
-    def __del__(self):
-        del self.lazy_array
-        self.tif.close()
-        del self.tif
-
-
 def mesospim_meta_data(metadata_dir: Path):
     return collect_all_metadata(metadata_dir)
 
@@ -390,15 +306,6 @@ def time_report(start_time=None, units='minutes', to_print=True):
 def save_image(file_name, array):
     if VERBOSE: print(f'Saving: {file_name}')
     skimage.io.imsave(file_name,array, plugin="tifffile", bigtiff=True)
-
-    # import tifffile
-    # tifffile.imwrite(
-    #     'out_location',
-    #     canvas,
-    #     bigtiff=True,
-    #     photometric='minisblack',
-    #     metadata={'axes': 'ZYX'},
-    # )
 
 def trim_psf(psf):
     from constants import PSF_THRESHOLD as threshold
@@ -493,6 +400,7 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
     assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
 
     if str(file_location).endswith('.btf'):
+        from mesospim_utils.mesospim_btf import mesospim_btf_helper
         if VERBOSE: print('Opening File as mesospim_btf_helper')
         stack = mesospim_btf_helper(file_location)
         stack = stack.lazy_array
@@ -504,7 +412,6 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         input_omezarr = OmeZarrArray(file_location)
         out_ome_zarr = input_omezarr.omezarr_like(out_location) # create output zarr structure like input to write all deconned data
         if str(file_location.parent).endswith('.ome.zarr'):
-            print('ISSSSSSSSSSS ZARRRRRRRRRRRRRR')
             zgroup_file = file_location.parent / '.zgroup'
             zattrs_file = file_location.parent / '.zattrs'
             print(f'{zgroup_file=}, {zattrs_file=}')
