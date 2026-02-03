@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-ensure_fiji.py (Linux-only)
+fiji.py (Linux-only)
 
-Run this at package startup. It ensures:
+Run before requiring bigstitcher this module ensures:
   - Fiji is present
   - BigStitcher update site is enabled
   - Updater has applied changes
+  - Marks installation as ready
+
+Installation of fiji and bigstitcher is managed automatically unless specified on the config file.
 """
 
 from __future__ import annotations
@@ -20,15 +23,27 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
+from constants import FIJI_INSTALL_LOCATION
+
 BIGSTITCHER_SITE_NAME = "BigStitcher"
 BIGSTITCHER_SITE_URL = "https://sites.imagej.net/BigStitcher/"
 
 # Stable Build: 20250808-2217
-DEFAULT_FIJI_ZIP_URL = "https://downloads.imagej.net/fiji/archive/stable/20250808-2217/fiji-stable-linux64-jdk.zip"
+DEFAULT_FIJI_ZIP_URL = (
+    "https://downloads.imagej.net/fiji/archive/stable/20250808-2217/"
+    "fiji-stable-linux64-jdk.zip"
+)
 
 
 def _run(cmd: list[str], cwd: Path) -> None:
-    subprocess.run(cmd, cwd=str(cwd), check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -57,10 +72,7 @@ def _release_lock(fd: int, lockfile: Path) -> None:
     try:
         os.close(fd)
     finally:
-        try:
-            lockfile.unlink(missing_ok=True)
-        except Exception:
-            pass
+        lockfile.unlink(missing_ok=True)
 
 
 def _download(url: str, dest: Path) -> None:
@@ -105,21 +117,29 @@ def fiji_exe(root: Path) -> Path:
 
 
 def is_fiji_ready(root: Path) -> bool:
-    exe = fiji_exe(root)
-    stamp = root / ".fiji_bigstitcher_ready"
-    return exe.exists() and stamp.exists()
+    return fiji_exe(root).exists() and (root / ".fiji_bigstitcher_ready").exists()
 
 
 def ensure_fiji_and_bigstitcher(force: bool = False) -> Path:
     root = resolve_install_root()
+
+    print(f'Root: {root}')
+    if root != FIJI_INSTALL_LOCATION.parent:
+        print(f"[fiji] Warning: Using custom fiji install from the config file")
+        print(f"[fiji] Warning: The user is responsible for ensuring fiji and bigstitcher are install at: {FIJI_INSTALL_LOCATION}")
+        return FIJI_INSTALL_LOCATION
+
+    if not force and is_fiji_ready(root):
+        print(f"[fiji] Fiji + BigStitcher already installed at: {root}")
+        return root
+
+    print(f"[fiji] Fiji installation required at: {root}")
+
     lock = root / ".install.lock"
     fd = _acquire_lock(lock)
     try:
-        if not force and is_fiji_ready(root):
-            return root
-
-        # Clean partial installs if forcing or broken
-        if force and root.exists():
+        if force:
+            print("[fiji] Force install requested – removing existing installation")
             for name in ("Fiji.app", ".fiji_bigstitcher_ready"):
                 p = root / name
                 if p.is_dir():
@@ -128,20 +148,22 @@ def ensure_fiji_and_bigstitcher(force: bool = False) -> Path:
                     p.unlink(missing_ok=True)
 
         url = os.environ.get("FIJI_ZIP_URL", DEFAULT_FIJI_ZIP_URL)
+        print(f"[fiji] Downloading Fiji from:\n        {url}")
 
         with tempfile.TemporaryDirectory(prefix="fiji_install_") as td:
             td = Path(td)
             zip_path = td / "fiji.zip"
             _download(url, zip_path)
+            print("[fiji] Download complete")
 
+            print("[fiji] Extracting Fiji archive")
             stage = td / "stage"
             _extract_zip(zip_path, stage)
 
-            # Handle either direct Fiji.app or a top-level directory containing it
             candidates = [stage / "Fiji.app", *stage.rglob("Fiji.app")]
             app = next((c for c in candidates if c.exists() and c.is_dir()), None)
             if app is None:
-                raise RuntimeError("Downloaded ZIP did not contain Fiji.app; check FIJI_ZIP_URL")
+                raise RuntimeError("Downloaded ZIP did not contain Fiji.app")
 
             root.mkdir(parents=True, exist_ok=True)
             target = root / "Fiji.app"
@@ -151,21 +173,21 @@ def ensure_fiji_and_bigstitcher(force: bool = False) -> Path:
 
         exe = fiji_exe(root)
         if not exe.exists():
-            raise RuntimeError(f"Fiji installed but executable not found: {exe}")
+            raise RuntimeError(f"Fiji executable not found: {exe}")
 
-        # Ensure executable bit (zip extraction may drop it)
-        try:
-            mode = exe.stat().st_mode
-            exe.chmod(mode | 0o111)
-        except Exception as e:
-            raise RuntimeError(f"Failed to set executable bit on {exe}: {e}")
+        print("[fiji] Fixing executable permissions")
+        exe.chmod(exe.stat().st_mode | 0o111)
 
+        print("[fiji] Enabling BigStitcher update site")
+        _run(
+            [str(exe), "--update", "add-update-site",
+             BIGSTITCHER_SITE_NAME, BIGSTITCHER_SITE_URL],
+            root,
+        )
 
-        # Enable BigStitcher update site + update
-        _run([str(exe), "--update", "add-update-site", BIGSTITCHER_SITE_NAME, BIGSTITCHER_SITE_URL], root)  # :contentReference[oaicite:5]{index=5}
-        _run([str(exe), "--update", "update"], root)  # :contentReference[oaicite:6]{index=6}
+        print("[fiji] Updating Fiji (installing BigStitcher and dependencies)")
+        _run([str(exe), "--update", "update"], root)
 
-        # Stamp with some useful provenance
         db = root / "Fiji.app" / "db.xml.gz"
         stamp = root / ".fiji_bigstitcher_ready"
         stamp.write_text(
@@ -175,16 +197,19 @@ def ensure_fiji_and_bigstitcher(force: bool = False) -> Path:
                     f"bigstitcher_site={BIGSTITCHER_SITE_URL}",
                     f"db_xml_gz_sha256={_sha256(db) if db.exists() else 'missing'}",
                 ]
-            )
-            + "\n",
+            ) + "\n",
             encoding="utf-8",
         )
 
+        print("[fiji] ✅ Fiji + BigStitcher installation complete")
+        print(f"[fiji] Installed at: {root}")
+
         return root
+
     finally:
         _release_lock(fd, lock)
 
 
 if __name__ == "__main__":
     root = ensure_fiji_and_bigstitcher(force=("--force" in os.sys.argv))
-    print(str(root))
+    print(root)

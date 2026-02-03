@@ -19,6 +19,7 @@ general:
 
   emission_map:
     #Mapping common names to emission wavelengths, only used if wavelength is not explicitly stated in metadata file
+    "emp": 405
     "dapi": 450
     "hoechst": 450
     "gfp": 525
@@ -28,6 +29,7 @@ general:
     "red": 595
     "cy5": 665
     "far_red": 665
+    "cy7": 790
 
   emission_to_rgb:
     # Mapping emission range to RGB colors

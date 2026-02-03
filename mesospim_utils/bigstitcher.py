@@ -548,6 +548,11 @@ def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr'):
     makes a bigsitcher dir, backup of xml file,
     macrofile, and is the dir is used for SLURM logfiles
     '''
+
+    # Ensure Fiji with BigStitcher is available, install if not present
+    from fiji import ensure_fiji_and_bigstitcher
+    ensure_fiji_and_bigstitcher()
+
     omezarr_xml = does_dir_contain_bigstitcher_metadata(path)
     if not omezarr_xml:
         return None

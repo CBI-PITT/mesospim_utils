@@ -137,9 +137,8 @@ BIGSTITCHER = config.get('bigstitcher')
 
 FIJI_INSTALL_LOCATION = BIGSTITCHER.get('fiji_install_folder')
 if not FIJI_INSTALL_LOCATION:
-    FIJI_EXECUTABLE = Path(__file__).resolve().parent / 'fiji-linux' / "ImageJ-linux64"
-else:
-    FIJI_EXECUTABLE = Path(FIJI_INSTALL_LOCATION) / "ImageJ-linux64"
+    FIJI_INSTALL_LOCATION = Path(__file__).resolve().parent.parent / 'fiji-linux' / 'Fiji.app'
+FIJI_EXECUTABLE = FIJI_INSTALL_LOCATION / "ImageJ-linux64"
 
 DOWNSAMPLE_IN_X = BIGSTITCHER.get('downsample_in_x')
 DOWNSAMPLE_IN_Y = BIGSTITCHER.get('downsample_in_y')
