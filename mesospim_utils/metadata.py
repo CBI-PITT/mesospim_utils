@@ -593,6 +593,20 @@ def get_all_tile_entries(meta_dict, tile_num):
                 tile_entries.append(entry)
     return tile_entries
 
+def get_number_of_sheets(meta_dict):
+    sheets = set()
+    for ch in meta_dict:
+        for entry in meta_dict[ch]:
+            sheets.add(entry.get('sheet'))
+    return len(sheets)
+
+def get_rotations(meta_dict):
+    rotations = set()
+    for ch in meta_dict:
+        for entry in meta_dict[ch]:
+            rotation = entry.get("POSITION", {}).get("rot", 0)
+            rotations.add(rotation)
+    return rotations
 
 if __name__ == "__main__":
     import typer
