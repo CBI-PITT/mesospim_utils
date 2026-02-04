@@ -7,8 +7,14 @@ import shutil
 from numpy.f2py.auxfuncs import throw_error
 
 from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY
-from metadata import collect_all_metadata, get_first_entry, determine_xyz_resolution
-from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap
+from metadata import (
+    collect_all_metadata,
+    get_first_entry,
+    determine_xyz_resolution,
+    affine_microns_to_translation_zyx,
+    get_entry_for_file_name
+)
+from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap, submit_array
 from utils import ensure_path
 from imaris import convert_ims
 from bigstitcher import (does_dir_contain_bigstitcher_metadata,
@@ -82,7 +88,7 @@ def automated_method_slurm(dir_loc: Path,
         print((job_number, out_dir))
         file_type = out_file_type
 
-    if not omezarr_path:
+    if file_type == '.btf':
         # IMS Convert
         # Dependency process that kicks off IMS build following DECON
         print('Setting up script to manage IMS conversions after DECON')
@@ -94,7 +100,7 @@ def automated_method_slurm(dir_loc: Path,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username)
         print(f'Dependency process number: {job_number}')
 
-    elif omezarr_path:
+    elif file_type == '.ome.zarr':
         # Dependency process that kicks off Bigstitcher alignment following DECON
         # This process also creates a fused final montage image.
         # final_file_type can be omezarr or hdf5 or ims
@@ -114,6 +120,67 @@ def automated_method_slurm(dir_loc: Path,
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username)
         print(f'Dependency process number: {job_number}')
+
+
+@app.command()
+def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf', queue_alignment: bool=True, file_final_type: str='omezarr',
+                                after_slurm_jobs: list[int]=None):
+
+    from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
+    from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
+
+    btf_file_list = list(dir_loc.glob(f'*{file_type}'))
+
+    if len(btf_file_list) == 0:
+        raise FileNotFoundError(f'No BTF files found in {dir_loc} with file type {file_type}')
+
+    output_directory_for_omezarr_collection = dir_loc / 'ome_zarr'
+    output_directory_for_omezarr_collection.mkdir(parents=True, exist_ok=True)
+
+    print(f'Extracting metadata from {dir_loc}')
+    metadata_by_channel = collect_all_metadata(dir_loc)
+    first_metadata_entry = get_first_entry(metadata_by_channel)
+
+    username = first_metadata_entry.get('username', "")
+
+    voxel_size = first_metadata_entry.get('resolution')  # z,y,x
+
+    output_ome_zarr_list = [f'{output_directory_for_omezarr_collection / btf_file.name}.ome.zarr' for btf_file in btf_file_list]
+
+    cmd_list = []
+    for btf_file, output_dir in zip(btf_file_list, output_ome_zarr_list):
+        file_metadata = get_entry_for_file_name(metadata_by_channel, btf_file.name)  # extract metadata for this file
+
+        translation = affine_microns_to_translation_zyx(
+            file_metadata.get('affine_microns')  # z,y,x
+        )
+
+        cmd = f'{mesospim_root_application}/omezarr.py convert-mesospim-btf-to-omezarr'
+        cmd += f' "{btf_file}"'
+        cmd += f' "{output_dir}"'
+        cmd += f' --voxel-size {voxel_size.z} {voxel_size.y} {voxel_size.x}'
+        cmd += f' --translation {translation.z} {translation.y} {translation.x}'
+        cmd += f' --ome-version 0.4'
+        cmd += f' --generate-multiscales'
+
+        cmd_list.append(cmd)
+
+    job_number = submit_array(cmd_list,
+                     output_directory_for_omezarr_collection, SLURM_PARAMETERS_FOR_BIGSTITCHER,
+                     output_directory_for_omezarr_collection,
+                     after_slurm_jobs=None, username=username
+                              )
+
+    print(f'OME-Zarr Conversion Array Job Number: {job_number}')
+
+
+
+
+
+
+
+
+
 
 
 @app.command()

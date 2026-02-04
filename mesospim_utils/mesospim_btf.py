@@ -6,6 +6,7 @@ from typing import Union
 from pathlib import Path
 
 import tifffile
+import numpy as np
 from dask import delayed
 import dask.array as da
 
@@ -37,6 +38,10 @@ class mesospim_btf_helper:
 
     def get_z_plane(self,z_plane: int):
         return self.tif.series[z_plane].asarray()
+
+    def __iter__(self):
+        for z in range(self.zdim):
+            yield self.get_z_plane(z).squeeze()
 
     @property
     def shape(self):

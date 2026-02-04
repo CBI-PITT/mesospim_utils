@@ -608,6 +608,37 @@ def get_rotations(meta_dict):
             rotations.add(rotation)
     return rotations
 
+def modify_file_names_in_annotated_metadata(meta_dict, modify_function: callable=None):
+    '''
+    Given the meta_dict created by fn collect_all_metadata()
+    And a modify_function that takes a file_name string and returns a modified file_name string
+
+    Apply the modify_function to each 'file_name' entry in the meta_dict
+
+    ** Defaults to adding '.ome.zarr' to each file name if no modify_function is provided **
+    '''
+    if not modify_function:
+        "Add .ome.zarr to file names by default"
+        modify_function = lambda x: x + '.ome.zarr'
+    for ch in meta_dict:
+        for entry in meta_dict[ch]:
+            original_file_name = entry.get('file_name')
+            modified_file_name = modify_function(original_file_name)
+            entry['file_name'] = modified_file_name
+    return meta_dict
+
+def affine_microns_to_translation_zyx(affine_microns):
+    '''
+    Given an affine matrix in microns from meta_dict, return the translation vector in (z,y,x)
+    '''
+    tz = affine_microns[0][3]
+    ty = affine_microns[1][3]
+    tx = affine_microns[2][3]
+
+    Translation = namedtuple('Translation', ['z', 'y', 'x'])
+
+    return Translation(tz, ty, tx)
+
 if __name__ == "__main__":
     import typer
     app = typer.Typer()

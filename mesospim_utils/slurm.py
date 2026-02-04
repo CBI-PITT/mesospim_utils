@@ -295,21 +295,22 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
         commands += '"'
         # commands = commands.replace('"', '\\"')
         # commands = f'{commands}\n\t{ii}'
-    commands = f'{commands}\n\n)'
+    commands = f'{commands}\n\n)\n'
     # commands += '\n\necho "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"'
     commands += 'cmd="${commands[$SLURM_ARRAY_TASK_ID]}"\n'
-    commands += r'cmd="${cmd//(/\\(}"' + "\n"
-    commands += r'cmd="${cmd//)/\\)}"' + "\n"
+    # commands += r'cmd="${cmd//(/\\(}"' + "\n"
+    # commands += r'cmd="${cmd//)/\\)}"' + "\n"
     commands += 'echo "Running command: $cmd"\n'
-    commands += 'bash -lc "$cmd"'
+    commands += 'eval "$cmd"'
+    # commands += 'bash -lc "$cmd"'
 
     location_for_sbatch_script = ensure_path(location_for_sbatch_script)
-    name_of_sbatch_script = location_for_sbatch_script / 'ims_conv_sbatch.sh'
+    name_of_sbatch_script = location_for_sbatch_script / 'sbatch.sh'
     with open(name_of_sbatch_script, 'w') as f:
         f.write(commands)
     os.chmod(name_of_sbatch_script, 0o770)
 
-    # Sbatch command wrapping each ims build
+    # Sbatch command wrapping each cmd build
     sbatch_cmd = format_sbatch_wrap(slurm_parameters_dictionary=slurm_parameters_dictionary, log_location=log_location,
                                     array_len=len(cmd), bash=True, username=username)
     sbatch_cmd = sbatch_cmd.format(name_of_sbatch_script)

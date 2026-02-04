@@ -771,8 +771,21 @@ def replace_xml_zarr_relative_group_name(
 
 @app.command()
 def mesospim_metadata_to_bigstitcher_xml(
-    output_xml_path: Path
+    output_xml_path: Path,
+    different_relative_zarr_path: str = None
 ):
+
+    '''
+    Convert mesospim metadata to bigstitcher xml format
+
+    output_xml_path: Will be in the same directory or at a lower level from as the mesospim metadata files
+    different_relative_zarr_path:
+        If provided: set the relative zarr path in the bigstitcher xml to this value
+        if None: relative zarr path will be set to the parent directory name of output_xml_path with .ome.zarr suffix
+
+    ** Currently hardcoded to work with single timepoint, multiple channels, single angle data **
+    ** Only ome-zarr format supported currently **
+    '''
 
     import xml.etree.ElementTree as ET
     metadata_by_channel = collect_all_metadata(output_xml_path)
@@ -819,7 +832,12 @@ def mesospim_metadata_to_bigstitcher_xml(
     # spimdata/SequenceDescription/ImageLoader/zarr
     zarr = ET.SubElement(imageloader, 'zarr')
     zarr.set('type', 'relative')
-    zarr.text = f'{"108561_m1_PEG_Mag4x_Ch488_Ch561_Ch640.ome.zarr"}'
+
+    if different_relative_zarr_path:
+        zarr.text = different_relative_zarr_path
+    else:
+        parent_dir_name = output_xml_path.parent.name
+        zarr.text = f'{parent_dir_name}.ome.zarr'
 
     # spimdata/SequenceDescription/ImageLoader/zgroups
     zgroups = ET.SubElement(imageloader, 'zgroups')

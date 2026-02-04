@@ -1,16 +1,74 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from gettext import translation
 from typing import Any, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+
+import typer
 
 import zarr
 import dask.array as da
 import numpy as np
 
+from ome_zarr_multiscale_writer.write import write_ome_zarr_multiscale
+from mesospim_btf import mesospim_btf_helper
+
+
+# INIT typer cmdline interface
+app = typer.Typer()
+
+
+######################################################################################################################
+####  OME-ZARR CONVERTER FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
+######################################################################################################################
+
+@app.command()
+def convert_mesospim_btf_to_omezarr(
+        mesospim_btf_path: str,
+        output_omezarr_path: str,
+        voxel_size: Optional[Tuple[float, float, float]] = (1,1,1),
+        translation: Optional[Tuple[float, float, float]] = (0,0,0),
+        ome_version: str="0.4",
+        generate_multiscales: bool = True,
+        start_chunks: Optional[Tuple[int, int, int]] = (256,256,256),
+        end_chunks: Optional[Tuple[int, int, int]] = (256,256,256),
+        compressor:str = "zstd",
+        compression_level:int = 5,
+        max_workers: Optional[int] = 8,
+
+) -> None:
+    """
+    Convert a mesoSPIM BTF dataset to an OME-Zarr v2 multiscale dataset.
+
+    Parameters
+    ----------
+    mesospim_btf_path :
+        Path to the input mesoSPIM BTF dataset.
+    output_omezarr_path :
+        Path where the output OME-Zarr v2 dataset will be saved.
+    """
+
+    data = mesospim_btf_helper(mesospim_btf_path)
+
+    # Function uses numpy-like object and iterates over the first axis to write multiscale ome-zarr
+    write_ome_zarr_multiscale(
+        data=data,
+        path=output_omezarr_path,
+        voxel_size=voxel_size,
+        translation=translation,
+        ome_version=ome_version,
+        generate_multiscales=generate_multiscales,
+        start_chunks=start_chunks,
+        end_chunks=end_chunks,
+        compressor=compressor,
+        compression_level=compression_level,
+        max_workers=max_workers
+    )
+
+
+
 
 StoreLike = Union[str, MutableMapping[str, bytes]]
-
-
 @dataclass
 class VirtualChunkedArray:
     """
@@ -249,12 +307,17 @@ class OmeZarrV2Multiscale:
         view = self.get_level_view(level=level, logical_chunks=logical_chunks)
         return da.from_array(view, chunks=view.chunks, **from_array_kwargs)
 
+@app.command()
+def test_func():
+    print('Test function in omezarr.py')
+
 if __name__ == "__main__":
-    path = r"Z:\test_data\mesospim\omezarr\embryo-ome-zarr\Mag8x_Ch488_Ch561_Ch640_montage.ome.zarr"
-
-    ms = OmeZarrV2Multiscale(path)
-
-    # Represent it to Dask as (256, 256, 256)-chunked:
-    # d0 = ms.to_dask(level=0, logical_chunks=(512, 1024, 1024))
-    print(d0.chunks)
-    # -> ((256, 256, ...), (256, 256, ...), (256, 256, ...))
+    app()
+    # path = r"Z:\test_data\mesospim\omezarr\embryo-ome-zarr\Mag8x_Ch488_Ch561_Ch640_montage.ome.zarr"
+    #
+    # ms = OmeZarrV2Multiscale(path)
+    #
+    # # Represent it to Dask as (256, 256, 256)-chunked:
+    # # d0 = ms.to_dask(level=0, logical_chunks=(512, 1024, 1024))
+    # print(d0.chunks)
+    # # -> ((256, 256, ...), (256, 256, ...), (256, 256, ...))
