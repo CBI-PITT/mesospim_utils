@@ -2,7 +2,10 @@
 """
 Helper class to read mesospim btf files as dask arrays
 """
+from typing import Union
+from pathlib import Path
 
+import tifffile
 from dask import delayed
 import dask.array as da
 

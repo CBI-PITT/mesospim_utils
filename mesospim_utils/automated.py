@@ -66,7 +66,7 @@ def automated_method_slurm(dir_loc: Path,
 
     if omezarr_path:
         file_type = '.ome.zarr'
-    elif file_type is None and len(dir_loc.glob('*.btf')) > 0:
+    elif file_type is None and len(tuple(dir_loc.glob('*.btf'))) > 0:
         file_type = '.btf'
     else:
         raise FileNotFoundError(f"Supported file types [.ome.zarr, .btf] were not found: '{dir_loc}'")

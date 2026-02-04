@@ -21,6 +21,7 @@ import tifffile
 import skimage
 import shutil
 from skimage import img_as_float32, img_as_uint
+import dask.array as da
 
 from psf import get_psf
 from metadata import collect_all_metadata, get_ch_entry_for_file_name, get_entry_for_file_name
@@ -400,7 +401,7 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
     assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
 
     if str(file_location).endswith('.btf'):
-        from mesospim_utils.mesospim_btf import mesospim_btf_helper
+        from mesospim_btf import mesospim_btf_helper
         if VERBOSE: print('Opening File as mesospim_btf_helper')
         stack = mesospim_btf_helper(file_location)
         stack = stack.lazy_array
