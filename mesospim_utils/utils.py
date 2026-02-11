@@ -227,3 +227,28 @@ def get_file_size_gb(path: Path) -> int:
     size_bytes = path.stat().st_size
     size_gb = size_bytes / (1024 ** 3)
     return int(size_gb)
+
+def common_prefix(strings):
+    if not strings:
+        return ""
+
+    prefix = []
+    for chars in zip(*strings):
+        if len(set(chars)) == 1:
+            prefix.append(chars[0])
+        else:
+            break
+    prefix = "".join(prefix)
+
+    # Remove trailing _ or - characters
+    while prefix.endswith('_') or prefix.endswith('-'):
+        prefix = prefix[:-1]
+
+    return prefix
+
+def strip_after(string, key):
+    '''
+    Strip everything after key (case insensitive) in string
+    '''
+    pattern = rf"(.*?){re.escape(key)}.*$"
+    return re.sub(pattern, r"\1", string, flags=re.IGNORECASE)

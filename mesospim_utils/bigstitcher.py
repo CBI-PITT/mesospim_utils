@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 
 import typer
 
@@ -11,7 +11,7 @@ import json
 import zarr
 
 # Local imports
-from metadata import collect_all_metadata, get_first_entry, get_number_of_sheets, get_rotations
+from metadata import collect_all_metadata, get_first_entry, get_number_of_sheets, get_rotations, modify_file_names_in_annotated_metadata
 from utils import ensure_path, sort_list_of_paths_by_tile_number, make_directories, dict_to_json_file
 from constants import (
     ALIGNMENT_DIRECTORY,
@@ -772,7 +772,8 @@ def replace_xml_zarr_relative_group_name(
 @app.command()
 def mesospim_metadata_to_bigstitcher_xml(
     output_xml_path: Path,
-    different_relative_zarr_path: str = None
+    different_relative_zarr_path: str = None,
+    modify_filename_in_xml: str = None
 ):
 
     '''
@@ -789,8 +790,14 @@ def mesospim_metadata_to_bigstitcher_xml(
 
     import xml.etree.ElementTree as ET
     metadata_by_channel = collect_all_metadata(output_xml_path)
+
+    if modify_filename_in_xml:
+        print(f'Modifying file names in bigstitcher xml to be {modify_filename_in_xml} for all tiles')
+        metadata_by_channel = modify_file_names_in_annotated_metadata(metadata_by_channel)
+
     first_metadata_entry = get_first_entry(metadata_by_channel)
 
+    print(f'Building bigstitcher xml')
     # Build bigstitcher xml structure
     spimdata = ET.Element("SpimData", version="0.2")
 
@@ -1023,6 +1030,7 @@ def mesospim_metadata_to_bigstitcher_xml(
 
 
     # Write xml to file with indentation
+    print(f'Writing bigstitcher xml to {output_xml_path}')
     tree = ET.ElementTree(spimdata)
     ET.indent(tree, space="  ")
 
@@ -1031,9 +1039,12 @@ def mesospim_metadata_to_bigstitcher_xml(
         encoding="utf-8",
         xml_declaration=True
     )
+    print(f'Completed writing bigstitcher xml to {output_xml_path}')
 
 
-
+@app.command()
+def test_func():
+    print('Test function in bigstitcher.py')
 
 
 

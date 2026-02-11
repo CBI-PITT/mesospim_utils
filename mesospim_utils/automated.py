@@ -15,7 +15,7 @@ from metadata import (
     get_entry_for_file_name
 )
 from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap, submit_array
-from utils import ensure_path
+from utils import ensure_path, common_prefix, strip_after
 from imaris import convert_ims
 from bigstitcher import (does_dir_contain_bigstitcher_metadata,
                          get_ome_zarr_directory_from_xml,
@@ -33,7 +33,7 @@ def automated_method_slurm(dir_loc: Path,
                            # Input options: None, .ome.zarr, .btf. If None, will auto-detect based on contents of dir_loc
                            file_type: Annotated[str,typer.Option(help="Input file type: .ome.zarr, .btf. Default is automatically detected")]=None,
 
-                           # Final output options: omezarr, hdf5
+                           # Final output options: omezarr, hdf5, ims
                            final_file_type: Annotated[str,typer.Option(help="Bigstitcher compatible output file format: omezarr, hdf5, ims")]='omezarr',
 
                            # Deconvolution Options: if decon==True, refractive_index is found in metadata or must be provided. No RI means no decon
@@ -44,11 +44,24 @@ def automated_method_slurm(dir_loc: Path,
                            num_parallel: Annotated[int,typer.Option(help="How many MesoSPIM tiles will be deconvolved in parallel on SLURM")]=None
                            ):
     '''
-    Automate the processing of all data in a mesospim directory using slurm
-    Stitching must be completed on windows which requires the separate stitch:run_windows_auto_stitch_client to be running
-    
-    This script is designed to run quickly, queueing everything in SLURM and letting slurm manage dependencies and 
-    downstream processes.
+    Automate the processing of all data in a mesospim directory using SLURM
+    The only required argument is the directory location of the mesospim data.
+    All other options will be determined automatically by the metadata or have defaults that should work for most use cases.
+
+    This is expected to be run from the commandline on a client of a SLURM cluster with access to the mesospim data directory.
+    The SLURM jobs will also run on the cluster and have access to the same data directory.
+
+    Currently, supports data acquired from MesoSPIM in both omezarr and btf formats.
+    This method will first perform deconvolution if RI information is not found in the metadata.
+    RI can be manually supplied to trigger deconvolution if it is not found in the metadata, or if the user wants to override the metadata information.
+    Deconvolution can be skipped entirely by setting decon=False.
+
+    If BTF files are discovered, decon will produce deconvolved BTF files, which will then be converted to multiscale omezarr format and stitched using bigstitcher.
+    If OME-Zarr files are discovered, decon will be produced in multiscale omezarr format, and then stitched using bigstitcher.
+
+    ** NOTE**
+    This script is designed to run quickly, Everything is queued in SLURM.
+    SLURM will manage all downstream dependencies.
 
     Default:
     deconvolution if RI information is found in metadata
@@ -65,6 +78,9 @@ def automated_method_slurm(dir_loc: Path,
 
     if not refractive_index and decon:
         refractive_index = first_metadata_entry.get('refractive_index')
+
+    # Determine file formats relevant for downstream processes based on desired output
+    fused_file_type, final_file_type = get_intermediate_file_type_for_bigstitcher_alignment(final_file_type)
 
     omezarr_xml = does_dir_contain_bigstitcher_metadata(dir_loc)  # returns path to omezarr xml if found, else None
     omezarr_path = get_ome_zarr_directory_from_xml(omezarr_xml) # returns path to omezarr_data relative to xml, else None
@@ -83,20 +99,24 @@ def automated_method_slurm(dir_loc: Path,
     if refractive_index and decon: # for now skip decon if omezarr
         ## Decon:
         print('Queueing DECON of MesoSPIM tiles on SLURM')
-        out_file_type = '.ome.zarr' if omezarr_path else '.tif'
+        out_file_type = '.ome.zarr' if omezarr_path else '.btf'
         job_number, out_dir = decon_dir(dir_loc, refractive_index, file_type=file_type, out_file_type=out_file_type, iterations=iterations, frames_per_chunk=frames_per_chunk, num_parallel=num_parallel)
         print((job_number, out_dir))
         file_type = out_file_type
 
-    if file_type == '.btf':
+    if file_type in ('.btf','.tif'):
         # IMS Convert
         # Dependency process that kicks off IMS build following DECON
         print('Setting up script to manage IMS conversions after DECON')
-        from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
+        from constants import SLURM_PARAMETERS_OMEZARR
         cmd = ''
-        cmd += f'{mesospim_root_application}/automated.py ims-conv-then-align'
-        cmd += f' {out_dir} {dir_loc} --file-type={file_type}'
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir,
+        cmd += f'{mesospim_root_application}/automated.py convert-btf-tiles-to-omezarr-slurm-array'
+        cmd += f' {out_dir}'
+        cmd += f' --file-type={file_type}'
+        cmd += f' --queue-alignment'
+        cmd += f' --final-file-type {final_file_type}'
+
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_OMEZARR, out_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username)
         print(f'Dependency process number: {job_number}')
 
@@ -123,19 +143,32 @@ def automated_method_slurm(dir_loc: Path,
 
 
 @app.command()
-def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf', queue_alignment: bool=True, file_final_type: str='omezarr',
+def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf', queue_alignment: bool=True, final_file_type: str='omezarr',
                                 after_slurm_jobs: list[int]=None):
 
-    from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
-    from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
+    from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER, SLURM_PARAMETERS_FOR_DEPENDENCIES, SLURM_PARAMETERS_OMEZARR
+    import zarr
 
     btf_file_list = list(dir_loc.glob(f'*{file_type}'))
 
     if len(btf_file_list) == 0:
-        raise FileNotFoundError(f'No BTF files found in {dir_loc} with file type {file_type}')
+        raise FileNotFoundError(f'No files found in {dir_loc} with file type {file_type}')
 
-    output_directory_for_omezarr_collection = dir_loc / 'ome_zarr'
+    prefix = common_prefix([f.name for f in btf_file_list])
+
+    if prefix:
+        # Remove trailing underscores or hyphens from prefix
+        prefix = strip_after(prefix, '_max')
+    else:
+        # Use first file name as prefix
+        prefix = btf_file_list[0].name
+
+    # Create output directory for omezarr collection ./ome_zarr/{first_btf_file_name}/
+    output_directory_for_omezarr_collection = dir_loc / 'ome_zarr' / f'{prefix}.ome.zarr'
     output_directory_for_omezarr_collection.mkdir(parents=True, exist_ok=True)
+
+    # Create ome.zarr group to store all converted btf files in the collection
+    zarr.open_group(output_directory_for_omezarr_collection, mode="a", zarr_version=2)
 
     print(f'Extracting metadata from {dir_loc}')
     metadata_by_channel = collect_all_metadata(dir_loc)
@@ -166,7 +199,7 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
         cmd_list.append(cmd)
 
     job_number = submit_array(cmd_list,
-                     output_directory_for_omezarr_collection, SLURM_PARAMETERS_FOR_BIGSTITCHER,
+                     output_directory_for_omezarr_collection, SLURM_PARAMETERS_OMEZARR,
                      output_directory_for_omezarr_collection,
                      after_slurm_jobs=None, username=username
                               )
@@ -174,12 +207,48 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
     print(f'OME-Zarr Conversion Array Job Number: {job_number}')
 
 
+    # Make bigstitcher xml for alignment and stitching of the converted omezarr files
+    xml_file_name = Path(output_directory_for_omezarr_collection.as_posix() + '.xml')
+    cmd = f'{mesospim_root_application}/bigstitcher.py mesospim-metadata-to-bigstitcher-xml'
+    cmd += f' "{xml_file_name}"'
+    cmd += f' --different-relative-zarr-path "{output_directory_for_omezarr_collection.name}"'
+    cmd += f' --modify-filename-in-xml .ome.zarr'
+
+    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, output_directory_for_omezarr_collection,
+                            after_slurm_jobs=[job_number] if job_number else None, username=username)
+
+    print(f'Queued BigStitcher XML build process number: {job_number}')
+
+    if queue_alignment:
+        # Determine file formats relevant for downstream processes based on desired output
+        fused_file_type, final_file_type = get_intermediate_file_type_for_bigstitcher_alignment(final_file_type)
+        cmd = f'{mesospim_root_application}/automated.py big-stitcher-align'
+        cmd += f' {output_directory_for_omezarr_collection.parent}'
+        cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
+
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, output_directory_for_omezarr_collection,
+                                after_slurm_jobs=[job_number] if job_number else None, username=username)
+
+        print(f'Queued BigStitcher alignment process number: {job_number}')
 
 
 
 
 
 
+def get_intermediate_file_type_for_bigstitcher_alignment(final_file_type: str):
+    '''
+    Given the desired final file type (omezarr, hdf5, ims) return the fused_file_type and final_file_type.
+     fused_file_type is used for bigstitcher fusion.
+     final_file_type is the final output format after bigstitcher alignment and fusion.
+     '''
+
+    if final_file_type.lower() == 'omezarr':
+        return 'omezarr', 'omezarr'
+    elif final_file_type.lower() == 'hdf5':
+        return 'hdf5', 'hdf5'
+    elif final_file_type.lower() == 'ims':
+        return 'hdf5', 'ims'
 
 
 

@@ -13,7 +13,7 @@ from utils import map_wavelength_to_RGB
 
 from constants import EMISSION_MAP, METADATA_FILENAME, METADATA_ANNOTATED_FILENAME, VERBOSE
 
-def collect_all_metadata(location: Path, prepare=True):
+def collect_all_metadata(location: Path, prepare=True, alternate_json_save_path=None) -> dict:
     """
     Collect all relevant metadata from mesospim Tile metadata files, sort by channel
 
@@ -176,6 +176,7 @@ def annotate_metadata(metadata_by_channel, location=None):
             entry['tile_shape'] = determine_tile_shape(entry)
             entry['tile_size_um'] = determine_tile_size_um(entry)
             entry['file_name'] = entry.get('Metadata for file').name
+            entry['file_name_no_extension'] = get_filename_without_extension(entry['file_name'])
             entry['refractive_index'] = determine_refractive_index_from_ETL_file_name(entry)
             entry['sheet'] = determine_sheet_direction(entry)
             if tuple(entry.get('grid_location')) == (0,0) and ch == 0:
@@ -194,6 +195,12 @@ def annotate_metadata(metadata_by_channel, location=None):
     metadata_by_channel = get_affine_transform(metadata_by_channel)
     return metadata_by_channel
 
+def get_filename_without_extension(file_name):
+    extensions = ('.ome.zarr', '.btf', '.tif', '.tiff', '.h5', '.xml', '.txt')
+    for ext in extensions:
+        if file_name.lower().endswith(ext):
+            return file_name[:-len(ext)]
+    return file_name
 
 def get_stage_direction(channel_data, grid_size):
     # Outputs tuple (y,x) where y and x are 1 or -1,
@@ -553,7 +560,7 @@ def get_first_entry(meta_dict):
             return entry
 
 
-def get_ch_entry_for_file_name(meta_dict, file_name):
+def get_ch_entry_for_file_name(meta_dict, file_name, ignore_extension=True):
     '''
     Given the meta_dict created by fn collect_all_metadata()
     And the file_name: /{dir1}/{dir2}/.../{file_name}
@@ -561,15 +568,29 @@ def get_ch_entry_for_file_name(meta_dict, file_name):
     return the channel key and index of the specific metadata record
 
     If the file_name is not found, then return (None,None)
+
+    Option to ignore the extension of the file name when searching for a match.
+    This is useful when the file name in the metadata may not have the same extension as the actual file name on disk
+    (e.g., due to post-processing or renaming). By default, ignore_extension is set to True.
+    If set to False, the function will compare the exact filename including extension.
     '''
+    if ignore_extension:
+        file_name = get_filename_without_extension(file_name)
+
+    print(f"Searching for channel and entry index for file name: {file_name} with ignore_extension={ignore_extension}")
     for ch in meta_dict:
         for idx, entry in enumerate(meta_dict[ch]):
-            if file_name.lower() == entry.get('file_name').lower():
+            print(f"Checking channel {ch}, entry {idx} with file name: {entry.get('file_name')} and file name no extension: {entry.get('file_name_no_extension')}")
+            if ignore_extension and file_name.lower() == entry.get('file_name_no_extension').lower():
                 return ch, idx
+            elif file_name.lower() == entry.get('file_name').lower():
+                return ch, idx
+        print(f"Finished checking channel {ch} for file name: {file_name} with ignore_extension={ignore_extension}")
+    print(f"Finished checking channel for file name: {file_name}")
     return None, None
 
 
-def get_entry_for_file_name(meta_dict, file_name):
+def get_entry_for_file_name(meta_dict, file_name, ignore_extension=True):
     '''
     Given the meta_dict created by fn collect_all_metadata()
     And the file_name: /{dir1}/{dir2}/.../{file_name}
@@ -577,8 +598,16 @@ def get_entry_for_file_name(meta_dict, file_name):
     return specific meta_data dict record for the given file_name
 
     If the file_name is not found, then return (None,None)
+
+    Option to ignore the extension of the file name when searching for a match.
+    This is useful when the file name in the metadata may not have the same extension as the actual file name on disk
+    (e.g., due to post-processing or renaming). By default, ignore_extension is set to True.
+    If set to False, the function will compare the exact filename including extension.
     '''
-    ch, idx = get_ch_entry_for_file_name(meta_dict, file_name)
+    print(f"Searching for metadata entry for file name: {file_name} with ignore_extension={ignore_extension}")
+    ch, idx = get_ch_entry_for_file_name(meta_dict, file_name, ignore_extension=ignore_extension)
+    print(f"Found channel and entry index for file name: {file_name} with ignore_extension={ignore_extension}")
+    print(f"Channel: {ch}, Entry Index: {idx}")
     if ch is not None and idx is not None:
         return meta_dict[ch][idx]
     return None
@@ -608,7 +637,7 @@ def get_rotations(meta_dict):
             rotations.add(rotation)
     return rotations
 
-def modify_file_names_in_annotated_metadata(meta_dict, modify_function: callable=None):
+def modify_file_names_in_annotated_metadata(meta_dict, modify_function: callable='.ome.zarr'):
     '''
     Given the meta_dict created by fn collect_all_metadata()
     And a modify_function that takes a file_name string and returns a modified file_name string
@@ -617,7 +646,7 @@ def modify_file_names_in_annotated_metadata(meta_dict, modify_function: callable
 
     ** Defaults to adding '.ome.zarr' to each file name if no modify_function is provided **
     '''
-    if not modify_function:
+    if modify_function == '.ome.zarr':
         "Add .ome.zarr to file names by default"
         modify_function = lambda x: x + '.ome.zarr'
     for ch in meta_dict:
