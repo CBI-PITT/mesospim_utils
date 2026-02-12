@@ -14,7 +14,7 @@ from metadata import (
     affine_microns_to_translation_zyx,
     get_entry_for_file_name
 )
-from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap, submit_array
+from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap, submit_array, get_slurm_log_location
 from utils import ensure_path, common_prefix, strip_after
 from imaris import convert_ims
 from bigstitcher import (does_dir_contain_bigstitcher_metadata,
@@ -94,8 +94,8 @@ def automated_method_slurm(dir_loc: Path,
         raise FileNotFoundError(f"Supported file types [.ome.zarr, .btf] were not found: '{dir_loc}'")
 
     job_number = None
+    slurm_log_dir = get_slurm_log_location(dir_loc)
     out_dir = dir_loc
-
     if refractive_index and decon: # for now skip decon if omezarr
         ## Decon:
         print('Queueing DECON of MesoSPIM tiles on SLURM')
@@ -116,8 +116,8 @@ def automated_method_slurm(dir_loc: Path,
         cmd += f' --queue-alignment'
         cmd += f' --final-file-type {final_file_type}'
 
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_OMEZARR, out_dir,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username)
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_OMEZARR, slurm_log_dir,
+                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_{file_type[1:]}_to_omezarr')
         print(f'Dependency process number: {job_number}')
 
     elif file_type == '.ome.zarr':
@@ -137,8 +137,8 @@ def automated_method_slurm(dir_loc: Path,
         cmd += f'{mesospim_root_application}/automated.py big-stitcher-align'
         cmd += f' {Path(out_dir).parent}'
         cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username)
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
+                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_bigstitcher')
         print(f'Dependency process number: {job_number}')
 
 
@@ -173,6 +173,7 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
     print(f'Extracting metadata from {dir_loc}')
     metadata_by_channel = collect_all_metadata(dir_loc)
     first_metadata_entry = get_first_entry(metadata_by_channel)
+    slurm_log_dir = get_slurm_log_location(dir_loc)
 
     username = first_metadata_entry.get('username', "")
 
@@ -200,8 +201,8 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
 
     job_number = submit_array(cmd_list,
                      output_directory_for_omezarr_collection, SLURM_PARAMETERS_OMEZARR,
-                     output_directory_for_omezarr_collection,
-                     after_slurm_jobs=None, username=username
+                     slurm_log_dir,
+                     after_slurm_jobs=None, username=username, log_suffix=f'convert_btf_to_omezarr'
                               )
 
     print(f'OME-Zarr Conversion Array Job Number: {job_number}')
@@ -214,8 +215,8 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
     cmd += f' --different-relative-zarr-path "{output_directory_for_omezarr_collection.name}"'
     cmd += f' --modify-filename-in-xml .ome.zarr'
 
-    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, output_directory_for_omezarr_collection,
-                            after_slurm_jobs=[job_number] if job_number else None, username=username)
+    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
+                            after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'make_bigstitcher_xml')
 
     print(f'Queued BigStitcher XML build process number: {job_number}')
 
@@ -226,8 +227,8 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
         cmd += f' {output_directory_for_omezarr_collection.parent}'
         cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
 
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, output_directory_for_omezarr_collection,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username)
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
+                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_bigstitcher')
 
         print(f'Queued BigStitcher alignment process number: {job_number}')
 
@@ -262,6 +263,7 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     print(f'Extracting metadata from {dir_loc}')
     metadata_by_channel = collect_all_metadata(dir_loc)
     first_metadata_entry = get_first_entry(metadata_by_channel)
+    slurm_log_dir = get_slurm_log_location(dir_loc)
 
     username = first_metadata_entry.get('username', "")
 
@@ -269,15 +271,15 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
 
     job_number = None
-    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, bigstitcher_dir,
-                            after_slurm_jobs=[job_number] if job_number else None, username=username)
+    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
+                            after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'align_fuse_bigstitcher')
     print(f'BigStitcher process number: {job_number}')
 
     if final_file_type.lower() == 'omezarr':
         cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
         cmd += f' "{dir_loc}" "{fused_out_dir_or_file}"'
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, bigstitcher_dir,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username)
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
+                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'fix_bigstitcher_omezarr_metadata')
         print(f'BigStitcher Fix OME-Zarr Metadata Scale: {job_number}')
 
     elif fused_file_type.lower() == 'hdf5' and final_file_type.lower() == 'ims':
@@ -288,8 +290,8 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
 
         current_script, log_location, out_dir = convert_ims(fused_out_dir_or_file, res=res, run_conversion=False)
         job_number = wrap_slurm(current_script,
-                                SLURM_PARAMETERS_IMARIS_CONVERTER, log_location,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username)
+                                SLURM_PARAMETERS_IMARIS_CONVERTER, slurm_log_dir,
+                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_hdf5_to_ims')
         print(f'BigStitcher HDF5 Convert to IMS: {job_number}')
 
 
@@ -301,6 +303,7 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
     print(f'Extracting metadata from {metadata_dir}')
     metadata_by_channel = collect_all_metadata(metadata_dir)
     first_metadata_entry = get_first_entry(metadata_by_channel)
+    slurm_log_dir = get_slurm_log_location(dir_loc)
     res = first_metadata_entry.get('resolution')
     print(f'Resolution of mesospim tiles: {res}')
 
@@ -321,11 +324,11 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
     cmd += f'{mesospim_root_application}/align_py.py'
     cmd += f' {metadata_dir} {out_dir}'
     if job_number:
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN, out_dir / ALIGNMENT_DIRECTORY,
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN, slurm_log_dir,
                                 after_slurm_jobs=[job_number], username=username)
         print(f'Dependency process number: {job_number}')
     else:
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN, out_dir / ALIGNMENT_DIRECTORY,
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN, slurm_log_dir,
                                 after_slurm_jobs=None, username=username)
 
     # Dependency process that kicks off windows resampling
@@ -334,7 +337,7 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
     cmd = ''
     cmd += f'{mesospim_root_application}/resample_ims.py write-auto-resample-message'
     cmd += f' {metadata_dir} {out_dir} {job_number}'
-    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, out_dir / ALIGNMENT_DIRECTORY, after_slurm_jobs=[job_number], username=username)
+    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir, after_slurm_jobs=[job_number], username=username)
     print(f'Dependency process number: {job_number}')
 
 

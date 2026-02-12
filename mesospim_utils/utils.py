@@ -34,6 +34,37 @@ def map_wavelength_to_RGB(wavelength):
     # Default to white
     return default
 
+def rgb_to_hex(rgb):
+    """
+    Convert an RGB tuple (R, G, B) with values 0–255 or 0-1 to a hex color string '#RRGGBB'.
+    If values are in the range 0-1, they will be scaled to 0-255 before conversion.
+    into a hex color string '#RRGGBB'.
+    """
+
+    if len(rgb) != 3:
+        raise ValueError("RGB tuple must have exactly 3 elements")
+
+    # If values are in the range 0-1, scale them to 0-255
+    if all(0 <= v <= 1 for v in rgb):
+        rgb = tuple(int(v * 255) for v in rgb)
+
+    # Ensure all values are int, and round down if they are floats (e.g. 255.9 should become 255)
+    rgb = tuple(int(v//1) for v in rgb)
+    
+    r, g, b = rgb
+
+    try:
+        for v in (r, g, b):
+            if not (0 <= v <= 255):
+                raise ValueError("RGB values must be in range 0–255")
+    except ValueError as e:
+        print(f"Error converting RGB to hex: {e}")
+        print(f'Returning white for RGB value: {rgb}')
+        return '#FFFFFF'
+
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
 def sort_list_of_paths_by_tile_number(list_of_paths, pattern=r"_tile(\d+)_"):
     files = [str(x) for x in list_of_paths]
     files.sort(key=lambda x: int(re.search(pattern, x, re.IGNORECASE).group(1)))

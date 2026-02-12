@@ -132,7 +132,7 @@ slurm:
   omezarr:
     # OME-Zarr conversion, uses ome_zarr_multiscale_writer
     'PARTITION': 'compute' #multiple partitions can be specified with comma separation part1,par2
-    'CPUS': 12
+    'CPUS': 24
     'JOB_LABEL': 'dev_omezarr'
     'RAM_GB': 64
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None

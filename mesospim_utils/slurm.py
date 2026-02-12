@@ -6,11 +6,11 @@ import math
 
 
 from imaris import convert_ims, nested_list_tile_files_sorted_by_color
-from rl import decon
-from utils import path_to_wine_mappings, ensure_path, get_user, get_file_size_gb
+from utils import ensure_path, get_user, get_file_size_gb
+from metadata import find_metadata_dir
+from constants import DEV_SLURM_TOP_PRIORITY
 
 app = typer.Typer()
-
 
 ######################################################################################################################
 ####  DECON FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
@@ -29,19 +29,28 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
     from constants import ENV_PYTHON_LOC
     from constants import DECON_SCRIPT, MAX_VRAM
 
-    path = Path(dir_loc)
+    path = ensure_path(dir_loc)
+    # scripts_and_psf_dir = out_dir
     if out_dir:
-        out_dir = Path(out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
+        pass
+        # scripts_and_psf_dir = out_dir
     else:
         if str(path).endswith('.ome.zarr'):
+            # scripts_and_psf_dir = path.parent / 'decon'
             out_dir = path.parent / 'decon' / path.name
         else:
             out_dir = path / 'decon'
-    log_dir = out_dir / 'logs'
-    log_dir.parent.mkdir(parents=True, exist_ok=True)
+            # scripts_and_psf_dir = out_dir
+
+    out_dir = ensure_path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # scripts_and_psf_dir = ensure_path(scripts_and_psf_dir)
+    # scripts_and_psf_dir.mkdir(parents=True, exist_ok=True)
+
+    # log_dir = out_dir / 'logs'
+    log_dir = get_slurm_log_location(path)
     file_list = list(path.glob('*' + file_type))
-    num_files = len(file_list)
 
     # Dynamically determine how much RAM to allocate for SLURM to support decon, assumes all files are the same size.
     if Path(file_list[0]).is_file():
@@ -88,7 +97,6 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
 
     if files_not_done:
         SBATCH_ARG = '#SBATCH {}\n'
-        # to_run = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon", f'-o {log_dir} / %A_%a.log', f'--array=0-{num_files-1}']
         commands = "#!/bin/bash\n"
         commands += SBATCH_ARG.format(f'-p {PARTITION}') if PARTITION is not None else ""
         commands += SBATCH_ARG.format(f'-n {CPUS}') if CPUS is not None else ""
@@ -97,7 +105,7 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
         commands += SBATCH_ARG.format(f'-J {jobname}') if jobname else ""
         commands += SBATCH_ARG.format(f'--nice={NICE}') if NICE is not None else ""
         commands += SBATCH_ARG.format(f'-t {TIME_LIMIT}') if TIME_LIMIT is not None else ""
-        commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a.log')
+        commands += SBATCH_ARG.format(f'-o {log_dir}/%A_%a_decon.log')
         commands += SBATCH_ARG.format(f'--array=0-{len(files_not_done) - 1}{"%" + str(PARALLEL_JOBS) if PARALLEL_JOBS > 0 else ""}')
         commands += "\n"
 
@@ -141,6 +149,9 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
         prefix_len = len(b'Submitted batch job ')
         job_number = int(output.stdout[prefix_len:-1])
         print(f'SBATCH Job #: {job_number}')
+        if DEV_SLURM_TOP_PRIORITY:
+            print(f'Setting job {job_number} to top priority')
+            set_top_priority(job_number)
     else:
         job_number = None
 
@@ -258,16 +269,46 @@ def convert_ims_dir_mesospim_tiles_slurm_array(dir_loc: Path, file_type: str='.b
 ####  HELPER FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
 ######################################################################################################################
 
+def get_slurm_log_location(dir_loc: Path):
+    '''
+    Given a directory location, set the log directory to be at the same level as the mesospim metadata directory:
+    {location_of_mestadata}/logs/
+
+    If mesospim metadata directory is not found, set log directory to:
+    {dir_loc}/logs/
+
+    Create the directory if it does not exist
+    '''
+    metadata_dir = find_metadata_dir(dir_loc)
+    if metadata_dir:
+        log_dir = metadata_dir / 'logs_mesospim_utils'
+    else:
+        log_dir = dir_loc / 'logs_mesospim_utils'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir
+
+def set_top_priority(job_number: int):
+    '''
+    For DEV purposes, set a job to top priority above all other jobs in the queue owned by the user.
+    '''
+    cmd = f'scontrol top {job_number}'
+    try:
+        output = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+        print(output.stdout)
+    except:
+        print(f'Failed to set job {job_number} to top priority')
+
 
 def wrap_slurm(cmd: str, slurm_parameters_dictionary, log_location,
-               after_slurm_jobs: list[int] = None, username: str = ""):
+               after_slurm_jobs: list[int] = None, username: str = "", log_prefix: str = "", log_suffix: str = ""):
     '''
     Given a command (cmd) string, wrap the command in a sbatch script and submit it to slurm
     If the command should not run until after another job(s) pass these job number in a list to after_slurm_jobs
     '''
 
     # Sbatch command wrapping each ims build
-    sbatch_cmd = format_sbatch_wrap(slurm_parameters_dictionary=slurm_parameters_dictionary, log_location=log_location, username=username)
+    sbatch_cmd = format_sbatch_wrap(slurm_parameters_dictionary=slurm_parameters_dictionary, log_location=log_location,
+                                    username=username, log_prefix = log_prefix, log_suffix = log_suffix)
     sbatch_cmd = sbatch_cmd.format(cmd)
     sbatch_cmd = sbatch_depends(sbatch_cmd, after_slurm_jobs)
     print(sbatch_cmd)
@@ -276,10 +317,13 @@ def wrap_slurm(cmd: str, slurm_parameters_dictionary, log_location,
     output = subprocess.run(sbatch_cmd, shell=True, capture_output=True, text=True, check=True)
     job_number = get_job_number_from_slurm_out(output)
     print(f'Submitted job: {job_number}')
+    if DEV_SLURM_TOP_PRIORITY:
+        print(f'Setting job {job_number} to top priority')
+        set_top_priority(job_number)
     return job_number
 
 def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_dictionary, log_location,
-               after_slurm_jobs: list[int] = None, username: str = ""):
+               after_slurm_jobs: list[int] = None, username: str = "", log_prefix: str = "", log_suffix: str = ""):
     '''
     Given a list of commands (cmd), wrap the commands in a sbatch script and submit it as an array to slurm
     If the command should not run until after another job(s) pass these job number in a list to after_slurm_jobs
@@ -312,13 +356,16 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
 
     # Sbatch command wrapping each cmd build
     sbatch_cmd = format_sbatch_wrap(slurm_parameters_dictionary=slurm_parameters_dictionary, log_location=log_location,
-                                    array_len=len(cmd), bash=True, username=username)
+                                    array_len=len(cmd), bash=True, username=username, log_prefix = log_prefix, log_suffix = log_suffix)
     sbatch_cmd = sbatch_cmd.format(name_of_sbatch_script)
     sbatch_cmd = sbatch_depends(sbatch_cmd, after_slurm_jobs)
     print(sbatch_cmd)
     output = subprocess.run(sbatch_cmd, shell=True, capture_output=True, text=True, check=True)
     job_number = get_job_number_from_slurm_out(output)
     print(f'Submitted job: {job_number}')
+    if DEV_SLURM_TOP_PRIORITY:
+        print(f'Setting job {job_number} to top priority')
+        set_top_priority(job_number)
     return job_number
 
 def get_job_number_from_slurm_out(output):
@@ -326,7 +373,9 @@ def get_job_number_from_slurm_out(output):
 
 
 @app.command()
-def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, array_len=None, bash=False, username=""):
+def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, array_len=None, bash=False, username="",
+                       log_prefix: str = "", log_suffix: str = ""
+                       ):
     '''
     This function takes slurm_parameters_dictionary and outputs a sbatch command designed to wrap a single line command
     --wrap={commands}.  No commands are included, just the prologue required to configure parameters needed for slurm
@@ -364,17 +413,17 @@ def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, arra
 
     # Format log output file/dir
     if array and log_dir:
-        log_location = log_location / '%A_%a.log'
+        log_location = log_location / f'{log_prefix + '_' if log_prefix else ""}%A_%a{'_' + log_suffix if log_suffix else ""}.log'
     elif array and log_file:
-        log_location = log_location.parent / '%A_%a.log'
+        log_location = log_location.parent / f'{log_prefix + '_' if log_prefix else ""}%A_%a{'_' + log_suffix if log_suffix else ""}.log'
     elif array and log_parent_exists:
-        log_location = log_location.parent / '%A_%a.log'
+        log_location = log_location.parent / f'{log_prefix + '_' if log_prefix else ""}%A_%a{'_' + log_suffix if log_suffix else ""}.log'
     elif not array and log_dir:
-        log_location = log_location / '%A.log'
+        log_location = log_location / f'{log_prefix + '_' if log_prefix else ""}%A{'_' + log_suffix if log_suffix else ""}.log'
     elif not array and log_file:
         pass
     elif not array and log_parent_exists:
-        log_location = log_location.parent / '%A.log'
+        log_location = log_location.parent / f'{log_prefix + '_' if log_prefix else ""}%A{'_' + log_suffix if log_suffix else ""}.log'
 
     # Extract required parameters into simple names
     PARTITION = PARAMS.get('PARTITION')
