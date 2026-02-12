@@ -161,3 +161,12 @@ bigstitcher:
   blocksize_factor_z: 2
   subsampling_factors: 'automated' # "{{1,1,1}, {2,2,2}, {4,4,4}, {8,8,8}, {16,16,16}, {32,32,32}}"
   ram_fraction: 0.95 # 0-1, Fraction of allocated RAM to allocate to bigstitcher Java heap
+
+########################################################################################################################
+######### DEV Options ############
+########################################################################################################################
+
+dev:
+  slurm_top_priority: false # If true this will run "scontrol top" to set priority above any running jobs
+  # This will only apply to job from the user running the mesospim_utils pipeline
+  # top will only work if slurm is configured to allow users to change job priority and if the user has permission to do so.
