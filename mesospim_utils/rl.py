@@ -15,13 +15,13 @@ pip install -e /location/of/library
 
 import typer
 from pathlib import Path
-import subprocess
-from typing import Union
 
 import numpy as np
 import tifffile
 import skimage
+import shutil
 from skimage import img_as_float32, img_as_uint
+import dask.array as da
 
 from psf import get_psf
 from metadata import collect_all_metadata, get_ch_entry_for_file_name, get_entry_for_file_name
@@ -31,6 +31,7 @@ from constants import DECON_SCRIPT as LOC_OF_THIS_SCRIPT
 from constants import VRAM_PER_VOXEL, MAX_VRAM
 from constants import VERBOSE
 
+from bigstitcher import replace_xml_zarr_relative_group_name
 
 ims_conv_module_name = Path(LOC_OF_THIS_SCRIPT).parent / 'slurm.py'
 
@@ -59,7 +60,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         num_files += 1
 
     SBATCH_ARG = '#SBATCH {}\n'
-    to_run = ["sbatch", "-p gpu", "--gres=gpu:1", "-J decon", f'-o {log_dir} / %A_%a.log', f'--array=0-{num_files-1}']
+
     commands = "#!/bin/bash\n"
     commands += SBATCH_ARG.format('-p gpu')
     commands += SBATCH_ARG.format('--gres=gpu:1')
@@ -98,7 +99,6 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
             pass
 
         ims_auto_queue = f'\n\t"sbatch -p compute -n 1 --mem 5G -o {log_dir}/%A.log --dependency=afterok:$SLURM_JOB_ID -J ims_queue --kill-on-invalid-dep=yes --wrap=\''
-        # ims_auto_queue += f'{ENV_PYTHON_LOC} -u {ims_conv_module_name} convert-ims-dir-mesospim-tiles '
         ims_auto_queue += f'{ENV_PYTHON_LOC} -u {ims_conv_module_name} convert-ims-dir-mesospim-tiles-slurm-array '
         ims_auto_queue += f'{out_dir} '
         ims_auto_queue += f'--file-type {out_file_type} '
@@ -106,8 +106,11 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         commands += ims_auto_queue
 
     commands += '\n)\n\n'
-    commands += 'echo "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"\n'
-    commands += 'eval "${commands[$SLURM_ARRAY_TASK_ID]}"'
+    commands += 'cmd="${commands[$SLURM_ARRAY_TASK_ID]}"\n'
+    commands += r'cmd="${cmd//(/\\(}"' + "\n"
+    commands += r'cmd="${cmd//)/\\)}"' + "\n"
+    commands += 'echo "Running command: $cmd"\n'
+    commands += 'bash -lc "$cmd"'
 
     file_to_run = out_dir / 'slurm_array.sh'
     with open(file_to_run, 'w') as f:
@@ -248,86 +251,6 @@ def richardson_lucy_3d(input_data, psf, iterations=50, sigma=None):
 ## IMAGE PROCESSING FUNCTIONS ##
 ###################################################################################################################
 
-def read_mesospim_btf(file_location: Union[str, Path], frame_start: int = None, frame_stop: int = None):
-
-    #if frame_start or frame_stop:
-    with tifffile.TiffFile(file_location) as tif:
-        if VERBOSE > 1 : print(f'File contains {len(tif.series)} frames')
-        stack = np.stack(tuple((x.asarray()[0] for x in tif.series[frame_start:frame_stop])))
-        return stack
-
-    # from io import BytesIO
-    # with open(file_location, 'rb') as f:
-    #     file_data = BytesIO(f.read())
-    # with tifffile.TiffFile(file_data) as tif:
-    #     print(f'File contains {len(tif.series)} frames')
-    #     stack = np.stack(tuple((x.asarray()[0] for x in tif.series[frame_start:frame_stop])))
-    #     return stack
-
-    # with open(file_location, 'rb') as f:
-    #    from io import BytesIO
-    #    image_file = BytesIO(f.read())
-    # with tifffile.TiffFile(image_file) as tif:
-    #    print(f'File contains {len(tif.series)} frames')
-    #    stack = np.stack(tuple((x.asarray()[0] for x in tif.series[frame_start:frame_stop])))
-    #    return stack
-
-
-from dask import delayed
-import dask.array as da
-class mesospim_btf_helper:
-
-    def __init__(self,path: Union[str, Path]):
-        self.path = path if isinstance(path,Path) else Path(path)
-        self.tif = tifffile.TiffFile(self.path, mode='r')
-        self.sample_data = self.tif.series[0].asarray()
-        self.zdim = len(self.tif.series)
-
-        self.build_lazy_array()
-
-    def __getitem__(self, item):
-        return self.lazy_array[item].compute()
-
-    def build_lazy_array(self):
-        if VERBOSE: print('Building Array')
-        delayed_image_reads = [delayed(self.get_z_plane)(x) for x in range(self.zdim)]
-        delayed_arrays = [da.from_delayed(x, shape=self.sample_data.shape, dtype=self.sample_data.dtype)[0] for x in delayed_image_reads]
-        self.lazy_array = da.stack(delayed_arrays)
-        if VERBOSE > 1: print(self.lazy_array)
-
-    def get_z_plane(self,z_plane: int):
-        return self.tif.series[z_plane].asarray()
-
-    @property
-    def shape(self):
-        return self.lazy_array.shape
-
-    @property
-    def chunksize(self):
-        return self.lazy_array.chunksize
-
-    @property
-    def nbytes(self):
-        return self.lazy_array.nbytes
-
-    @property
-    def dtype(self):
-        return self.lazy_array.dtype
-
-    @property
-    def chunks(self):
-        return self.lazy_array.chunks
-
-    @property
-    def ndim(self):
-        return self.lazy_array.ndim
-
-    def __del__(self):
-        del self.lazy_array
-        self.tif.close()
-        del self.tif
-
-
 def mesospim_meta_data(metadata_dir: Path):
     return collect_all_metadata(metadata_dir)
 
@@ -385,15 +308,6 @@ def save_image(file_name, array):
     if VERBOSE: print(f'Saving: {file_name}')
     skimage.io.imsave(file_name,array, plugin="tifffile", bigtiff=True)
 
-    # import tifffile
-    # tifffile.imwrite(
-    #     'out_location',
-    #     canvas,
-    #     bigtiff=True,
-    #     photometric='minisblack',
-    #     metadata={'axes': 'ZYX'},
-    # )
-
 def trim_psf(psf):
     from constants import PSF_THRESHOLD as threshold
     while np.all(psf[0] < threshold) and np.all(psf[-1] < threshold):
@@ -415,7 +329,7 @@ def trim_psf(psf):
 
 
 @app.command()
-def decon(file_location: Path, refractive_index: float, out_location: Path=None, resolution: tuple[float,float,float]=None,
+def decon(file_location: Path, refractive_index: float=None, out_location: Path=None, resolution: tuple[float,float,float]=None,
           emission_wavelength: int=None, na: float=None, ri: float=None,
           start_index: int=None, stop_index: int=None, save_pre_post: bool=False, queue_ims: bool=False,
           denoise_sigma: float=None, sharpen: bool=False, half_precision: bool=False,
@@ -438,7 +352,10 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
     if not out_location:
         if VERBOSE: print('Making out_location')
-        out_location = file_location.parent / 'decon' / ('DECON_' + file_location.name)
+        if str(file_location).endswith('.btf'):
+            out_location = file_location.parent / 'decon' / ('DECON_' + file_location.name)
+        elif str(file_location).endswith('.ome.zarr'):
+            out_location = file_location.parents[1] / 'decon' / (file_location.parent.name.removesuffix(".ome.zarr") + '_DECON.ome.zarr')/ file_location.name
 
     if not isinstance(out_location, Path):
         out_location = Path(out_location)
@@ -453,45 +370,59 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
         pre_location = out_location.parent / ('PRE_' + out_location.stem + TMP_EXT)
         pre_location.parent.mkdir(parents=True, exist_ok=True)
 
-    if not resolution:
-        z_res = y_res = x_res = None
-
-    if '.btf' in str(file_location):
-        if VERBOSE: print('Is mesospim big tiff file')
-
-        # Imaging parameters to be passes to psf
-        na = 0.2
-        # sample_ri = 1.47 #CUBIC
-        sample_ri = refractive_index
-        objective_immersion_ri_design = 1.000293 # Air
-        objective_immersion_ri_actual = 1.000293 # Air
-        objective_working_distance = 45 * 1000 #in microns
-        coverslip_ri_design = 1.000293 # objective design
-        coverslip_ri_actual = 1.515 # during experiment
-        coverslip_thickness_actual = 1 * 1000 # in microns
-        coverslip_thickness_design = 0
-
-        psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
-
-        # Extract imaging parameter from metadata file if it exists
-        meta_dir = file_location.parent
-        meta_dict = mesospim_meta_data(meta_dir)
+    if not resolution or not emission_wavelength:
+        # Extract metadata file
+        meta_dict = mesospim_meta_data(file_location) # Extract metadata from mesospim acquisition directory, will search backwards from file location until it finds mesospim_metadata.json
         file_name = file_location.name
-        meta_entry = get_entry_for_file_name(meta_dict,file_name)
-        # ch, file_idx = get_ch_entry_for_file_name(meta_dict,file_location.name)
-        # ch0 = list(meta_dict.keys())[file_idx]
-        z_res, y_res, x_res = meta_entry.get('resolution')
-        res = (z_res, y_res, x_res)
+        meta_entry = get_entry_for_file_name(meta_dict, file_name)
 
+    if not resolution:
+        z_res, y_res, x_res = meta_entry.get('resolution')
+
+    if not emission_wavelength:
         emission_wavelength = meta_entry.get('emission_wavelength')
 
 
+    # Set imaging parameters hardcoded for now
+    # Imaging parameters to be passes to psf
+    na = 0.2
+    # sample_ri = 1.47 #CUBIC
+    sample_ri = refractive_index
+    objective_immersion_ri_design = 1.000293  # Air
+    objective_immersion_ri_actual = 1.000293  # Air
+    objective_working_distance = 45 * 1000  # in microns
+    coverslip_ri_design = 1.000293  # objective design
+    coverslip_ri_actual = 1.515  # during experiment
+    coverslip_thickness_actual = 1 * 1000  # in microns
+    coverslip_thickness_design = 0
+
+    psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
+
     assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
 
-    if '.btf' in str(file_location):
+    if str(file_location).endswith('.btf'):
+        from mesospim_btf import mesospim_btf_helper
         if VERBOSE: print('Opening File as mesospim_btf_helper')
         stack = mesospim_btf_helper(file_location)
         stack = stack.lazy_array
+        stack = stack[start_index:stop_index]
+
+    elif str(file_location).endswith('.ome.zarr'):
+        from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
+        if VERBOSE: print('Opening File as OmeZarrArray')
+        input_omezarr = OmeZarrArray(file_location)
+        out_ome_zarr = input_omezarr.omezarr_like(out_location) # create output zarr structure like input to write all deconned data
+        if str(file_location.parent).endswith('.ome.zarr'):
+            zgroup_file = file_location.parent / '.zgroup'
+            zattrs_file = file_location.parent / '.zattrs'
+            print(f'{zgroup_file=}, {zattrs_file=}')
+            if zgroup_file.is_file():
+                shutil.copy2(zgroup_file, out_location.parent / '.zgroup')
+            if zattrs_file.is_file():
+                shutil.copy2(zattrs_file, out_location.parent / '.zattrs')
+
+        out_ome_zarr.mode = 'a'  # set to append mode to write data
+        stack = input_omezarr.to_dask()
         stack = stack[start_index:stop_index]
 
     assert 'stack' in locals(), 'Image file has not been loaded, perhaps it is an unsupported format'
@@ -532,7 +463,17 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
     # Pad array based on psf size
     ARRAY_PADDING = [[int((x * 2) + 1) for z in [1, 1]] for x in psf.shape]
-    stack = np.pad(stack, [[0,0], *ARRAY_PADDING[1:]], mode='reflect')
+    # print("PRE PADDING:")
+    # print("shape:", stack.shape)
+    # print("chunks:", stack.chunks)
+    # print("nblocks:", np.prod([len(c) for c in stack.chunks]))
+    # print("graph tasks:", len(stack.__dask_graph__()))
+    stack = da.pad(stack, [[0,0], *ARRAY_PADDING[1:]], mode='reflect')
+    # print("POST PADDING:")
+    # print("shape:", stack.shape)
+    # print("chunks:", stack.chunks)
+    # print("nblocks:", np.prod([len(c) for c in stack.chunks]))
+    # print("graph tasks:", len(stack.__dask_graph__()))
     if VERBOSE > 1: print(f'PADDED_SHAPE: {stack.shape}')
 
     ## Attempt to determine the number of frames that will max out vRAM for most efficient processing.
@@ -618,9 +559,14 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
         if VERBOSE: print(f'Writing Chunk {idx+1} of {num_decon_chunks}')
 
-        with tifffile.TiffWriter(out_location, bigtiff=True, append=not first_chunk) as tif:
-            for img in to_decon:
-                tif.write(img[np.newaxis, ...], contiguous=False)
+        if str(file_location).endswith('.btf'):
+            with tifffile.TiffWriter(out_location, bigtiff=True, append=not first_chunk) as tif:
+                for img in to_decon:
+                    tif.write(img[np.newaxis, ...], contiguous=False)
+
+        elif str(file_location).endswith('.ome.zarr'):
+            out_ome_zarr[z_start:z_end] = to_decon
+
         first_chunk = False
         
         torch.cuda.empty_cache()
@@ -633,7 +579,20 @@ def decon(file_location: Path, refractive_index: float, out_location: Path=None,
 
     if VERBOSE: print('Deconvolution complete')
 
-    if out_location.is_file():
+    if str(file_location).endswith('.ome.zarr'):
+        if VERBOSE: print(f'Generating .ome.zarr multiscales: {out_location.name}')
+        out_ome_zarr.create_multiscales(async_close=False) # Blocking until all multiscales are created.
+
+        # Replicate bigstitcher xml with updated zarr group name
+        if VERBOSE: print(f'Generating BigStitcher XML for .ome.zarr: {final_out_location.name}')
+        replace_xml_zarr_relative_group_name(
+            str(Path(file_location).parent) +'.xml',        # xml name
+            Path(file_location).parent.name,                # original zarr group name
+            Path(out_location).parent.name,                 # new zarr group name
+            str(Path(final_out_location).parent) + '.xml'   # new xml location
+        )
+
+    if out_location.exists():
         if VERBOSE: print(f'Renaming File: {out_location.name} to {final_out_location.name}')
         out_location.rename(final_out_location)
 
@@ -673,10 +632,11 @@ def get_chunk_with_padding(darr, z_start, z_end, pad: tuple, axis=0):
     pad_after = min(Z, z_end + pad[1])
 
     # Extract the padded chunk
-    chunk = darr[pad_before:pad_after]
-    chunk = np.zeros(chunk.shape,chunk.dtype)
-    for img_idx, img in enumerate(darr[pad_before:pad_after]):
-        chunk[img_idx] = img.compute()
+    # chunk = darr[pad_before:pad_after]
+    # chunk = np.zeros(chunk.shape,chunk.dtype)
+    # for img_idx, img in enumerate(darr[pad_before:pad_after]):
+    #     chunk[img_idx] = img.compute()
+    chunk = darr[pad_before:pad_after].compute() # Monitor the for btf files, it may cause incorrect reading.
 
     # chunk = darr[pad_before:pad_after].compute()
 

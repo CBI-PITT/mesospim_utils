@@ -19,6 +19,9 @@ general:
 
   emission_map:
     #Mapping common names to emission wavelengths, only used if wavelength is not explicitly stated in metadata file
+    "emp": 405
+    "dapi": 450
+    "hoechst": 450
     "gfp": 525
     "yfp": 525
     "green": 525
@@ -26,11 +29,13 @@ general:
     "red": 595
     "cy5": 665
     "far_red": 665
+    "cy7": 790
 
   emission_to_rgb:
     # Mapping emission range to RGB colors
     # Keys are wavelength ranges in nm
     # Values are (R,G,B)
+    'default': [ 0.5, 0.5, 0.5 ]
     '300-479': [ 0, 0, 1 ]
     '480-540': [ 0, 1, 0 ]
     '541-625': [ 1, 0, 0 ]
@@ -100,7 +105,7 @@ slurm:
     'CPUS': 1
     'JOB_LABEL': 'ms_decon'
     'RAM_GB': 1300 # Acts of max RAM allocation based on how it is implemented in rl.py
-    'GRES': 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'GRES': 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1", or shard:4, or None
     'PARALLEL_JOBS': 32 # In a slurm array, how many jobs will run in parallel
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
@@ -124,3 +129,44 @@ slurm:
     'PARALLEL_JOBS': 20
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  omezarr:
+    # OME-Zarr conversion, uses ome_zarr_multiscale_writer
+    'PARTITION': 'compute' #multiple partitions can be specified with comma separation part1,par2
+    'CPUS': 24
+    'JOB_LABEL': 'dev_omezarr'
+    'RAM_GB': 64
+    'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'PARALLEL_JOBS': 20
+    'NICE': 0
+    'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  bigstitcher:
+    'PARTITION': 'gpu,ai' #multiple partitions can be specified with comma separation part1,par2'
+    'CPUS': 56
+    'JOB_LABEL': 'ms_bigstitcher'
+    'RAM_GB': 1000
+    'GRES':
+    'PARALLEL_JOBS': 4
+    'NICE': 0
+    'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+bigstitcher:
+  fiji_install_folder: "" # If empty "", will use Fiji installed with mesospim_utils
+  downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
+  downsample_in_y: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
+  downsample_in_z: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
+  blocksize_x: 256
+  blocksize_y: 256
+  blocksize_z: 256
+  blocksize_factor_x: 2
+  blocksize_factor_y: 2
+  blocksize_factor_z: 2
+  subsampling_factors: 'automated' # "{{1,1,1}, {2,2,2}, {4,4,4}, {8,8,8}, {16,16,16}, {32,32,32}}"
+  ram_fraction: 0.95 # 0-1, Fraction of allocated RAM to allocate to bigstitcher Java heap
+
+########################################################################################################################
+######### DEV Options ############
+########################################################################################################################
+
+dev:
+  slurm_top_priority: false # If true this will run "scontrol top" to set priority above any running jobs
+  # This will only apply to job from the user running the mesospim_utils pipeline
+  # top will only work if slurm is configured to allow users to change job priority and if the user has permission to do so.

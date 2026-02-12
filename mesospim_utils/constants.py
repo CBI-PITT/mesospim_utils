@@ -56,6 +56,12 @@ OVERIDE_STAGE_DIRECTION = general.get('overide_stage_direction')
 SLURM_PARAMETERS_FOR_DEPENDENCIES = slurm.get('dependencies')
 
 #######################################################################################################################
+####  DEV Options ###
+#######################################################################################################################
+dev = config.get('dev')
+DEV_SLURM_TOP_PRIORITY = dev.get('slurm_top_priority')
+
+#######################################################################################################################
 ####  Alignment align_py.py ###
 #######################################################################################################################
 align = config.get('align')
@@ -88,6 +94,11 @@ MAX_VRAM = decon.get('max_vram') * decon.get('margin_vram')
 VRAM_PER_VOXEL = decon.get('vram_per_voxel') # Approximation based on real data
 
 SLURM_PARAMETERS_DECON = slurm.get('decon')
+
+#######################################################################################################################
+####  OME-Zarr file converter constants ###
+#######################################################################################################################
+SLURM_PARAMETERS_OMEZARR = slurm.get('omezarr')
 
 #######################################################################################################################
 ####  Imaris file converter constants ###
@@ -129,3 +140,30 @@ LOCATION_OF_MESOSPIM_UTILS_INSTALL = Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL)
 ENV_PYTHON_LOC = Path(ENV_PYTHON_LOC)
 WINE_INSTALL_LOC = Path(WINE_INSTALL_LOC)
 IMARIS_CONVERTER_LOC = Path(IMARIS_CONVERTER_LOC)
+
+########################################################################################################################
+####  BigStitcher constants ###
+########################################################################################################################
+BIGSTITCHER = config.get('bigstitcher')
+
+FIJI_INSTALL_LOCATION = BIGSTITCHER.get('fiji_install_folder')
+if not FIJI_INSTALL_LOCATION:
+    FIJI_INSTALL_LOCATION = Path(__file__).resolve().parent.parent / 'fiji-linux' / 'Fiji.app'
+FIJI_EXECUTABLE = FIJI_INSTALL_LOCATION / "ImageJ-linux64"
+
+DOWNSAMPLE_IN_X = BIGSTITCHER.get('downsample_in_x')
+DOWNSAMPLE_IN_Y = BIGSTITCHER.get('downsample_in_y')
+DOWNSAMPLE_IN_Z = BIGSTITCHER.get('downsample_in_z')
+BLOCKSIZE_X = BIGSTITCHER.get('blocksize_x')
+BLOCKSIZE_Y = BIGSTITCHER.get('blocksize_y')
+BLOCKSIZE_Z = BIGSTITCHER.get('blocksize_z')
+BLOCKSIZE_FACTOR_X = BIGSTITCHER.get('blocksize_factor_x')
+BLOCKSIZE_FACTOR_Y = BIGSTITCHER.get('blocksize_factor_y')
+BLOCKSIZE_FACTOR_Z = BIGSTITCHER.get('blocksize_factor_z')
+SUBSAMPLING_FACTORS = BIGSTITCHER.get('subsampling_factors')
+BS_RAM_FRACTION = BIGSTITCHER.get('ram_fraction')
+
+SLURM_PARAMETERS_FOR_BIGSTITCHER = slurm.get('bigstitcher')
+
+
+########################################################################################################################

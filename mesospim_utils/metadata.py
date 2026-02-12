@@ -13,7 +13,7 @@ from utils import map_wavelength_to_RGB
 
 from constants import EMISSION_MAP, METADATA_FILENAME, METADATA_ANNOTATED_FILENAME, VERBOSE
 
-def collect_all_metadata(location: Path, prepare=True):
+def collect_all_metadata(location: Path, prepare=True, alternate_json_save_path=None) -> dict:
     """
     Collect all relevant metadata from mesospim Tile metadata files, sort by channel
 
@@ -176,6 +176,7 @@ def annotate_metadata(metadata_by_channel, location=None):
             entry['tile_shape'] = determine_tile_shape(entry)
             entry['tile_size_um'] = determine_tile_size_um(entry)
             entry['file_name'] = entry.get('Metadata for file').name
+            entry['file_name_no_extension'] = get_filename_without_extension(entry['file_name'])
             entry['refractive_index'] = determine_refractive_index_from_ETL_file_name(entry)
             entry['sheet'] = determine_sheet_direction(entry)
             if tuple(entry.get('grid_location')) == (0,0) and ch == 0:
@@ -194,6 +195,12 @@ def annotate_metadata(metadata_by_channel, location=None):
     metadata_by_channel = get_affine_transform(metadata_by_channel)
     return metadata_by_channel
 
+def get_filename_without_extension(file_name):
+    extensions = ('.ome.zarr', '.btf', '.tif', '.tiff', '.h5', '.xml', '.txt')
+    for ext in extensions:
+        if file_name.lower().endswith(ext):
+            return file_name[:-len(ext)]
+    return file_name
 
 def get_stage_direction(channel_data, grid_size):
     # Outputs tuple (y,x) where y and x are 1 or -1,
@@ -203,12 +210,12 @@ def get_stage_direction(channel_data, grid_size):
     y, x = 1, 1
     if grid_size[0] > 1:
         t0 = channel_data[0]["POSITION"]["y_pos"]
-        t1 = channel_data[1]["POSITION"]["y_pos"]
+        t1 = channel_data[-1]["POSITION"]["y_pos"]
         if t1 < t0:
             y = -1
     if grid_size[1] > 1:
         t0 = channel_data[0]["POSITION"]["x_pos"]
-        t1 = channel_data[grid_size[1]]["POSITION"]["x_pos"]
+        t1 = channel_data[-1]["POSITION"]["x_pos"]
         if t1 < t0:
             x = -1
     StageDirection = namedtuple('StageDirection', ['y', 'x'])
@@ -295,14 +302,19 @@ def determine_refractive_index_from_ETL_file_name(metadata_entry):
     etl_file_name = metadata_entry["ETL PARAMETERS"]["ETL CFG File"]
     etl_file_name = str(etl_file_name.name)
     etl_file_name = etl_file_name.lower()
-    split_ri = etl_file_name.split('_ri_')[-1]
-    split_ri = split_ri.split('_')[0]
-    try:
-        ri = float(split_ri)
-        return ri
-    except Exception:
+
+    match = re.search(
+        r'ri[^0-9+-]*([+-]?\d+(?:\.\d+)?)',
+        etl_file_name,
+        re.IGNORECASE
+    )
+
+    output = float(match.group(1)) if match else None
+    if output is None:
         if VERBOSE: print('No RI found in the ETL cfg file')
         return None
+    else:
+        return output
 
 
 def determine_tile_size_um(metadata_entry):
@@ -323,15 +335,42 @@ def determine_tile_shape(metadata_entry):
 
     return TileShape(z=z, y=y, x=x)
 
+def extract_wavelength_from_filter(value:str) -> int | str:
+    '''
+    Given a filter string, extract the leading wavelength number if present
+    Examples:
+    "450/50 nm" -> 450
+    "450/50 (GFP)" -> 450
+    "450" -> 450
+    "empty" -> "empty"
+    "GFP" -> "GFP"
+    '''
+    value = value.strip()
+
+    # Match leading number (handles "450", "450/50", "450/50 nm", etc.)
+    # Match leading number, optionally followed by /number, then anything
+    match = re.match(r"^(\d+)(?:/\d+)?(?:\s+.*)?$", value)
+    if match:
+        return int(match.group(1))  # returns 450
+
+    # Otherwise return full name
+    return value
 
 def determine_emission_wavelength(metadata_entry):
     # Extract 3 digit wavelength, if it doesn't exist reference EMISSION_MAP in the constants module
-    emission_wavelength = metadata_entry['CFG']['Filter'][0:3]
-    try:
-        emission_wavelength = int(emission_wavelength)
-    except Exception:
+    emission_wavelength = metadata_entry['CFG']['Filter']
+    emission_wavelength = extract_wavelength_from_filter(emission_wavelength)
+
+    if emission_wavelength == 'empty':
+        return None
+
+    if isinstance(emission_wavelength, int):
+        return emission_wavelength
+
+    if isinstance(emission_wavelength, str):
         assert emission_wavelength.lower() in EMISSION_MAP, f"No emission wavelength found for channel: {color}"
         emission_wavelength = EMISSION_MAP.get(emission_wavelength.lower())
+
     return emission_wavelength
 
 
@@ -346,15 +385,28 @@ def determine_xyz_resolution(metadata_entry):
 def determine_overlap(single_channel_metadata):
     for metadata in single_channel_metadata:
         if metadata['tile_number'] == 0:
-            loc0 = metadata['POSITION']["y_pos"]
+            loc0y = metadata['POSITION']["y_pos"]
+            loc0x = metadata['POSITION']["x_pos"]
         if metadata['tile_number'] == 1:
-            loc1 = metadata['POSITION']["y_pos"]
+            loc1y = metadata['POSITION']["y_pos"]
+            loc1x = metadata['POSITION']["x_pos"]
+
+    if 'loc1y' not in locals() and 'loc1x' not in locals():
+        # Only 1 tile present, no overlap
+        return 0.0
 
     resolution = single_channel_metadata[0]["CFG"]["Pixelsize in um"]
-    cam_pixels = single_channel_metadata[0]["CAMERA PARAMETERS"]["y_pixels"]
+    cam_pixelsy = single_channel_metadata[0]["CAMERA PARAMETERS"]["y_pixels"]
+    cam_pixelsx = single_channel_metadata[0]["CAMERA PARAMETERS"]["x_pixels"]
 
-    distance_moved = abs(loc1 - loc0)
-    distance_fov = resolution * cam_pixels
+    # Attempt to calculate overlap in y direction, if fails calculate in x direction
+    # May happen if only 1 row or 1 column of tiles
+    try:
+        distance_moved = abs(loc1y - loc0y)
+        distance_fov = resolution * cam_pixelsy
+    except Exception:
+        distance_moved = abs(loc1x - loc0x)
+        distance_fov = resolution * cam_pixelsx
     overlap_percent = 1 - (distance_moved / distance_fov)
     overlap_percent = round(overlap_percent, 2)
     return overlap_percent
@@ -508,7 +560,7 @@ def get_first_entry(meta_dict):
             return entry
 
 
-def get_ch_entry_for_file_name(meta_dict, file_name):
+def get_ch_entry_for_file_name(meta_dict, file_name, ignore_extension=True):
     '''
     Given the meta_dict created by fn collect_all_metadata()
     And the file_name: /{dir1}/{dir2}/.../{file_name}
@@ -516,15 +568,29 @@ def get_ch_entry_for_file_name(meta_dict, file_name):
     return the channel key and index of the specific metadata record
 
     If the file_name is not found, then return (None,None)
+
+    Option to ignore the extension of the file name when searching for a match.
+    This is useful when the file name in the metadata may not have the same extension as the actual file name on disk
+    (e.g., due to post-processing or renaming). By default, ignore_extension is set to True.
+    If set to False, the function will compare the exact filename including extension.
     '''
+    if ignore_extension:
+        file_name = get_filename_without_extension(file_name)
+
+    print(f"Searching for channel and entry index for file name: {file_name} with ignore_extension={ignore_extension}")
     for ch in meta_dict:
         for idx, entry in enumerate(meta_dict[ch]):
-            if file_name.lower() == entry.get('file_name').lower():
+            print(f"Checking channel {ch}, entry {idx} with file name: {entry.get('file_name')} and file name no extension: {entry.get('file_name_no_extension')}")
+            if ignore_extension and file_name.lower() == entry.get('file_name_no_extension').lower():
                 return ch, idx
+            elif file_name.lower() == entry.get('file_name').lower():
+                return ch, idx
+        print(f"Finished checking channel {ch} for file name: {file_name} with ignore_extension={ignore_extension}")
+    print(f"Finished checking channel for file name: {file_name}")
     return None, None
 
 
-def get_entry_for_file_name(meta_dict, file_name):
+def get_entry_for_file_name(meta_dict, file_name, ignore_extension=True):
     '''
     Given the meta_dict created by fn collect_all_metadata()
     And the file_name: /{dir1}/{dir2}/.../{file_name}
@@ -532,8 +598,16 @@ def get_entry_for_file_name(meta_dict, file_name):
     return specific meta_data dict record for the given file_name
 
     If the file_name is not found, then return (None,None)
+
+    Option to ignore the extension of the file name when searching for a match.
+    This is useful when the file name in the metadata may not have the same extension as the actual file name on disk
+    (e.g., due to post-processing or renaming). By default, ignore_extension is set to True.
+    If set to False, the function will compare the exact filename including extension.
     '''
-    ch, idx = get_ch_entry_for_file_name(meta_dict, file_name)
+    print(f"Searching for metadata entry for file name: {file_name} with ignore_extension={ignore_extension}")
+    ch, idx = get_ch_entry_for_file_name(meta_dict, file_name, ignore_extension=ignore_extension)
+    print(f"Found channel and entry index for file name: {file_name} with ignore_extension={ignore_extension}")
+    print(f"Channel: {ch}, Entry Index: {idx}")
     if ch is not None and idx is not None:
         return meta_dict[ch][idx]
     return None
@@ -548,6 +622,51 @@ def get_all_tile_entries(meta_dict, tile_num):
                 tile_entries.append(entry)
     return tile_entries
 
+def get_number_of_sheets(meta_dict):
+    sheets = set()
+    for ch in meta_dict:
+        for entry in meta_dict[ch]:
+            sheets.add(entry.get('sheet'))
+    return len(sheets)
+
+def get_rotations(meta_dict):
+    rotations = set()
+    for ch in meta_dict:
+        for entry in meta_dict[ch]:
+            rotation = entry.get("POSITION", {}).get("rot", 0)
+            rotations.add(rotation)
+    return rotations
+
+def modify_file_names_in_annotated_metadata(meta_dict, modify_function: callable='.ome.zarr'):
+    '''
+    Given the meta_dict created by fn collect_all_metadata()
+    And a modify_function that takes a file_name string and returns a modified file_name string
+
+    Apply the modify_function to each 'file_name' entry in the meta_dict
+
+    ** Defaults to adding '.ome.zarr' to each file name if no modify_function is provided **
+    '''
+    if modify_function == '.ome.zarr':
+        "Add .ome.zarr to file names by default"
+        modify_function = lambda x: x + '.ome.zarr'
+    for ch in meta_dict:
+        for entry in meta_dict[ch]:
+            original_file_name = entry.get('file_name')
+            modified_file_name = modify_function(original_file_name)
+            entry['file_name'] = modified_file_name
+    return meta_dict
+
+def affine_microns_to_translation_zyx(affine_microns):
+    '''
+    Given an affine matrix in microns from meta_dict, return the translation vector in (z,y,x)
+    '''
+    tz = affine_microns[0][3]
+    ty = affine_microns[1][3]
+    tx = affine_microns[2][3]
+
+    Translation = namedtuple('Translation', ['z', 'y', 'x'])
+
+    return Translation(tz, ty, tx)
 
 if __name__ == "__main__":
     import typer
