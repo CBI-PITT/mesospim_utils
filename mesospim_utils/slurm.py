@@ -12,7 +12,7 @@ from constants import DEV_SLURM_TOP_PRIORITY
 
 app = typer.Typer()
 
-SUPERNICE_VALUE = 1000000000
+SUPERNICE_VALUE = 10000000
 
 ######################################################################################################################
 ####  DECON FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
