@@ -14,7 +14,13 @@ from metadata import (
     affine_microns_to_translation_zyx,
     get_entry_for_file_name
 )
-from slurm import convert_ims_dir_mesospim_tiles_slurm_array, decon_dir, wrap_slurm, sbatch_depends, format_sbatch_wrap, submit_array, get_slurm_log_location
+from slurm import (
+    decon_dir,
+    wrap_slurm,
+    submit_array,
+    get_slurm_log_location,
+    set_super_nice
+)
 from utils import ensure_path, common_prefix, strip_after
 from imaris import convert_ims
 from bigstitcher import (does_dir_contain_bigstitcher_metadata,
@@ -41,7 +47,8 @@ def automated_method_slurm(dir_loc: Path,
                            refractive_index: Annotated[float,typer.Option(help="Is discovered automatically in the metadata but can be provided manually")]=None,
                            iterations: Annotated[int,typer.Option(help="Deconvolution iterations")]=20,
                            frames_per_chunk: Annotated[int,typer.Option(help="How many z-planes are deconvolved at once. Best to let this be automatically determined")]=None,
-                           num_parallel: Annotated[int,typer.Option(help="How many MesoSPIM tiles will be deconvolved in parallel on SLURM")]=None
+                           num_parallel: Annotated[int,typer.Option(help="How many MesoSPIM tiles will be deconvolved in parallel on SLURM")]=None,
+                           supernice: Annotated[bool,typer.Option(help="Submit all downstream slurm jobs will elevated nice value")]=False
                            ):
     '''
     Automate the processing of all data in a mesospim directory using SLURM
@@ -68,6 +75,10 @@ def automated_method_slurm(dir_loc: Path,
     stitching via bigstitcher alignment of omezarr
     fusion of data into a single omezarr file
     '''
+
+    if supernice:
+        set_super_nice()
+
 
     dir_loc = ensure_path(dir_loc)
 
@@ -100,6 +111,7 @@ def automated_method_slurm(dir_loc: Path,
         ## Decon:
         print('Queueing DECON of MesoSPIM tiles on SLURM')
         out_file_type = '.ome.zarr' if omezarr_path else '.btf'
+        # decon_dir should inherit supernice value if set, so that all downstream processes will run with elevated nice value
         job_number, out_dir = decon_dir(dir_loc, refractive_index, file_type=file_type, out_file_type=out_file_type, iterations=iterations, frames_per_chunk=frames_per_chunk, num_parallel=num_parallel)
         print((job_number, out_dir))
         file_type = out_file_type
@@ -115,6 +127,8 @@ def automated_method_slurm(dir_loc: Path,
         cmd += f' --file-type={file_type}'
         cmd += f' --queue-alignment'
         cmd += f' --final-file-type {final_file_type}'
+        if supernice:
+            cmd += f' --supernice'
 
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_OMEZARR, slurm_log_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_{file_type[1:]}_to_omezarr')
@@ -137,6 +151,8 @@ def automated_method_slurm(dir_loc: Path,
         cmd += f'{mesospim_root_application}/automated.py big-stitcher-align'
         cmd += f' {Path(out_dir).parent}'
         cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
+        if supernice:
+            cmd += f' --supernice'
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_bigstitcher')
         print(f'Dependency process number: {job_number}')
@@ -144,7 +160,10 @@ def automated_method_slurm(dir_loc: Path,
 
 @app.command()
 def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf', queue_alignment: bool=True, final_file_type: str='omezarr',
-                                after_slurm_jobs: list[int]=None):
+                                after_slurm_jobs: list[int]=None, supernice: bool=False):
+
+    if supernice:
+        set_super_nice()
 
     from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER, SLURM_PARAMETERS_FOR_DEPENDENCIES, SLURM_PARAMETERS_OMEZARR
     import zarr
@@ -226,6 +245,8 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
         cmd = f'{mesospim_root_application}/automated.py big-stitcher-align'
         cmd += f' {output_directory_for_omezarr_collection.parent}'
         cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
+        if supernice:
+            cmd += f' --supernice'
 
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_bigstitcher')
@@ -254,7 +275,11 @@ def get_intermediate_file_type_for_bigstitcher_alignment(final_file_type: str):
 
 
 @app.command()
-def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file_type: str='omezarr'):
+def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file_type: str='omezarr', supernice: bool=False):
+
+    if supernice:
+        set_super_nice()
+
     print('Setting up script to run omezarr alignment')
     from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
     from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
@@ -297,7 +322,10 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
 
 
 @app.command()
-def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif', ims_convert: bool=True):
+def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif', ims_convert: bool=True, supernice: bool=False):
+
+    if supernice:
+        set_super_nice()
 
     # Collect all metadata from MesoSPIM acquisition directory and save to mesospim_metadata.json in the ims file dir
     print(f'Extracting metadata from {metadata_dir}')
