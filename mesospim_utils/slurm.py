@@ -12,6 +12,8 @@ from constants import DEV_SLURM_TOP_PRIORITY
 
 app = typer.Typer()
 
+SUPERNICE_VALUE = 1000000000
+
 ######################################################################################################################
 ####  DECON FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
 ######################################################################################################################
@@ -268,6 +270,28 @@ def convert_ims_dir_mesospim_tiles_slurm_array(dir_loc: Path, file_type: str='.b
 ######################################################################################################################
 ####  HELPER FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
 ######################################################################################################################
+
+def set_super_nice():
+    '''
+    Import the SLURM parameters dictionaries and set the NICE value to a very high number to deprioritize these jobs in the queue.
+    This overides the NICE value set in the constants.py file, but only for the SLURM jobs that are submitted from this script.
+    '''
+
+    from constants import (
+        SLURM_PARAMETERS_OMEZARR,
+        SLURM_PARAMETERS_DECON,
+        SLURM_PARAMETERS_FOR_BIGSTITCHER,
+        SLURM_PARAMETERS_FOR_DEPENDENCIES,
+        SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN,
+        SLURM_PARAMETERS_IMARIS_CONVERTER,
+    )
+
+    SLURM_PARAMETERS_OMEZARR['NICE'] = SUPERNICE_VALUE
+    SLURM_PARAMETERS_DECON['NICE'] = SUPERNICE_VALUE
+    SLURM_PARAMETERS_FOR_BIGSTITCHER['NICE'] = SUPERNICE_VALUE
+    SLURM_PARAMETERS_FOR_DEPENDENCIES['NICE'] = SUPERNICE_VALUE
+    SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN['NICE'] = SUPERNICE_VALUE
+    SLURM_PARAMETERS_IMARIS_CONVERTER['NICE'] = SUPERNICE_VALUE
 
 def get_slurm_log_location(dir_loc: Path):
     '''
