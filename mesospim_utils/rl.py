@@ -21,6 +21,7 @@ import tifffile
 import skimage
 import shutil
 from skimage import img_as_float32, img_as_uint
+import dask
 import dask.array as da
 
 from psf import get_psf
@@ -636,7 +637,11 @@ def get_chunk_with_padding(darr, z_start, z_end, pad: tuple, axis=0):
     # chunk = np.zeros(chunk.shape,chunk.dtype)
     # for img_idx, img in enumerate(darr[pad_before:pad_after]):
     #     chunk[img_idx] = img.compute()
-    chunk = darr[pad_before:pad_after].compute() # Monitor the for btf files, it may cause incorrect reading.
+    # chunk = darr[pad_before:pad_after].compute() # Monitor the for btf files, it may cause incorrect reading.
+
+    # Single-threaded important to avoid race conditions where planes get mixed up.
+    print(f'Computing chunk with padding: {pad_before}:{pad_after} (single-threaded)')
+    chunk = dask.compute(darr[pad_before:pad_after], scheduler="single-threaded")[0]
 
     # chunk = darr[pad_before:pad_after].compute()
 
