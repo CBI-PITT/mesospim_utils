@@ -1,3 +1,10 @@
+'''
+This module has functions to orchestrate BigStitcher alignment for mesospim data.
+Assumptions are that data were acquired using the omezarr writer plugin for mesospim
+OR data have been converted to ome-zarr format using the convert_mesospim_btf_to_omezarr function from the omezarr module.
+The mesospim_metadata_to_bigstitcher_xml function in this module can be used to create a bigstitcher xml file for use here.
+'''
+
 from typing import Any, Optional
 
 import typer
@@ -12,23 +19,13 @@ import zarr
 
 # Local imports
 from metadata import collect_all_metadata, get_first_entry, get_number_of_sheets, get_rotations, modify_file_names_in_annotated_metadata
-from utils import ensure_path, sort_list_of_paths_by_tile_number, make_directories, dict_to_json_file
-from constants import (
-    ALIGNMENT_DIRECTORY,
-    CORRELATION_THRESHOLD_FOR_ALIGN,
-    RESOLUTION_LEVEL_FOR_ALIGN,
-    VERBOSE,
-    OFFSET_METRIC,
-    REMOVE_OUTLIERS,
-    ALIGN_ALL_OUTPUT_FILE_NAME,
-    ALIGN_METRIC_OUTPUT_FILE_NAME,
-    OVERIDE_STAGE_DIRECTION
-)
+from utils import ensure_path
 
 from constants import (
 DOWNSAMPLE_IN_X,
 DOWNSAMPLE_IN_Y,
 DOWNSAMPLE_IN_Z,
+DOWNSAMPLE_REFINEMENT,
 BLOCKSIZE_X,
 BLOCKSIZE_Y,
 BLOCKSIZE_Z,
@@ -38,400 +35,30 @@ BLOCKSIZE_FACTOR_Z,
 SUBSAMPLING_FACTORS
 )
 
+from bigstitcher_macro_templates import (
+    BIGSTITCHER_ALIGN_OMEZARR_OUT,
+    BIGSTITCHER_ALIGN_HDF5_OUT
+)
+
 # INIT typer cmdline interface
 app = typer.Typer()
 
-'''
-This module has functions to orchestrate BigStitcher for mesospim data.
-Assumptions are the data were acquired using the omezarr writer plugin for mesospim
-'''
-
-
-BIGSTITCHER_ALIGN_OMEZARR_OUT = '''
-// This is a ImageJ macro file for running BigStitcher alignment
-// It can be run headlessly in Fiji with BigStitcher installed
-
-// --------------------------------------------------------------------
-// STAGE 1: Tile alignment using channels=[Average Channels]
-// --------------------------------------------------------------------
-
-// select= xml file path to the ome.zarr.xml file
-// downsample_in_x/y/z = downsampling factors for alignment (1 = no downsampling)
-
-print("");
-print("----------------------------------------------------------------------------------------");
-print("Stage 1: Calculate pairwise shifts (Average Channels)");
-print("----------------------------------------------------------------------------------------");
-print("");
-
-run("Calculate pairwise shifts ...",
-"select='{0}' \
-process_angle=[All angles] \
-process_channel=[All channels] \
-process_illumination=[All illuminations] \
-process_tile=[All tiles] \
-process_timepoint=[All Timepoints] \
-method=[Phase Correlation] \
-show_expert_grouping_options \
-how_to_treat_timepoints=[treat individually] \
-how_to_treat_channels=group \
-how_to_treat_illuminations=group \
-how_to_treat_angles=[treat individually] \
-how_to_treat_tiles=compare \
-channels=[Average Channels] \
-downsample_in_x={1} \
-downsample_in_y={2} \
-downsample_in_z={3}");
-
-// select= xml file path to the ome.zarr.xml file
-
-print("");
-print("----------------------------------------------------------------------------------------");
-print("Stage 1: Optimize globally and apply shifts (tile geometry)");
-print("----------------------------------------------------------------------------------------");
-print("");
-
-run("Optimize globally and apply shifts ...",
-"select='{0}' \
-process_angle=[All angles] \
-process_channel=[All channels] \
-process_illumination=[All illuminations] \
-process_tile=[All tiles] \
-process_timepoint=[All Timepoints] \
-relative=2.500 \
-absolute=3.500 \
-global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
-show_expert_grouping_options \
-how_to_treat_timepoints=[treat individually] \
-how_to_treat_channels=group \
-how_to_treat_illuminations=group \
-how_to_treat_angles=[treat individually] \
-how_to_treat_tiles=compare \
-fix_group_0-0");
-
-// --------------------------------------------------------------------
-// STAGE 2: Channel alignment with fixed tile positions
-// --------------------------------------------------------------------
-
-// select= xml file path to the ome.zarr.xml file
-// downsample_in_x/y/z = downsampling factors for alignment (1 = no downsampling)
-
-print("");
-print("----------------------------------------------------------------------------------------");
-print("Stage 2: Optimize per channel with fixed tile positions (Channel alignment)");
-print("----------------------------------------------------------------------------------------");
-print("");
-
-run("Calculate pairwise shifts ...",
-"select='{0}' \
-process_angle=[All angles] \
-process_channel=[All channels] \
-process_illumination=[All illuminations] \
-process_tile=[All tiles] \
-process_timepoint=[All Timepoints] \
-method=[Phase Correlation] \
-show_expert_grouping_options \
-how_to_treat_timepoints=[treat individually] \
-how_to_treat_channels=compare \
-how_to_treat_illuminations=group \
-how_to_treat_angles=[treat individually] \
-how_to_treat_tiles=group \
-illuminations=[Average Illuminations] \
-tiles=[Average Tiles] \
-downsample_in_x={1} \
-downsample_in_y={2} \
-downsample_in_z={3}");
-
-
-// select= xml file path to the ome.zarr.xml file
-
-print("");
-print("----------------------------------------------------------------------------------------");
-print("Stage 2: Optimize globally and apply shifts (Channel geometry)");
-print("----------------------------------------------------------------------------------------");
-print("");
-
-run("Optimize globally and apply shifts ...",
-"select='{0}' \
-process_angle=[All angles] \
-process_channel=[All channels] \
-process_illumination=[All illuminations] \
-process_tile=[All tiles] \
-process_timepoint=[All Timepoints] \
-relative=2.500 \
-absolute=3.500 \
-global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
-show_expert_grouping_options \
-how_to_treat_timepoints=[treat individually] \
-how_to_treat_channels=compare \
-how_to_treat_illuminations=group \
-how_to_treat_angles=[treat individually] \
-how_to_treat_tiles=group \
-fix_group_0-0");
-
-
-// --------------------------------------------------------------------
-// STAGE 3: Image Fusion into OME-Zarr
-// --------------------------------------------------------------------
-
-
-// select= xml file path to the ome.zarr.xml file
-// zarr_dataset_path= output path for fused ome.zarr file
-// block_size_x/y/z = block size for fused output
-// block_size_factor_x/y/z = block size factors for fused output
-// subsampling_factors= downsampling factors for multiscale output.
-
-print("");
-print("----------------------------------------------------------------------------------------");
-print("Creating Fused Dataset to OME-Zarr");
-print("----------------------------------------------------------------------------------------");
-print("");
-
-run("Image Fusion",
-"select='{0}' \
-process_angle=[All angles] \
-process_channel=[All channels] \
-process_illumination=[All illuminations] \
-process_tile=[All tiles] \
-process_timepoint=[All Timepoints] \
-bounding_box=[Currently Selected Views] \
-downsampling=1 \
-interpolation=[Linear Interpolation] \
-fusion_type=[Avg, Blending] \
-pixel_type=[16-bit unsigned integer] \
-interest_points_for_non_rigid=[-= Disable Non-Rigid =-] \
-preserve_original \
-produce=[Each timepoint & channel] \
-fused_image=[OME-ZARR/N5/HDF5 export using N5-API] \
-define_input=[Auto-load from input data (values shown below)] \
-export=OME-ZARR \
-compression=Zstandard compression_level=5 \
-create_multi-resolution \
-store \
-zarr_dataset_path='{4}' \
-show_advanced_block_size_options \
-block_size_x={5} \
-block_size_y={6} \
-block_size_z={7} \
-block_size_factor_x={8} \
-block_size_factor_y={9} \
-block_size_factor_z={10} \
-subsampling_factors=[{11}]");
-
-// hard-exit JVM so Slurm releases resources
-call("java.lang.System.exit", "0");
-'''
-
-'''
-file:
-To use BIGSTITCHER_ALIGN_OMEZARR_OUT
-- format in order with:
-    - input ome.zarr.xml path
-    - downsample_in_x for alignment
-    - downsample_in_y for alignment
-    - downsample_in_z for alignment
-    - output fused ome.zarr path
-    - block_size_x for fused output
-    - block_size_y for fused output
-    - block_size_z for fused output
-    - block_size_factor_x for processing fused output (block_size multiplier)
-    - block_size_factor_y for processing fused output (block_size multiplier)
-    - block_size_factor_z for processing fused output (block_size multiplier)
-    - subsampling_factors string, e.g. { {1,1,1}, {2,2,2}, {4,4,4}, {8,8,8} }
-
-BIGSTITCHER_ALIGN_OMEZARR_OUT.format(0,1,2,3,4,5,6,7,8,9,10,11,12)
-'''
-
-
-BIGSTITCHER_ALIGN_HDF5_OUT = '''
-// This is a ImageJ macro file for running BigStitcher alignment
-// It can be run headlessly in Fiji with BigStitcher installed
-
-// --------------------------------------------------------------------
-// STAGE 1: Tile alignment using channels=[Average Channels]
-// --------------------------------------------------------------------
-
-// select= xml file path to the ome.zarr.xml file
-// downsample_in_x/y/z = downsampling factors for alignment (1 = no downsampling)
-
-print("");
-print("----------------------------------------------------------------------------------------");
-print("Stage 1: Calculate pairwise shifts (Average Channels)");
-print("----------------------------------------------------------------------------------------");
-print("");
-
-run("Calculate pairwise shifts ...",
-"select='{0}' \
-process_angle=[All angles] \
-process_channel=[All channels] \
-process_illumination=[All illuminations] \
-process_tile=[All tiles] \
-process_timepoint=[All Timepoints] \
-method=[Phase Correlation] \
-show_expert_grouping_options \
-how_to_treat_timepoints=[treat individually] \
-how_to_treat_channels=group \
-how_to_treat_illuminations=group \
-how_to_treat_angles=[treat individually] \
-how_to_treat_tiles=compare \
-channels=[Average Channels] \
-downsample_in_x={1} \
-downsample_in_y={2} \
-downsample_in_z={3}");
-
-// select= xml file path to the ome.zarr.xml file
-
-print("");
-print("----------------------------------------------------------------------------------------");
-print("Stage 1: Optimize globally and apply shifts (tile geometry)");
-print("----------------------------------------------------------------------------------------");
-print("");
-
-run("Optimize globally and apply shifts ...",
-"select='{0}' \
-process_angle=[All angles] \
-process_channel=[All channels] \
-process_illumination=[All illuminations] \
-process_tile=[All tiles] \
-process_timepoint=[All Timepoints] \
-relative=2.500 \
-absolute=3.500 \
-global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
-show_expert_grouping_options \
-how_to_treat_timepoints=[treat individually] \
-how_to_treat_channels=group \
-how_to_treat_illuminations=group \
-how_to_treat_angles=[treat individually] \
-how_to_treat_tiles=compare \
-fix_group_0-0");
-
-// --------------------------------------------------------------------
-// STAGE 2: Channel alignment with fixed tile positions
-// --------------------------------------------------------------------
-
-// select= xml file path to the ome.zarr.xml file
-// downsample_in_x/y/z = downsampling factors for alignment (1 = no downsampling)
-
-print("");
-print("----------------------------------------------------------------------------------------");
-print("Stage 2: Optimize per channel with fixed tile positions (Channel alignment)");
-print("----------------------------------------------------------------------------------------");
-print("");
-
-run("Calculate pairwise shifts ...",
-"select='{0}' \
-process_angle=[All angles] \
-process_channel=[All channels] \
-process_illumination=[All illuminations] \
-process_tile=[All tiles] \
-process_timepoint=[All Timepoints] \
-method=[Phase Correlation] \
-show_expert_grouping_options \
-how_to_treat_timepoints=[treat individually] \
-how_to_treat_channels=compare \
-how_to_treat_illuminations=group \
-how_to_treat_angles=[treat individually] \
-how_to_treat_tiles=group \
-illuminations=[Average Illuminations] \
-tiles=[Average Tiles] \
-downsample_in_x={1} \
-downsample_in_y={2} \
-downsample_in_z={3}");
-
-
-// select= xml file path to the ome.zarr.xml file
-
-print("");
-print("----------------------------------------------------------------------------------------");
-print("Stage 2: Optimize globally and apply shifts (Channel geometry)");
-print("----------------------------------------------------------------------------------------");
-print("");
-
-run("Optimize globally and apply shifts ...",
-"select='{0}' \
-process_angle=[All angles] \
-process_channel=[All channels] \
-process_illumination=[All illuminations] \
-process_tile=[All tiles] \
-process_timepoint=[All Timepoints] \
-relative=2.500 \
-absolute=3.500 \
-global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
-show_expert_grouping_options \
-how_to_treat_timepoints=[treat individually] \
-how_to_treat_channels=compare \
-how_to_treat_illuminations=group \
-how_to_treat_angles=[treat individually] \
-how_to_treat_tiles=group \
-fix_group_0-0");
-
-
-// --------------------------------------------------------------------
-// STAGE 3: Image Fusion into HDF5
-// --------------------------------------------------------------------
-
-
-// select= xml file path to the ome.zarr.xml file
-// zarr_dataset_path= output path for fused ome.zarr file
-// block_size_x/y/z = block size for fused output
-// block_size_factor_x/y/z = block size factors for fused output
-// subsampling_factors= downsampling factors for multiscale output.
-
-print("");
-print("----------------------------------------------------------------------------------------");
-print("Creating Fused Dataset to HDF5");
-print("----------------------------------------------------------------------------------------");
-print("");
-
-run("Image Fusion",
-"select='{0}' \
-process_angle=[All angles] \
-process_channel=[All channels] \
-process_illumination=[All illuminations] \
-process_tile=[All tiles] \
-process_timepoint=[All Timepoints] \
-bounding_box=[Currently Selected Views] \
-downsampling=1 \
-interpolation=[Linear Interpolation] \
-fusion_type=[Avg, Blending] \
-pixel_type=[16-bit unsigned integer] \
-interest_points_for_non_rigid=[-= Disable Non-Rigid =-] \
-preserve_original \
-produce=[Each timepoint & channel] \
-fused_image=[OME-ZARR/N5/HDF5 export using N5-API] \
-define_input=[Auto-load from input data (values shown below)] \
-export=HDF5 \
-compression=Zstandard compression_level=5 \
-create_a_bdv/bigstitcher \
-hdf5_file='{4}' \
-xml_output_file={4}.xml \
-show_advanced_block_size_options \
-block_size_x={5} \
-block_size_y={6} \
-block_size_z={7} \
-block_size_factor_x={8} \
-block_size_factor_y={9} \
-block_size_factor_z={10} \
-subsampling_factors=[{11}]");
-
-// hard-exit JVM so Slurm releases resources
-call("java.lang.System.exit", "0");
-'''
 
 def get_bigstitcher_omezarr_alignment_marco(
     input_omezarr_xml_path: Path,
     output_omezarr_path: Path,
     path_to_write_macro: Path=None,
-    downsample_in_x: int=DOWNSAMPLE_IN_X,
-    downsample_in_y: int=DOWNSAMPLE_IN_Y,
-    downsample_in_z: int=DOWNSAMPLE_IN_Z,
+    downsample_in_x: str=DOWNSAMPLE_IN_X,
+    downsample_in_y: str=DOWNSAMPLE_IN_Y,
+    downsample_in_z: str=DOWNSAMPLE_IN_Z,
     block_size_x: int=BLOCKSIZE_X,
     block_size_y: int=BLOCKSIZE_Y,
     block_size_z: int=BLOCKSIZE_Z,
     block_size_factor_x: int=BLOCKSIZE_FACTOR_X,
     block_size_factor_y: int=BLOCKSIZE_FACTOR_Y,
     block_size_factor_z: int=BLOCKSIZE_FACTOR_Z,
-    subsampling_factors: str=SUBSAMPLING_FACTORS
+    subsampling_factors: str=SUBSAMPLING_FACTORS,
+    downsample_refinement: str=DOWNSAMPLE_REFINEMENT
 ):
     '''
     Generate BigStitcher macro for aligning omezarr data
@@ -439,20 +66,26 @@ def get_bigstitcher_omezarr_alignment_marco(
     If given path_to_write_macro, also write the macro to that path
     '''
 
-    automated_downsample = any([x.lower()=='automated' for x in [downsample_in_x, downsample_in_y, downsample_in_z]])
+    automated_downsample = any([x.lower() == 'automated' for x in [downsample_in_x, downsample_in_y, downsample_in_z]])
     automated_subsampling = subsampling_factors.lower() == 'automated'
+    automated_refinement_sampling = downsample_refinement.lower() == 'automated'
 
-    if automated_downsample or automated_subsampling:
+    if automated_downsample or automated_subsampling or automated_refinement_sampling:
         _, scale_factors_list_zyx, subsampling_str = determine_sampling_factors_for_bigstitcher(input_omezarr_xml_path)
+        sampling_num_max_idx = len(scale_factors_list_zyx) - 1
 
     if automated_subsampling:
         subsampling_factors = subsampling_str
 
-    if automated_subsampling:
-        scale_for_downsample_zyx = scale_factors_list_zyx[2]
+    if automated_downsample:
+        scale_for_downsample_zyx = scale_factors_list_zyx[2 if sampling_num_max_idx >= 2 else sampling_num_max_idx]  # 3rd downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
         downsample_in_x = scale_for_downsample_zyx[2]
         downsample_in_y = scale_for_downsample_zyx[1]
         downsample_in_z = scale_for_downsample_zyx[0]
+
+    if automated_refinement_sampling:
+        refinement_factors = scale_factors_list_zyx[4 if sampling_num_max_idx >= 4 else sampling_num_max_idx]  # 5th downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
+        downsample_refinement = f'{refinement_factors[2]}/{refinement_factors[1]}/{refinement_factors[0]}'  # X/Y/Z
 
 
     macro = BIGSTITCHER_ALIGN_OMEZARR_OUT.format(
@@ -467,7 +100,8 @@ def get_bigstitcher_omezarr_alignment_marco(
         block_size_factor_x,
         block_size_factor_y,
         block_size_factor_z,
-        subsampling_factors
+        subsampling_factors,
+        downsample_refinement
     )
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:
@@ -487,7 +121,8 @@ def get_bigstitcher_hdf5_alignment_marco(
     block_size_factor_x: int=BLOCKSIZE_FACTOR_X,
     block_size_factor_y: int=BLOCKSIZE_FACTOR_Y,
     block_size_factor_z: int=BLOCKSIZE_FACTOR_Z,
-    subsampling_factors: str=SUBSAMPLING_FACTORS
+    subsampling_factors: str=SUBSAMPLING_FACTORS,
+    downsample_refinement: str=DOWNSAMPLE_REFINEMENT
 ):
     '''
     Generate BigStitcher macro for aligning omezarr data
@@ -495,20 +130,26 @@ def get_bigstitcher_hdf5_alignment_marco(
     If given path_to_write_macro, also write the macro to that path
     '''
 
-    automated_downsample = any([x.lower()=='automated' for x in [downsample_in_x, downsample_in_y, downsample_in_z]])
+    automated_downsample = any([x.lower() == 'automated' for x in [downsample_in_x, downsample_in_y, downsample_in_z]])
     automated_subsampling = subsampling_factors.lower() == 'automated'
+    automated_refinement_sampling = downsample_refinement.lower() == 'automated'
 
-    if automated_downsample or automated_subsampling:
+    if automated_downsample or automated_subsampling or automated_refinement_sampling:
         _, scale_factors_list_zyx, subsampling_str = determine_sampling_factors_for_bigstitcher(input_omezarr_xml_path)
+        sampling_num_max_idx = len(scale_factors_list_zyx) - 1
 
     if automated_subsampling:
         subsampling_factors = subsampling_str
 
-    if automated_subsampling:
-        scale_for_downsample_zyx = scale_factors_list_zyx[2]
+    if automated_downsample:
+        scale_for_downsample_zyx = scale_factors_list_zyx[2 if sampling_num_max_idx>=2 else sampling_num_max_idx]  # 3rd downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
         downsample_in_x = scale_for_downsample_zyx[2]
         downsample_in_y = scale_for_downsample_zyx[1]
         downsample_in_z = scale_for_downsample_zyx[0]
+
+    if automated_refinement_sampling:
+        refinement_factors = scale_factors_list_zyx[4 if sampling_num_max_idx>=4 else sampling_num_max_idx]  # 5th downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
+        downsample_refinement = f'{refinement_factors[2]}/{refinement_factors[1]}/{refinement_factors[0]}'  # X/Y/Z
 
 
     macro = BIGSTITCHER_ALIGN_HDF5_OUT.format(
@@ -523,7 +164,8 @@ def get_bigstitcher_hdf5_alignment_marco(
         block_size_factor_x,
         block_size_factor_y,
         block_size_factor_z,
-        subsampling_factors
+        subsampling_factors,
+        downsample_refinement
     )
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:

@@ -153,6 +153,7 @@ bigstitcher:
   downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
   downsample_in_y: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
   downsample_in_z: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
+  downsample_refinement: '8/8/4' # 'automated' # Controls the downsampling factor in X/Y/Z for the refinement step in BigStitcher. Suggest 8/8/4 or 4/4/2 for large datasets.
   blocksize_x: 256
   blocksize_y: 256
   blocksize_z: 256

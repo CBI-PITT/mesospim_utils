@@ -151,9 +151,10 @@ if not FIJI_INSTALL_LOCATION:
     FIJI_INSTALL_LOCATION = Path(__file__).resolve().parent.parent / 'fiji-linux' / 'Fiji.app'
 FIJI_EXECUTABLE = FIJI_INSTALL_LOCATION / "ImageJ-linux64"
 
-DOWNSAMPLE_IN_X = BIGSTITCHER.get('downsample_in_x')
-DOWNSAMPLE_IN_Y = BIGSTITCHER.get('downsample_in_y')
-DOWNSAMPLE_IN_Z = BIGSTITCHER.get('downsample_in_z')
+DOWNSAMPLE_IN_X = str(BIGSTITCHER.get('downsample_in_x'))
+DOWNSAMPLE_IN_Y = str(BIGSTITCHER.get('downsample_in_y'))
+DOWNSAMPLE_IN_Z = str(BIGSTITCHER.get('downsample_in_z'))
+DOWNSAMPLE_REFINEMENT = str(BIGSTITCHER.get('downsample_refinement'))
 BLOCKSIZE_X = BIGSTITCHER.get('blocksize_x')
 BLOCKSIZE_Y = BIGSTITCHER.get('blocksize_y')
 BLOCKSIZE_Z = BIGSTITCHER.get('blocksize_z')
