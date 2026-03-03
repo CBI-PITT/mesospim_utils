@@ -171,7 +171,12 @@ icp_refinement_type=[Simple (chromatic abberation)] \
 global_optimization_strategy=[Two-Round: Handle unconnected tiles, remove wrong links RELAXED (5.0x / 7.0px)] \
 downsampling=[Downsampling {12}] \
 interest=[Average Threshold] \
-icp_max_error=[Normal Adjustment (<5px)]");
+icp_max_error=[Relaxed (<10px)]");
+
+//[Strict (<2px)]
+//[Normal Adjustment (<5px)]
+//[Relaxed (<10px)]
+//[Very Relaxed (<20px)]
 
 
 // --------------------------------------------------------------------
