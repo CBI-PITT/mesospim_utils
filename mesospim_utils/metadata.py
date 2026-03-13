@@ -349,7 +349,8 @@ def extract_wavelength_from_filter(value:str) -> int | str:
 
     # Match leading number (handles "450", "450/50", "450/50 nm", etc.)
     # Match leading number, optionally followed by /number, then anything
-    match = re.match(r"^(\d+)(?:/\d+)?(?:\s+.*)?$", value)
+    # match = re.match(r"^(\d+)(?:/\d+)?(?:\s+.*)?$", value)
+    match = re.match(r"^(\d{3})([a-z,A-Z]+)?(?:/\d+)?(?:\s+.*)?$", value)
     if match:
         return int(match.group(1))  # returns 450
 
