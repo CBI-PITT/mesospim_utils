@@ -95,7 +95,10 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
     else:
         PARALLEL_JOBS = num_parallel
 
-    files_not_done = [x for x in file_list if not (out_dir / (x.stem + out_file_type)).exists()]
+    files_not_done = [
+        x for x in file_list 
+        if not is_decon_completed_from_logs(log_dir, x)
+    ]
 
     if files_not_done:
         SBATCH_ARG = '#SBATCH {}\n'
@@ -292,6 +295,31 @@ def set_super_nice():
     SLURM_PARAMETERS_FOR_DEPENDENCIES['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_IMARIS_CONVERTER['NICE'] = SUPERNICE_VALUE
+
+def is_decon_completed_from_logs(log_dir: Path, input_file: Path) -> bool:
+    '''
+    Check if deconvolution was completed for a given input file by parsing SLURM logs.
+    
+    Logs are expected to be in {log_dir}/{job_id}_{task_id}_decon.log
+    We search for the input filename and "Deconvolution complete" in the log content.
+    '''
+    if not log_dir.exists():
+        return False
+    
+    input_file_str = str(input_file)
+    input_name = input_file.name
+    
+    for log_file in log_dir.glob('*_decon.log'):
+        try:
+            content = log_file.read_text()
+            if input_name in content or input_file_str in content:
+                if 'Deconvolution complete' in content or 'Total Time:' in content:
+                    return True
+        except (OSError, IOError):
+            continue
+    
+    return False
+
 
 def get_slurm_log_location(dir_loc: Path):
     '''
