@@ -42,6 +42,7 @@ app = typer.Typer()
 
 
 def get_metadata_objective_name(metadata_entry):
+    """Currently not used, but planned for use after adding objective information to mesospim-control metadata output."""
     if not metadata_entry:
         return None
 
@@ -64,6 +65,12 @@ def resolve_decon_objective_parameters(objective=None, metadata_entry=None):
         raise KeyError(f"Decon objective '{objective_name}' not found in config. Available objectives: {available}")
 
     return objective_name, dict(DECON_OBJECTIVES.get(objective_name, {}))
+
+
+def resolve_multi_immersion_ri(value, sample_ri):
+    if isinstance(value, str) and value.lower() == 'auto':
+        return sample_ri
+    return value
 
 @app.command()
 def decon_dir(dir_loc: str, refractive_index: float, objective: str=None, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
@@ -421,15 +428,23 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
 
     sample_ri = refractive_index
     na = objective_parameters.get('na')
-    objective_immersion_ri_design = objective_parameters.get('objective_immersion_ri_design')
-    objective_immersion_ri_actual = objective_parameters.get('objective_immersion_ri_actual')
+
+    # If 'auto' is specified for immersion RI, use the sample RI as the actual immersion RI.
+    # This is a common assumption when the objective is designed for immersion in the same medium as the sample.
+    objective_immersion_ri_design = resolve_multi_immersion_ri(
+        objective_parameters.get('objective_immersion_ri_design'),
+        sample_ri,
+    )
+    objective_immersion_ri_actual = resolve_multi_immersion_ri(
+        objective_parameters.get('objective_immersion_ri_actual'),
+        sample_ri,
+    )
     objective_working_distance = objective_parameters.get('objective_working_distance_um')
     coverslip_ri_design = objective_parameters.get('coverslip_ri_design')
     coverslip_ri_actual = objective_parameters.get('coverslip_ri_actual')
     coverslip_thickness_actual = objective_parameters.get('coverslip_thickness_actual_um')
     coverslip_thickness_design = objective_parameters.get('coverslip_thickness_design_um')
-    psf_model = objective_parameters.get('psf_model', 'gaussian')
-    oversample_factor = objective_parameters.get('oversample_factor', 3)
+    psf_model = 'gaussian'
 
     assert all((na, sample_ri, emission_wavelength, z_res, y_res, x_res,
                 objective_immersion_ri_design, objective_immersion_ri_actual,
@@ -485,7 +500,6 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         tg0 = coverslip_thickness_design, # coverslip thickness, design value (microns)
         ng = coverslip_ri_actual, # coverslip refractive index, experimental value
         ng0 = coverslip_ri_design, # coverslip refractive index, design value
-        oversample_factor = oversample_factor,
         model=psf_model, #Must be one of 'vectorial', 'scalar', 'gaussian'.
         normalize=True,
     )

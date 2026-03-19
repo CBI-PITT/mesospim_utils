@@ -43,6 +43,9 @@
 - `mesospim_utils/rl.py` now resolves PSF optics from the selected objective profile instead of hardcoded values.
 - Current precedence is: CLI `--objective` -> metadata objective name if present in future -> config `decon.default_objective`.
 - Sample refractive index still comes from runtime metadata/CLI `refractive_index`; objective optics stay in config.
+- `psf_model` is back to a hardcoded default of `gaussian` in `mesospim_utils/rl.py` and is no longer configured per objective.
+- `oversample_factor` now uses the `psf.py` default and is no longer configured per objective.
+- If `objective_immersion_ri_design` or `objective_immersion_ri_actual` is set to `'auto'`, `rl.py` now substitutes the actual sample RI used for deconvolution.
 
 ## Active Debugging Note: BigStitcher OOM During Fusion
 
