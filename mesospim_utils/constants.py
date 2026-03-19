@@ -92,6 +92,8 @@ DECON_DEFAULT_OUTPUT_DIR = decon.get('output_dir')
 PSF_THRESHOLD = decon.get('psf_threshold')
 MAX_VRAM = decon.get('max_vram') * decon.get('margin_vram')
 VRAM_PER_VOXEL = decon.get('vram_per_voxel') # Approximation based on real data
+DECON_DEFAULT_OBJECTIVE = decon.get('default_objective')
+DECON_OBJECTIVES = decon.get('objectives', {})
 
 SLURM_PARAMETERS_DECON = slurm.get('decon')
 

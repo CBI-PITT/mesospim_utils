@@ -15,6 +15,7 @@
 - BigStitcher alignment and fusion behavior
 - Chromatic aberration and per-channel alignment tuning
 - Memory pressure during BigStitcher fusion/export on SLURM
+- Objective-aware deconvolution configuration and CLI plumbing
 - Keeping agent documentation split cleanly between `AGENTS.md` and this file
 
 ## Recent Work Snapshot
@@ -32,6 +33,16 @@
   - relax ICP refinement behavior
   - tune channel-alignment/chromatic-aberration handling
   - adjust BigStitcher refinement downsampling and fusion memory settings
+  - move deconvolution PSF/objective parameters out of hardcoded `rl.py` values and into config
+
+## Recent Change: Objective Profiles For Deconvolution
+
+- Added objective-profile support under `decon.objectives` in `mesospim_utils/config/example.yaml`.
+- Added `decon.default_objective` support in config and surfaced it in `mesospim_utils/constants.py`.
+- Added `--objective` to `automated-method-slurm`, which now passes through `mesospim_utils/slurm.py` into `mesospim_utils/rl.py`.
+- `mesospim_utils/rl.py` now resolves PSF optics from the selected objective profile instead of hardcoded values.
+- Current precedence is: CLI `--objective` -> metadata objective name if present in future -> config `decon.default_objective`.
+- Sample refractive index still comes from runtime metadata/CLI `refractive_index`; objective optics stay in config.
 
 ## Active Debugging Note: BigStitcher OOM During Fusion
 
@@ -77,12 +88,15 @@
 - The repo still has no checked-in automated test suite in regular use.
 - Validation has been mostly smoke tests and code inspection.
 - BigStitcher/Fiji behavior, SLURM resource behavior, and config-driven workflows still need real environment verification after changes.
+- CLI `--help` smoke tests could not run in this environment because required runtime packages such as `psutil` and `tifffile` are not installed here.
+- Edited Python files were checked with `python -m py_compile` successfully.
 
 ## Open Questions
 
 - Is the remaining memory issue specific to HDF5 export settings, or mostly driven by heap sizing plus CPU count?
 - Are current ICP/channel-alignment relaxations sufficient for chromatic aberration cases, or still too aggressive?
 - Should any dependency notes or missing runtime packages be documented more explicitly in packaging files later?
+- When metadata eventually includes objective information, should it provide only an objective name or full numeric PSF parameters?
 
 ## Suggested Resume Path For The Next Agent
 

@@ -44,6 +44,7 @@ def automated_method_slurm(dir_loc: Path,
 
                            # Deconvolution Options: if decon==True, refractive_index is found in metadata or must be provided. No RI means no decon
                            decon: Annotated[bool,typer.Option(help="Deconvolution will proceed if refractive index is discovered in the metadata or provided manually")]=True,
+                           objective: Annotated[str,typer.Option(help="Name of the microscope objective profile to use for deconvolution PSF parameters")]=None,
                            refractive_index: Annotated[float,typer.Option(help="Is discovered automatically in the metadata but can be provided manually")]=None,
                            iterations: Annotated[int,typer.Option(help="Deconvolution iterations")]=20,
                            frames_per_chunk: Annotated[int,typer.Option(help="How many z-planes are deconvolved at once. Best to let this be automatically determined")]=None,
@@ -112,7 +113,7 @@ def automated_method_slurm(dir_loc: Path,
         print('Queueing DECON of MesoSPIM tiles on SLURM')
         out_file_type = '.ome.zarr' if omezarr_path else '.btf'
         # decon_dir should inherit supernice value if set, so that all downstream processes will run with elevated nice value
-        job_number, out_dir = decon_dir(dir_loc, refractive_index, file_type=file_type, out_file_type=out_file_type, iterations=iterations, frames_per_chunk=frames_per_chunk, num_parallel=num_parallel)
+        job_number, out_dir = decon_dir(dir_loc, refractive_index, objective=objective, file_type=file_type, out_file_type=out_file_type, iterations=iterations, frames_per_chunk=frames_per_chunk, num_parallel=num_parallel)
         print((job_number, out_dir))
         file_type = out_file_type
 

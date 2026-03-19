@@ -30,6 +30,7 @@ from metadata import collect_all_metadata, get_ch_entry_for_file_name, get_entry
 from constants import ENV_PYTHON_LOC
 from constants import DECON_SCRIPT as LOC_OF_THIS_SCRIPT
 from constants import VRAM_PER_VOXEL, MAX_VRAM
+from constants import DECON_DEFAULT_OBJECTIVE, DECON_OBJECTIVES
 from constants import VERBOSE
 
 from bigstitcher import replace_xml_zarr_relative_group_name
@@ -39,8 +40,33 @@ ims_conv_module_name = Path(LOC_OF_THIS_SCRIPT).parent / 'slurm.py'
 
 app = typer.Typer()
 
+
+def get_metadata_objective_name(metadata_entry):
+    if not metadata_entry:
+        return None
+
+    for key in ('objective', 'objective_name', 'microscope_objective'):
+        objective_name = metadata_entry.get(key)
+        if objective_name:
+            return objective_name
+
+    return None
+
+
+def resolve_decon_objective_parameters(objective=None, metadata_entry=None):
+    objective_name = objective or get_metadata_objective_name(metadata_entry) or DECON_DEFAULT_OBJECTIVE
+
+    if not objective_name:
+        raise ValueError('No decon objective was provided and decon.default_objective is not set in config')
+
+    if objective_name not in DECON_OBJECTIVES:
+        available = ', '.join(sorted(DECON_OBJECTIVES)) if DECON_OBJECTIVES else 'none'
+        raise KeyError(f"Decon objective '{objective_name}' not found in config. Available objectives: {available}")
+
+    return objective_name, dict(DECON_OBJECTIVES.get(objective_name, {}))
+
 @app.command()
-def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
+def decon_dir(dir_loc: str, refractive_index: float, objective: str=None, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
               queue_ims: bool=False, denoise_sigma: float=None, sharpen: bool=False,
               half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=100,
               num_parallel: int=8, run_slurm=True
@@ -78,6 +104,7 @@ def decon_dir(dir_loc: str, refractive_index: float, out_dir: str=None, out_file
         commands += f'{ENV_PYTHON_LOC} -u {LOC_OF_THIS_SCRIPT} decon'
         commands += f' {p.as_posix()}'
         commands += f' {refractive_index}'
+        commands += f'{f" --objective {objective}" if objective else ""}'
         commands += f' --out-location {out_dir / (p.stem + out_file_type)}'
         #commands += f'{" --queue-ims" if queue_ims else ""}'
         commands += f'{" --sharpen" if sharpen else ""}'
@@ -331,7 +358,7 @@ def trim_psf(psf):
 
 @app.command()
 def decon(file_location: Path, refractive_index: float=None, out_location: Path=None, resolution: tuple[float,float,float]=None,
-          emission_wavelength: int=None, na: float=None, ri: float=None,
+          emission_wavelength: int=None, na: float=None, ri: float=None, objective: str=None,
           start_index: int=None, stop_index: int=None, save_pre_post: bool=False, queue_ims: bool=False,
           denoise_sigma: float=None, sharpen: bool=False, half_precision: bool=False,
           psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=20, frames_per_chunk: int=None
@@ -376,30 +403,38 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         meta_dict = mesospim_meta_data(file_location) # Extract metadata from mesospim acquisition directory, will search backwards from file location until it finds mesospim_metadata.json
         file_name = file_location.name
         meta_entry = get_entry_for_file_name(meta_dict, file_name)
+    else:
+        meta_entry = None
 
     if not resolution:
         z_res, y_res, x_res = meta_entry.get('resolution')
+    else:
+        z_res, y_res, x_res = resolution
 
     if not emission_wavelength:
         emission_wavelength = meta_entry.get('emission_wavelength')
 
 
-    # Set imaging parameters hardcoded for now
-    # Imaging parameters to be passes to psf
-    na = 0.2
-    # sample_ri = 1.47 #CUBIC
+    objective_name, objective_parameters = resolve_decon_objective_parameters(objective=objective, metadata_entry=meta_entry)
+    if na is not None:
+        objective_parameters['na'] = na
+
     sample_ri = refractive_index
-    objective_immersion_ri_design = 1.000293  # Air
-    objective_immersion_ri_actual = 1.000293  # Air
-    objective_working_distance = 45 * 1000  # in microns
-    coverslip_ri_design = 1.000293  # objective design
-    coverslip_ri_actual = 1.515  # during experiment
-    coverslip_thickness_actual = 1 * 1000  # in microns
-    coverslip_thickness_design = 0
+    na = objective_parameters.get('na')
+    objective_immersion_ri_design = objective_parameters.get('objective_immersion_ri_design')
+    objective_immersion_ri_actual = objective_parameters.get('objective_immersion_ri_actual')
+    objective_working_distance = objective_parameters.get('objective_working_distance_um')
+    coverslip_ri_design = objective_parameters.get('coverslip_ri_design')
+    coverslip_ri_actual = objective_parameters.get('coverslip_ri_actual')
+    coverslip_thickness_actual = objective_parameters.get('coverslip_thickness_actual_um')
+    coverslip_thickness_design = objective_parameters.get('coverslip_thickness_design_um')
+    psf_model = objective_parameters.get('psf_model', 'gaussian')
+    oversample_factor = objective_parameters.get('oversample_factor', 3)
 
-    psf_model = 'gaussian'  # Must be one of 'vectorial', 'scalar', 'gaussian'.
-
-    assert all( (na, sample_ri, emission_wavelength, z_res, y_res, x_res) ), 'Some critical metadata parameters are not set'
+    assert all((na, sample_ri, emission_wavelength, z_res, y_res, x_res,
+                objective_immersion_ri_design, objective_immersion_ri_actual,
+                objective_working_distance, coverslip_ri_design, coverslip_ri_actual,
+                coverslip_thickness_actual, coverslip_thickness_design)), 'Some critical metadata parameters are not set'
 
     if str(file_location).endswith('.btf'):
         from mesospim_btf import mesospim_btf_helper
@@ -450,6 +485,7 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         tg0 = coverslip_thickness_design, # coverslip thickness, design value (microns)
         ng = coverslip_ri_actual, # coverslip refractive index, experimental value
         ng0 = coverslip_ri_design, # coverslip refractive index, design value
+        oversample_factor = oversample_factor,
         model=psf_model, #Must be one of 'vectorial', 'scalar', 'gaussian'.
         normalize=True,
     )
@@ -485,6 +521,7 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         print(f'--- INPUT_LOCATION: {file_location}')
         print(f'--- OUT_LOCATION_TMP: {out_location}')
         print(f'--- OUT_LOCATION_FINAL: {final_out_location}')
+        print(f'--- Objective: {objective_name}')
         print(f'--- Depth of frames per run: {FRAMES_PER_DECON}')
         print(f'--- Iterations: {ITERATIONS}')
         print(f'--- NA: {na}')
@@ -492,6 +529,13 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         print(f'--- Emission Wavelength: {emission_wavelength}')
         print(f'--- Lateral Resolution: X: {x_res}, Y: {y_res}')
         print(f'--- Z Steps: {z_res}')
+        print(f'--- Objective Immersion RI Design: {objective_immersion_ri_design}')
+        print(f'--- Objective Immersion RI Actual: {objective_immersion_ri_actual}')
+        print(f'--- Objective Working Distance (um): {objective_working_distance}')
+        print(f'--- Coverslip RI Design: {coverslip_ri_design}')
+        print(f'--- Coverslip RI Actual: {coverslip_ri_actual}')
+        print(f'--- Coverslip Thickness Design (um): {coverslip_thickness_design}')
+        print(f'--- Coverslip Thickness Actual (um): {coverslip_thickness_actual}')
         print(f'--- PSF Model: {psf_model}')
 
     # Import pytorch dependencies
