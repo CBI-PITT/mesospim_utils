@@ -446,10 +446,10 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
     coverslip_thickness_design = objective_parameters.get('coverslip_thickness_design_um')
     psf_model = 'gaussian'
 
-    assert all((na, sample_ri, emission_wavelength, z_res, y_res, x_res,
+    assert all([x is not None for x in (na, sample_ri, emission_wavelength, z_res, y_res, x_res,
                 objective_immersion_ri_design, objective_immersion_ri_actual,
                 objective_working_distance, coverslip_ri_design, coverslip_ri_actual,
-                coverslip_thickness_actual, coverslip_thickness_design)), 'Some critical metadata parameters are not set'
+                coverslip_thickness_actual, coverslip_thickness_design)]), 'Some critical metadata parameters are not set'
 
     if str(file_location).endswith('.btf'):
         from mesospim_btf import mesospim_btf_helper
