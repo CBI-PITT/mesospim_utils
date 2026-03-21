@@ -19,7 +19,7 @@ conda activate mesospim_utils
 # If installing on linux / SLURM nodes that will do deconvolution:
 pip install -e ~/src/mesospim_utils psfmodels
 
-# If installing on windows that will be used for ImarisStitcher align/resampling:
+# If installing on systems that will be used only for metadata inspection or non-decon utilities:
 pip install -e ~/src/mesospim_utils
 ```
 
@@ -129,12 +129,15 @@ python <location_of_install>/mesospim_utils/mesospim_utils/metadata.py <location
 Dependencies:
 
 1) SLURM: Used to manage processing tasks
-2) CUDA Capable GPU Nodes: Used for DECON
-3) ImarisFileConverter_wine: (https://github.com/CBI-PITT/ImarisFileConverter_wine)
-4) Wine (information at ImarisFileConverter_wine link)
-5) ImarisStitcher: Licensed and installed on a windows machine. Used primarily for resampling data into a final 3D montage.
+2) CUDA-capable GPU nodes: Required only when deconvolution runs
+3) Fiji with BigStitcher: Used for alignment and fusion of OME-Zarr datasets
+4) ImarisFileConverter_wine: (https://github.com/CBI-PITT/ImarisFileConverter_wine), only needed when `--final-file-type ims`
+5) Wine: Only needed when `--final-file-type ims`
 
-###### **MesoSPIM data must be acquired using BigTIFF files (.btf).** 
+###### **Primary supported inputs for `automated-method-slurm`:**
+
+- MesoSPIM BigTIFF tile directories (`.btf`)
+- Existing BigStitcher OME-Zarr datasets referenced by `*.ome.zarr.xml`
 
 ```bash
  python <location_of_install>/mesospim_utils/mesospim_utils/automated.py --help
@@ -147,10 +150,11 @@ python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automate
 python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory>
 
 # Processing workflow:
-# 1) Deconvolution: done automatically if the ETL configuration file name contains the refractive index - pattern "_RI_{float_RI}_".
-# 2) IMS Conversion: .btf files OR deconned .tif files are converted to .ims using imaris converter installed in wine.
-# 3) Alignment: Alignment of tiles using multiscales from ims files
-# 4) Stitching/Resampling: 3D data is assembled in windows using ImarisStitcher.
+# 1) Metadata collection: mesospim metadata json files are generated or refreshed in the acquisition directory.
+# 2) Optional deconvolution: runs when `--decon` is enabled and a refractive index is available from metadata or `--refractive-index`.
+# 3) If the input is `.btf`, tiles are converted to OME-Zarr and a BigStitcher XML is generated.
+# 4) BigStitcher alignment and fusion run on SLURM using Fiji/BigStitcher.
+# 5) Final output is produced as OME-Zarr, HDF5, or IMS depending on `--final-file-type`.
 ```
 
 If deconvolution is enabled, objective parameters will be discovered from the MesoSPIM metadata if it includes the  `[OBJECTIVE PARAMETERS]`
@@ -175,7 +179,8 @@ Objective precedence for deconvolution is:
 
 1. `--objective` passed to `automated-method-slurm`
 2. metadata `[OBJECTIVE PARAMETERS]`
-3. `decon.default_objective` from the config file
+3. metadata objective name fields such as `objective`, `objective_name`, or `microscope_objective`
+4. `decon.default_objective` from the config file
 
 If `[OBJECTIVE PARAMETERS]` is present but missing any required field, `automated-method-slurm` will fail before
 submitting downstream SLURM jobs.
@@ -186,11 +191,14 @@ submitting downstream SLURM jobs.
 
 ##### <u>Configuration File:</u>
 
-Default: ./config/example.yaml
+Default reference: `mesospim_utils/config/example.yaml`
 
-Make a copy of this file to ./config/main.yaml
+Make a copy of this file to `mesospim_utils/config/main.yaml`
 
-Edit ./config/main.yaml
+Edit `mesospim_utils/config/main.yaml`
+
+At runtime, `mesospim_utils` loads `mesospim_utils/config/main.yaml` if present and otherwise falls back to
+`mesospim_utils/config/example.yaml`.
 
 SLURM parameters for each subprocess can be edited in the config file.
 
@@ -207,13 +215,13 @@ general:
   overide_stage_direction: true # true, don't use stage direction for stitch/resample
 
   # Drive mappings for linux directories in WINDOWS OS.
-  # This is used for ImarisStitcher Resampling
+  # Retained for older Windows-based workflows; not used by the primary automated-method-slurm path.
   windows_mappings: #linux_path:windows_mapped_drive_letter:
     '/<path_to_mount_1>': 'i:'
     '/<path_to_mount_2>': 'z:'
 
   # Drive mappings for linux directories in WINE 
-  # This is used for ImarisConverter to make ims files from .btf/.tif
+  # This is used only when converting a final fused output to IMS.
   wine_mappings: #linux_path:wine_drive_letter:
     '/<path_to_mount_1>': 'h:'
     '/<path_to_mount_2>': 'f:'
