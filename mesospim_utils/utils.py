@@ -17,19 +17,53 @@ def map_wavelength_to_RGB(wavelength):
     '''
 
     RGB = namedtuple('RGB', ['R', 'G', 'B'])
-    default = RGB(R=0.5, G=0.5, B=0.5)
+    r,g,b = EMISSION_TO_RGB.get('default', (0.5,0.5,0.5))
+    default = RGB(R=r, G=g, B=b)
 
     if wavelength is None:
         # Default to white
         return default
 
     for key, item in EMISSION_TO_RGB.items():
+        if key == 'default':
+            continue
         low, high = [int(x) for x in key.split('-')]
         if wavelength >= low and wavelength < high:
             return RGB(*item)
 
     # Default to white
     return default
+
+def rgb_to_hex(rgb):
+    """
+    Convert an RGB tuple (R, G, B) with values 0–255 or 0-1 to a hex color string '#RRGGBB'.
+    If values are in the range 0-1, they will be scaled to 0-255 before conversion.
+    into a hex color string '#RRGGBB'.
+    """
+
+    if len(rgb) != 3:
+        raise ValueError("RGB tuple must have exactly 3 elements")
+
+    # If values are in the range 0-1, scale them to 0-255
+    if all(0 <= v <= 1 for v in rgb):
+        rgb = tuple(int(v * 255) for v in rgb)
+
+    # Ensure all values are int, and round down if they are floats (e.g. 255.9 should become 255)
+    rgb = tuple(int(v//1) for v in rgb)
+    
+    r, g, b = rgb
+
+    try:
+        for v in (r, g, b):
+            if not (0 <= v <= 255):
+                raise ValueError("RGB values must be in range 0–255")
+    except ValueError as e:
+        print(f"Error converting RGB to hex: {e}")
+        print(f'Returning white for RGB value: {rgb}')
+        return '#FFFFFF'
+
+    return f"#{r:02X}{g:02X}{b:02X}"
+
 
 def sort_list_of_paths_by_tile_number(list_of_paths, pattern=r"_tile(\d+)_"):
     files = [str(x) for x in list_of_paths]
@@ -224,3 +258,28 @@ def get_file_size_gb(path: Path) -> int:
     size_bytes = path.stat().st_size
     size_gb = size_bytes / (1024 ** 3)
     return int(size_gb)
+
+def common_prefix(strings):
+    if not strings:
+        return ""
+
+    prefix = []
+    for chars in zip(*strings):
+        if len(set(chars)) == 1:
+            prefix.append(chars[0])
+        else:
+            break
+    prefix = "".join(prefix)
+
+    # Remove trailing _ or - characters
+    while prefix.endswith('_') or prefix.endswith('-'):
+        prefix = prefix[:-1]
+
+    return prefix
+
+def strip_after(string, key):
+    '''
+    Strip everything after key (case insensitive) in string
+    '''
+    pattern = rf"(.*?){re.escape(key)}.*$"
+    return re.sub(pattern, r"\1", string, flags=re.IGNORECASE)

@@ -3,6 +3,7 @@
 test_psf
 notes
 */config/main.yaml
+fiji-linux/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
