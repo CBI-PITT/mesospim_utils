@@ -53,6 +53,26 @@ decon:
   vram_per_voxel: 2.36837e-5 # 17136 / ((3200+15) * (3200+15) * 70) # Approximation based on real data
   max_vram: 24576 # value == vram available from nvidia-smi, It will be multiplied by margin_vram
   margin_vram: 0.95 # Arbitrary factor <= 1 to ensure that we don't over fill the GPU and cause a crash.
+  default_objective: 'mesospim_air_2x'
+  objectives:
+    mesospim_air_2x:
+      na: 0.2
+      objective_immersion_ri_design: 1.000293  # Air objective design RI
+      objective_immersion_ri_actual: 1.000293  # Air during experiment
+      objective_working_distance_um: 45000
+      coverslip_ri_design: 1.000293
+      coverslip_ri_actual: 1.515
+      coverslip_thickness_actual_um: 170
+      coverslip_thickness_design_um: 0
+    nikon_20x_multi_immersion:
+      na: 1.0
+      objective_immersion_ri_design: 'auto'  # 'auto' multi-immersion objective design RI, will be set to actual RI'
+      objective_immersion_ri_actual: 'auto'  # 'auto' multi-immersion objective design RI, will be set to actual RI'
+      objective_working_distance_um: 8200
+      coverslip_ri_design: 0
+      coverslip_ri_actual: 0
+      coverslip_thickness_actual_um: 0
+      coverslip_thickness_design_um: 0
 
 align:
   directory: 'align'

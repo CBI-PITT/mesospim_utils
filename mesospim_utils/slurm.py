@@ -19,7 +19,7 @@ SUPERNICE_VALUE = 10000000
 ######################################################################################################################
 
 @app.command()
-def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=None, out_dir: str=None,
+def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=None, objective: str=None, out_dir: str=None,
               out_file_type: str='.tif', file_type: str='.btf',
               denoise_sigma: float=None, sharpen: bool=False,
               half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=None,
@@ -129,6 +129,7 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
             commands += f' {p.as_posix()}'
             commands += f' --refractive-index {refractive_index}'
             commands += f'{f" --emission-wavelength {emission_wavelength}" if emission_wavelength else ""}'
+            commands += f'{f" --objective {objective}" if objective else ""}'
             commands += f' --out-location {out_dir / out_file_name}'
             #commands += f'{" --queue-ims" if queue_ims else ""}'
             commands += f'{" --sharpen" if sharpen else ""}'
