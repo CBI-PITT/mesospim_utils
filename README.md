@@ -153,6 +153,33 @@ python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automate
 # 4) Stitching/Resampling: 3D data is assembled in windows using ImarisStitcher.
 ```
 
+If deconvolution is enabled, objective parameters will be discovered from the MesoSPIM metadata if it includes the  `[OBJECTIVE PARAMETERS]`
+section. These metadata objective parameters are used by `automated-method-slurm` only when `--objective` is not passed.
+If the section is present, it is authoritative for deconvolution and must be complete.
+
+The required objective metadata fields must match the canonical decon objective fields used in
+`mesospim_utils/config/example.yaml` which defines objectives(s) that may be used for 
+deconvolution:
+
+- `name`
+- `na`
+- `objective_immersion_ri_design`
+- `objective_immersion_ri_actual`
+- `objective_working_distance_um`
+- `coverslip_ri_design`
+- `coverslip_ri_actual`
+- `coverslip_thickness_actual_um`
+- `coverslip_thickness_design_um`
+
+Objective precedence for deconvolution is:
+
+1. `--objective` passed to `automated-method-slurm`
+2. metadata `[OBJECTIVE PARAMETERS]`
+3. `decon.default_objective` from the config file
+
+If `[OBJECTIVE PARAMETERS]` is present but missing any required field, `automated-method-slurm` will fail before
+submitting downstream SLURM jobs.
+
 ##### 
 
 

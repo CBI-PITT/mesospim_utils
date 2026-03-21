@@ -40,11 +40,61 @@ ims_conv_module_name = Path(LOC_OF_THIS_SCRIPT).parent / 'slurm.py'
 
 app = typer.Typer()
 
+REQUIRED_METADATA_OBJECTIVE_KEYS = (
+    'name',
+    'na',
+    'objective_immersion_ri_design',
+    'objective_immersion_ri_actual',
+    'objective_working_distance_um',
+    'coverslip_ri_design',
+    'coverslip_ri_actual',
+    'coverslip_thickness_actual_um',
+    'coverslip_thickness_design_um',
+)
 
-def get_metadata_objective_name(metadata_entry):
-    """Currently not used, but planned for use after adding objective information to mesospim-control metadata output."""
+
+def get_metadata_objective_section(metadata_entry):
     if not metadata_entry:
         return None
+
+    objective_parameters = metadata_entry.get('OBJECTIVE PARAMETERS')
+    if isinstance(objective_parameters, dict) and objective_parameters:
+        return objective_parameters
+
+    return None
+
+
+def get_missing_metadata_objective_keys(metadata_entry):
+    objective_parameters = get_metadata_objective_section(metadata_entry)
+    if not objective_parameters:
+        return []
+
+    return [key for key in REQUIRED_METADATA_OBJECTIVE_KEYS if objective_parameters.get(key) is None]
+
+
+def validate_metadata_objective_parameters(metadata_entry):
+    objective_parameters = get_metadata_objective_section(metadata_entry)
+    if not objective_parameters:
+        return None
+
+    missing_keys = get_missing_metadata_objective_keys(metadata_entry)
+    if missing_keys:
+        missing = ', '.join(missing_keys)
+        raise ValueError(
+            'Metadata contains [OBJECTIVE PARAMETERS], so metadata-defined objective parameters are authoritative '
+            f'for deconvolution. The following required fields are missing: {missing}'
+        )
+
+    return dict(objective_parameters)
+
+
+def get_metadata_objective_name(metadata_entry):
+    if not metadata_entry:
+        return None
+
+    objective_parameters = get_metadata_objective_section(metadata_entry)
+    if objective_parameters:
+        return objective_parameters.get('name')
 
     for key in ('objective', 'objective_name', 'microscope_objective'):
         objective_name = metadata_entry.get(key)
@@ -55,7 +105,19 @@ def get_metadata_objective_name(metadata_entry):
 
 
 def resolve_decon_objective_parameters(objective=None, metadata_entry=None):
-    objective_name = objective or get_metadata_objective_name(metadata_entry) or DECON_DEFAULT_OBJECTIVE
+    if objective:
+        if objective not in DECON_OBJECTIVES:
+            available = ', '.join(sorted(DECON_OBJECTIVES)) if DECON_OBJECTIVES else 'none'
+            raise KeyError(f"Decon objective '{objective}' not found in config. Available objectives: {available}")
+
+        return objective, dict(DECON_OBJECTIVES.get(objective, {}))
+
+    metadata_objective_parameters = validate_metadata_objective_parameters(metadata_entry)
+    if metadata_objective_parameters:
+        objective_name = metadata_objective_parameters.get('name') or 'metadata_objective'
+        return objective_name, metadata_objective_parameters
+
+    objective_name = get_metadata_objective_name(metadata_entry) or DECON_DEFAULT_OBJECTIVE
 
     if not objective_name:
         raise ValueError('No decon objective was provided and decon.default_objective is not set in config')

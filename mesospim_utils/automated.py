@@ -88,6 +88,11 @@ def automated_method_slurm(dir_loc: Path,
     first_metadata_entry = get_first_entry(metadata_by_channel)
     username = first_metadata_entry.get('username', "")
 
+    if decon and not objective:
+        from rl import validate_metadata_objective_parameters
+
+        validate_metadata_objective_parameters(first_metadata_entry)
+
     if not refractive_index and decon:
         refractive_index = first_metadata_entry.get('refractive_index')
 
