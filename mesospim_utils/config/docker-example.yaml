@@ -101,7 +101,7 @@ slurm:
     'CPUS': 1
     'JOB_LABEL': 'ms_decon'
     'RAM_GB': 64
-    'GRES':
+    'GRES': 'gpu:1'
     'PARALLEL_JOBS': 1
     'NICE': 0
     'TIME_LIMIT':

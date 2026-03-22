@@ -134,6 +134,47 @@ def resolve_multi_immersion_ri(value, sample_ri):
         return sample_ri
     return value
 
+
+def prepare_cuda_runtime():
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            'CUDA GPU deconvolution was requested, but torch.cuda.is_available() is False. '
+            'If you are running in Docker, start the container with the GPU compose override and verify '
+            'that SLURM advertises gpu GRES.'
+        )
+
+    device_count = torch.cuda.device_count()
+    if device_count < 1:
+        raise RuntimeError('CUDA appears available, but no GPU devices were reported by PyTorch.')
+
+    device_name = torch.cuda.get_device_name(0)
+    total_vram_mb = int(torch.cuda.get_device_properties(0).total_memory / (1024 ** 2))
+
+    if VERBOSE:
+        print('CUDA available: True')
+        print(f'CUDA device count: {device_count}')
+        print(f'Primary CUDA device: {device_name}')
+        print(f'Primary CUDA total VRAM (MB): {total_vram_mb}')
+
+    return torch, total_vram_mb
+
+
+def get_effective_max_vram(total_vram_mb=None):
+    configured_vram = int(MAX_VRAM) if MAX_VRAM else None
+
+    if configured_vram is None:
+        return total_vram_mb
+
+    if total_vram_mb is None:
+        return configured_vram
+
+    effective = min(configured_vram, total_vram_mb)
+    if VERBOSE and effective != configured_vram:
+        print(f'Adjusted configured max VRAM from {configured_vram} MB to detected {effective} MB')
+    return effective
+
 @app.command()
 def decon_dir(dir_loc: str, refractive_index: float, objective: str=None, out_dir: str=None, out_file_type: str='.tif', file_type: str='.btf',
               queue_ims: bool=False, denoise_sigma: float=None, sharpen: bool=False,
@@ -589,10 +630,6 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
     # print("graph tasks:", len(stack.__dask_graph__()))
     if VERBOSE > 1: print(f'PADDED_SHAPE: {stack.shape}')
 
-    ## Attempt to determine the number of frames that will max out vRAM for most efficient processing.
-    if FRAMES_PER_DECON is None:
-        FRAMES_PER_DECON = calculate_max_frames_per_chunk(stack.shape[1:],(ARRAY_PADDING[1][0],ARRAY_PADDING[2][0]))
-
     if VERBOSE:
         print(f'--- INPUT_LOCATION: {file_location}')
         print(f'--- OUT_LOCATION_TMP: {out_location}')
@@ -616,10 +653,18 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
 
     # Import pytorch dependencies
     if VERBOSE: print('Importing pytorch dependencies')
-    import torch
+    torch, detected_vram_mb = prepare_cuda_runtime()
     import torch.nn.functional as F
     import torchvision.transforms as T
     import torch.nn as nn
+
+    effective_max_vram = get_effective_max_vram(detected_vram_mb)
+    if FRAMES_PER_DECON is None:
+        FRAMES_PER_DECON = calculate_max_frames_per_chunk(
+            stack.shape[1:],
+            (ARRAY_PADDING[1][0], ARRAY_PADDING[2][0]),
+            max_vram=effective_max_vram,
+        )
 
     if half_precision:
         psf = psf.astype(np.float16)
@@ -779,14 +824,17 @@ def get_chunk_with_padding(darr, z_start, z_end, pad: tuple, axis=0):
 
     return chunk
 
-def calculate_max_frames_per_chunk(y_x_shape: tuple, y_x_overlap: tuple):
+def calculate_max_frames_per_chunk(y_x_shape: tuple, y_x_overlap: tuple, max_vram=None):
+    if max_vram is None:
+        max_vram = MAX_VRAM
+
     current_size = 0
     frame_per_chunk = 0
     while True:
         frame_per_chunk += 1
         chunk_size = (y_x_shape[0]+y_x_overlap[0]) * (y_x_shape[1]+y_x_overlap[1]) * frame_per_chunk
         current_size = chunk_size * VRAM_PER_VOXEL
-        if current_size >= MAX_VRAM:
+        if current_size >= max_vram:
             return frame_per_chunk - 1
 
 if __name__ == "__main__":

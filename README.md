@@ -7,7 +7,7 @@
 The repository now includes a Windows-oriented Docker appliance under `docker/` for running a full single-node
 SLURM-based `mesospim_utils` workflow inside Docker Desktop with the WSL2 backend.
 
-- The container is designed for CPU-only execution first. GPU deconvolution is intended to be added back later.
+- The base container runs without GPUs, and an optional GPU compose override is available for deconvolution hosts.
 - SLURM and Wine are compiled from the pinned versions in `docker/.env`.
 - The container expects stable in-container mount roots under `/data`.
 - `C:` is bind-mounted directly, while network shares for `/data/z` and `/data/h` are intended to be mounted by Docker as CIFS volumes.
@@ -36,6 +36,12 @@ If `/data/config/main.yaml` does not exist at startup, the container copies
 `mesospim_utils/config/docker-example.yaml` into place automatically.
 
 See `docker/README.md` for Windows path examples using both drive letters and UNC-backed shares.
+
+For GPU-enabled deconvolution hosts, start with the GPU override file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
 
 #### Installing:
 

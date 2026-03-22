@@ -49,13 +49,23 @@
 - `mesospim_utils/constants.py` now honors the `MESOSPIM_CONFIG` environment variable before falling back to package config files.
 - Added Docker usage documentation in `README.md` and `docker/README.md`.
 
+## Recent Change: GPU Decon Re-enable Prep
+
+- Added `docker/docker-compose.gpu.yml` as an optional GPU override that requests all visible GPUs from Docker and sets NVIDIA runtime environment variables.
+- Updated Docker SLURM config defaults so decon jobs request a full GPU with `gpu:1` in both `docker/config/main.yaml` and `mesospim_utils/config/docker-example.yaml`.
+- `docker/startup.sh` now logs whether it detected `/dev/nvidia*`, `/dev/dxg`, or no GPUs, and prints the effective `NodeName=` line written into `slurm.conf`.
+- `mesospim_utils/rl.py` now fails early with a clear error when CUDA decon is requested without a visible GPU, and reports detected CUDA device details when available.
+- Added Docker docs describing how to start the appliance with the GPU override and how to validate CUDA + SLURM GPU visibility.
+
 ## Docker Validation Notes
 
 - `bash -n docker/startup.sh` succeeded.
 - `python -m py_compile` succeeded for `docker/map_wine.py`, `mesospim_utils/constants.py`, and `mesospim_utils/fiji.py`.
 - `docker compose --env-file docker/.env -f docker/docker-compose.yml config` rendered successfully.
+- `docker compose --env-file docker/.env -f docker/docker-compose.yml -f docker/docker-compose.gpu.yml config` rendered successfully on both Linux/WSL and Windows `cmd.exe` invocations.
 - YAML parsing with the host Python environment was not possible here because `PyYAML` is not installed outside the project runtime environment.
 - The new Docker image build and in-container end-to-end smoke test still need to be run on a Windows/Docker Desktop machine.
+- GPU passthrough could not be runtime-tested in this session because the current machine has no NVIDIA GPU.
 
 ## Recent Change: Objective Profiles For Deconvolution
 
@@ -116,6 +126,7 @@
 - CLI `--help` smoke tests could not run in this environment because required runtime packages such as `psutil` and `tifffile` are not installed here.
 - Edited Python files were checked with `python -m py_compile` successfully.
 - The refreshed Docker appliance has only been syntax/config validated so far; it still needs a real Windows-hosted build and runtime verification.
+- The GPU override path has been config-validated only; it still needs end-to-end testing on a Windows NVIDIA host and on a Linux multi-GPU host.
 
 ## Open Questions
 
@@ -125,6 +136,8 @@
 - When metadata eventually includes objective information, should it provide only an objective name or full numeric PSF parameters?
 - Does the new Dockerfile need extra runtime libraries for the pinned Wine build on the target Windows hosts?
 - Can `network_mode: host` remain removed on Docker Desktop while SLURM service communication stays reliable in practice?
+- On WSL2 NVIDIA hosts, does Docker expose `/dev/nvidia*` or only `/dev/dxg`, and is the current one-GPU `/dev/dxg` fallback sufficient for local decon scheduling?
+- Does PyTorch in the container resolve CUDA correctly on the target Windows and Linux GPU hosts without additional package pinning?
 
 ## Suggested Resume Path For The Next Agent
 

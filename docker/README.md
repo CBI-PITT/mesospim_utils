@@ -11,6 +11,7 @@ This directory contains a Windows-hosted Docker Desktop setup for running the fu
 - preinstalled Fiji + BigStitcher
 - bind mounts rooted at `/data`
 - startup script that brings up `munged`, `slurmd`, and `slurmctld`
+- optional GPU override for deconvolution hosts
 
 ## Prerequisites
 
@@ -92,6 +93,28 @@ mkdir -p config work disabled-share
 docker compose build
 docker compose up -d
 docker compose exec mesospim_utils bash
+```
+
+## GPU hosts
+
+On Windows + WSL2 hosts with NVIDIA GPU passthrough, or on Linux hosts with NVIDIA GPUs,
+start the container with the GPU override file:
+
+```bash
+cd docker
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+The GPU override requests all visible GPUs from Docker. At container startup, `startup.sh`
+detects either `/dev/nvidia*` or `/dev/dxg` and advertises GPU GRES to SLURM automatically.
+Docker decon config requests a full GPU per decon job via `gpu:1`.
+
+Recommended GPU validation inside the container:
+
+```bash
+python -c "import torch; print(torch.cuda.is_available(), torch.cuda.device_count())"
+sinfo
+scontrol show node
 ```
 
 ## Config file
