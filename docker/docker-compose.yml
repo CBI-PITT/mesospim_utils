@@ -1,72 +1,73 @@
-x-defaults:
-  &svc
-  hostname: ${CONTAINER_HOSTNAME}
-  tty: true
+name: mesospim-utils
 
-x-build-args: &args
-  args:
-    - UBUNTU_VERSION=${CONTAINER_UBUNTU_VERSION}
-    - USERNAME=${CONTAINER_USERNAME}
-    - PASSWORD=${CONTAINER_PASSWORD}
-    - UID=${CONTAINER_UID}
-    - TIMEZONE=${CONTAINER_TIMEZONE}
-    - USER_PRIVILEGE_LEVEL=standard
-    - CONDA_DIR=${MINICONDA_DIR}
-    - CONDA_VERSION=${MINICONDA_VERSION}
-    - CONDA_OS=${MINICONDA_OS}
-    - CONDA_ARCH=${MINICONDA_ARCH}
-    - WINE_GITHUB=${WINE_GITHUB}
-    - WINE_COMMIT=${WINE_COMMIT}
-    - SLURM_VER=${SLURM_VER}
+x-build-args: &build_args
+  UBUNTU_VERSION: ${CONTAINER_UBUNTU_VERSION}
+  USERNAME: ${CONTAINER_USERNAME}
+  PASSWORD: ${CONTAINER_PASSWORD}
+  UID: ${CONTAINER_UID}
+  TIMEZONE: ${CONTAINER_TIMEZONE}
+  CONDA_DIR: ${MINICONDA_DIR}
+  CONDA_VERSION: ${MINICONDA_VERSION}
+  CONDA_OS: ${MINICONDA_OS}
+  CONDA_ARCH: ${MINICONDA_ARCH}
+  WINE_GITHUB: ${WINE_GITHUB}
+  WINE_COMMIT: ${WINE_COMMIT}
+  SLURM_VER: ${SLURM_VER}
 
 services:
   mesospim_utils:
-    image: cbipitt/mesospim_utils:test
-    network_mode: "host"
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              capabilities: [ gpu ]
-              count: all # or specify a number, e.g., 1
-    command: [
-      "/bin/bash", "-lc",
-      "sudo /etc/startup.sh; exec /bin/bash -l"
-    ]
-#    user: $(id -u):$(id -g)
-
-    volumes:
-      - config_dir:/opt/mesospim_utils/mesospim_utils/config #Location to store mesospim_utils config
-      - c:/test_data:/test_data
-      #- h20:/h20
-      #- faststore:/CBI_FastStore
-  build-mesospim-utils:
-    <<: *svc
     build:
-      context: .
-      <<: *args
+      context: ..
+      dockerfile: docker/Dockerfile
+      args: *build_args
     image: ${DOCKER_HUB_REPO}:${TAG}
     container_name: mesospim-utils
+    hostname: ${CONTAINER_HOSTNAME}
+    tty: true
+    stdin_open: true
+    environment:
+      MESOSPIM_CONFIG: /data/config/main.yaml
+      FIJI_ROOT: /opt/fiji-linux
+      MESOSPIM_CONTAINER_USER: ${CONTAINER_USERNAME}
+    command:
+      - /bin/bash
+      - -lc
+      - sudo /etc/startup.sh && exec /bin/bash -l
+    volumes:
+      - type: bind
+        source: ${MESO_C_SRC}
+        target: /data/c
+      - type: volume
+        source: meso_z_share
+        target: /data/z
+      - type: volume
+        source: meso_h_share
+        target: /data/h
+      - type: bind
+        source: ${MESO_CONFIG_SRC}
+        target: /data/config
+      - type: bind
+        source: ${MESO_WORK_SRC}
+        target: /data/work
+      - type: bind
+        source: ${MESO_SHARE_SRC}
+        target: /data/share
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep munged >/dev/null && pgrep slurmd >/dev/null && pgrep slurmctld >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
 volumes:
-  config_dir:
+  meso_z_share:
     driver: local
     driver_opts:
       type: cifs
-      device: "//faststore.cbi.pitt.edu/CBI_FastStore/cbiPythonTools/mesospim_utils/docker/config"
-      o: "vers=3.0,guest,noperm,file_mode=0777,dir_mode=0777"
-#  h20:
-#    driver: local
-#    driver_opts:
-#      type: cifs
-#      device: "//tn.cbi.pitt.edu/h20"
-#      o: "vers=3.0,guest,noperm,file_mode=0777,dir_mode=0777"
-#  faststore:
-#    driver: local
-#    driver_opts:
-#      type: cifs
-#      device: "//faststore.cbi.pitt.edu/CBI_FastStore"
-#      o: "vers=3.0,guest,noperm,file_mode=0777,dir_mode=0777"
-
+      device: ${MESO_Z_SRC}
+      o: ${MESO_Z_CIFS_OPTS}
+  meso_h_share:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: ${MESO_H_SRC}
+      o: ${MESO_H_CIFS_OPTS}

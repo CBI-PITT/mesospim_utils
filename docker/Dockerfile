@@ -1,257 +1,287 @@
-## SETTINGS ------------------------------------------------------------------
-ARG USER_PRIVILEGE_LEVEL
+ARG UBUNTU_VERSION=22.04
+ARG TIMEZONE=America/New_York
 
-# Settings for all images
-ARG TIMEZONE
-ARG UBUNTU_VERSION
+ARG USERNAME=docker
+ARG PASSWORD=ubuntu
+ARG UID=1000
 
-# Settings for standard user images
-ARG USERNAME
-ARG PASSWORD
-ARG UID
+ARG CONDA_DIR=/opt/miniconda
+ARG CONDA_VERSION=py312_24.7.1-0
+ARG CONDA_OS=Linux
+ARG CONDA_ARCH=x86_64
 
-# Settings for python
-ARG CONDA_DIR
-ARG CONDA_VERSION
-ARG CONDA_OS
-ARG CONDA_ARCH
+ARG SLURM_VER=25.05.3
+ARG WINE_GITHUB=https://github.com/wine-mirror/wine.git
+ARG WINE_COMMIT=2bca8cb236b7d4d5f4e0e35d6fcad6a1d8a2c5e3
+ARG MESOSPIM_SRC=/opt/src/mesospim_utils
+ARG FIJI_ROOT=/opt/fiji-linux
+ARG FIJI_ZIP_URL=https://downloads.imagej.net/fiji/archive/stable/20250808-2217/fiji-stable-linux64-jdk.zip
 
-# --- SLURM builder from source with nvml support---
-FROM ubuntu:${UBUNTU_VERSION} AS slurm-wine-build
-ARG SLURM_VER=${SLURM_VER}
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    fakeroot \
-    devscripts \
-    equivs \
-    dpkg-dev \
-    debhelper \
-    dh-autoreconf \
-    ca-certificates \
-    wget \
-    git \
-    python3 \
-    libnvidia-ml-dev \
-    libpmix-dev \
-    libhwloc-dev \
-    g++ \
-    cmake \
-    flex \
+FROM ubuntu:${UBUNTU_VERSION} AS slurm-build
+
+ARG SLURM_VER
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    bash-completion \
     bison \
-    && apt autoremove -y && apt clean -y
+    build-essential \
+    ca-certificates \
+    cmake \
+    debhelper \
+    devscripts \
+    dh-exec \
+    dh-autoreconf \
+    dpkg-dev \
+    flex \
+    g++ \
+    git \
+    hdf5-helpers \
+    libcurl4-openssl-dev \
+    libdbus-1-dev \
+    libfreeipmi-dev \
+    libgtk2.0-dev \
+    libhdf5-dev \
+    libhttp-parser-dev \
+    libhwloc-dev \
+    libipmimonitoring-dev \
+    libjson-c-dev \
+    libjwt-dev \
+    liblua5.3-dev \
+    liblz4-dev \
+    libmariadb-dev \
+    libmunge-dev \
+    libncurses-dev \
+    libnvidia-ml-dev \
+    libpam0g-dev \
+    libperl-dev \
+    libpmix-dev \
+    librdkafka-dev \
+    librrd-dev \
+    libyaml-dev \
+    man2html-base \
+    po-debconf \
+    python3 \
+    wget \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN wget https://download.schedmd.com/slurm/slurm-${SLURM_VER}.tar.bz2; \
-    tar -xjf slurm-${SLURM_VER}.tar.bz2; \
-    cd slurm-${SLURM_VER}; \
-    mk-build-deps -i -r -t "apt-get -y" debian/control; \
-    debuild -b -uc -us -j"$(nproc)"; \
-    cd ..; \
-    mkdir -p /tmp/slurm-install; \
-    cp slurm*.deb /tmp/slurm-install
+RUN wget -q "https://download.schedmd.com/slurm/slurm-${SLURM_VER}.tar.bz2" \
+    && tar -xjf "slurm-${SLURM_VER}.tar.bz2" \
+    && cd "slurm-${SLURM_VER}" \
+    && debuild -b -uc -us -j"$(nproc)" \
+    && mkdir -p /tmp/slurm-install \
+    && cp /slurm*.deb /tmp/slurm-install/
 
-#mk-build-deps -i -r -t "apt-get -y" debian/control; \
 
-# --- Clone and install wine from source---
-# Compile wine from source and install in /usr/local/bin
-# Binary used for mesospim_utils /usr/local/bin/wine64
-# Final step, initialize wine for the primary user: default docker
-ARG WINE_GITHUB=${WINE_GITHUB}
-ARG WINE_COMMIT=${WINE_COMMIT}
-ENV SRC_DIR="/opt"
+FROM ubuntu:${UBUNTU_VERSION} AS wine-build
+
+ARG WINE_GITHUB
+ARG WINE_COMMIT
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    autoconf \
+    automake \
+    bison \
+    build-essential \
+    ca-certificates \
+    flex \
+    gcc \
+    git \
+    libasound2-dev \
+    libcups2-dev \
+    libdbus-1-dev \
+    libfontconfig1-dev \
+    libfreetype6-dev \
+    libglu1-mesa-dev \
+    libgstreamer-plugins-base1.0-dev \
+    libgstreamer1.0-dev \
+    libncurses-dev \
+    libosmesa6-dev \
+    libpulse-dev \
+    libsdl2-dev \
+    libssl-dev \
+    libtool \
+    libudev-dev \
+    libusb-1.0-0-dev \
+    libx11-dev \
+    libxcomposite-dev \
+    libxcursor-dev \
+    libxext-dev \
+    libxi-dev \
+    libxinerama-dev \
+    libxrandr-dev \
+    libxrender-dev \
+    make \
+    pkg-config \
+    wget \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV SRC_DIR=/opt
+
 RUN set -eux; \
-    #mkdir -p "${SRC_DIR}"; \
     cd "${SRC_DIR}"; \
     git init wine; \
     cd wine; \
-    git remote add origin ${WINE_GITHUB}; \
-    git fetch --depth 1 origin ${WINE_COMMIT}; \
+    git remote add origin "${WINE_GITHUB}"; \
+    git fetch --depth 1 origin "${WINE_COMMIT}"; \
     git checkout --detach FETCH_HEAD; \
-    ./configure --enable-win64 --without-x --without-freetype; \
-    CPUS=$(nproc || echo 1); MAX=$((CPUS-2)); [ "$MAX" -lt 1 ] && MAX=1; echo "$MAX"; \
-    make -j${CPUS}; \
+    ./configure --enable-win64 --without-x; \
+    CPUS=$(nproc || echo 1); \
+    make -j"${CPUS}"; \
     make install DESTDIR=/tmp/wine-install
 
 
-## BUILD IMAGE: mesospim_utils ----------------------------------------------------
-FROM ubuntu:${UBUNTU_VERSION} as setup-mesospim-utils
+FROM ubuntu:${UBUNTU_VERSION} AS runtime
 
-# Copy over SLURM binaries
-COPY --from=slurm-wine-build /tmp/slurm-install/ /opt/slurm-install
-COPY --from=slurm-wine-build /tmp/wine-install/ /
-RUN ls -lh /opt/slurm-install
-
-# Run system updates
-RUN apt update && apt -y upgrade && apt autoremove -y && apt clean -y
-
-# Set time zone
-RUN ln -sn /usr/share/zoneinfo/${TIMEZONE} /etc/localtime \
-    && echo ${TIMEZONE} > /etc/timezone \
-    && apt -y install tzdata && apt autoremove -y && apt clean -y
-
-# Set locale
-RUN apt -y install locales \
-    && locale-gen en_US.UTF-8 \
-    && update-locale LANG=en_US.UTF-8 LC_MESSAGES=POSIX \
-    && apt autoremove -y && apt clean -y
-
-# Install system packages
-RUN DEBIAN_FRONTEND=noninteractive \
-    apt -y install \
-    sudo \
-    openssl \
-    munge \
-    tmux \
-    htop \
-    nano \
-    git \
-    wget \
-    build-essential \
-    cmake \
-    && apt autoremove -y && apt clean -y
-
-ARG SLURM_VER=${SLURM_VER}
-RUN apt-get update; \
-    apt-get install libpmix-dev -y; \
-    groupadd -r -g 64030 slurm; \
-    useradd -M slurm -u 64030 -g 64030 -s /usr/sbin/nologin --home /nonexistent; \
-    mkdir -p /var/spool/slurmd; \
-    mkdir -p /var/spool/slurmctld; \
-    chown -R slurm:slurm /var/spool/slurm*; \
-    chmod -R 775 /var/spool/slurm*; \
-    mkdir -p /var/log/slurmd; \
-    mkdir -p /var/log/slurm; \
-    chown -R slurm:slurm /var/log/slurm*; \
-    chmod -R 775 /var/log/slurm*; \
-    mkdir -p /etc/slurm; \
-    chown -R slurm:slurm /etc/slurm*; \
-    chmod -R 775 /etc/slurm*; \
-    chmod 777 -R /opt/slurm-install; \
-    apt install -y /opt/slurm-install/slurm-smd_${SLURM_VER}-1_amd64.deb; \
-    apt install -y /opt/slurm-install/slurm-smd-slurmctld_${SLURM_VER}-1_amd64.deb; \
-    apt install -y /opt/slurm-install/slurm-smd-slurmd_${SLURM_VER}-1_amd64.deb; \
-    apt install -y /opt/slurm-install/slurm-smd-client_${SLURM_VER}-1_amd64.deb; \
-    systemctl disable slurmd; \
-    systemctl disable slurmctld; \
-    apt autoremove -y && apt clean -y
-#rm -r /opt/slurm-install
-
-# Settings for standard user images
+ARG TIMEZONE
 ARG USERNAME
 ARG PASSWORD
 ARG UID
-
-# Settings for python
 ARG CONDA_DIR
 ARG CONDA_VERSION
 ARG CONDA_OS
 ARG CONDA_ARCH
+ARG SLURM_VER
+ARG MESOSPIM_SRC
+ARG FIJI_ROOT
+ARG FIJI_ZIP_URL
 
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH=${CONDA_DIR}/bin:${PATH}
+ENV FIJI_ROOT=${FIJI_ROOT}
+ENV MESOSPIM_CONTAINER_USER=${USERNAME}
+ENV MESOSPIM_SRC=${MESOSPIM_SRC}
+ENV MESOSPIM_CONFIG=/data/config/main.yaml
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MESOSPIM_UTILS=0.0.0
 
-# Set working directory and default command when running container
-WORKDIR /root
-#CMD /etc/startup.sh ; /bin/bash -l
-CMD /bin/bash -l
+COPY --from=slurm-build /tmp/slurm-install/ /opt/slurm-install/
+COPY --from=wine-build /tmp/wine-install/ /
 
+RUN apt-get update && apt-get install -y \
+    bzip2 \
+    ca-certificates \
+    build-essential \
+    curl \
+    g++ \
+    git \
+    locales \
+    munge \
+    nano \
+    openssl \
+    sudo \
+    tmux \
+    tzdata \
+    unzip \
+    wget \
+    htop \
+    libasound2 \
+    libcups2 \
+    libdbus-1-3 \
+    libfontconfig1 \
+    libfreetype6 \
+    libglu1-mesa \
+    libgstreamer-plugins-base1.0-0 \
+    libgstreamer1.0-0 \
+    libhwloc15 \
+    libncurses6 \
+    libnss3 \
+    libosmesa6 \
+    libpmix2 \
+    libpulse0 \
+    libsdl2-2.0-0 \
+    libssl3 \
+    libudev1 \
+    libusb-1.0-0 \
+    libx11-6 \
+    libxcomposite1 \
+    libxcursor1 \
+    libxext6 \
+    libxi6 \
+    libxinerama1 \
+    libxrandr2 \
+    libxrender1 \
+    python3 \
+    && locale-gen en_US.UTF-8 \
+    && update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+    && ln -snf "/usr/share/zoneinfo/${TIMEZONE}" /etc/localtime \
+    && echo "${TIMEZONE}" >/etc/timezone \
+    && groupadd -r -g 64030 slurm \
+    && useradd -M slurm -u 64030 -g 64030 -s /usr/sbin/nologin --home /nonexistent \
+    && mkdir -p /var/spool/slurmd /var/spool/slurmctld /var/log/slurmd /var/log/slurmctld /etc/slurm \
+    && chown -R slurm:slurm /var/spool/slurmd /var/spool/slurmctld /var/log/slurmd /var/log/slurmctld /etc/slurm \
+    && chmod -R 775 /var/spool/slurmd /var/spool/slurmctld /var/log/slurmd /var/log/slurmctld /etc/slurm \
+    && apt-get install -y /opt/slurm-install/slurm-smd_${SLURM_VER}-1_amd64.deb \
+    && apt-get install -y /opt/slurm-install/slurm-smd-slurmctld_${SLURM_VER}-1_amd64.deb \
+    && apt-get install -y /opt/slurm-install/slurm-smd-slurmd_${SLURM_VER}-1_amd64.deb \
+    && apt-get install -y /opt/slurm-install/slurm-smd-client_${SLURM_VER}-1_amd64.deb \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /opt/slurm-install
 
-# Create user account and add to "sudo" group
-# Configure user permissions for startup script
-RUN useradd --create-home --uid=${UID} ${USERNAME} -p "$(openssl passwd -1 ${PASSWORD})" \
-    && usermod -a -G sudo ${USERNAME} \
-    && printf "${USERNAME} ALL=(root:root) NOPASSWD: /etc/startup.sh\n" >> /etc/sudoers.d/startup \
+RUN useradd --create-home --uid="${UID}" "${USERNAME}" -p "$(openssl passwd -1 ${PASSWORD})" \
+    && usermod -aG sudo "${USERNAME}" \
+    && printf "%s ALL=(ALL) NOPASSWD: /etc/startup.sh\n" "${USERNAME}" >/etc/sudoers.d/startup \
     && chmod 0440 /etc/sudoers.d/startup \
     && visudo -c
 
-# ---------------- Miniconda (system-wide) ----------------
-# You can override these at build time if desired
-ENV PATH=${CONDA_DIR}/bin:${PATH}
-
-# Install Miniconda silently to ${CONDA_DIR} and enable globally
 RUN set -eux; \
-    installer=Miniconda3-${CONDA_VERSION}-${CONDA_OS}-${CONDA_ARCH}.sh; \
-    wget -q https://repo.anaconda.com/miniconda/${installer}; \
-    bash ${installer} -b -p "${CONDA_DIR}"; \
-    rm -f ${installer}; \
-    # Global activation script for login shells
+    installer="Miniconda3-${CONDA_VERSION}-${CONDA_OS}-${CONDA_ARCH}.sh"; \
+    wget -q "https://repo.anaconda.com/miniconda/${installer}"; \
+    bash "${installer}" -b -p "${CONDA_DIR}"; \
+    rm -f "${installer}"; \
     mkdir -p /etc/profile.d; \
-    echo '. '"${CONDA_DIR}"'/etc/profile.d/conda.sh' > /etc/profile.d/conda.sh; \
-    echo 'conda activate base' >> /etc/profile.d/conda.sh; \
-    # Basic house-keeping
+    printf '. %s/etc/profile.d/conda.sh\nconda activate base\n' "${CONDA_DIR}" >/etc/profile.d/conda.sh; \
     "${CONDA_DIR}"/bin/conda config --system --set always_yes true; \
     "${CONDA_DIR}"/bin/conda update -n base -c defaults conda; \
     "${CONDA_DIR}"/bin/conda clean -afy; \
-    rm -rf /root/.cache/conda /tmp/*; \
-    chown -R ${USERNAME}:${USERNAME} ${CONDA_DIR}; \
-    chmod -R 775 ${CONDA_DIR}
+    chown -R "${USERNAME}:${USERNAME}" "${CONDA_DIR}"; \
+    chmod -R 775 "${CONDA_DIR}"
 
-# --- Clone and editable-install mesospim_utils for ${USERNAME} ---
-ARG MESOSPIM_UTILS_REF=main
-ENV SRC_DIR="/opt"
+WORKDIR /opt/src
+COPY . ${MESOSPIM_SRC}
+
 RUN set -eux; \
-    mkdir -p "${SRC_DIR}" && cd "${SRC_DIR}"; \
-    git clone --depth 1 --branch "${MESOSPIM_UTILS_REF}" "https://github.com/CBI-PITT/mesospim_utils.git"; \
-    cd mesospim_utils; \
-    # Use the python from /opt/conda (already on PATH); editable install
     python -m pip install --no-cache-dir -U pip setuptools wheel; \
-    python -m pip install --no-cache-dir -e . psfmodels; \
-    #rm -rf /home/${USERNAME}/.cache/pip/* /tmp/*; \
-    rm -rf /root/.cache/pip/* /tmp/*; \
-    rm -r "${SRC_DIR}/mesospim_utils/.git"; \
-    rm -r "${SRC_DIR}/mesospim_utils/.eggs"; \
-    rm -r "${SRC_DIR}/mesospim_utils/images"; \
-    rm -r "${SRC_DIR}/mesospim_utils/notes"; \
-    chown -R ${USERNAME}:${USERNAME} ${SRC_DIR}/mesospim_utils; \
-    chmod -R 775 ${SRC_DIR}/mesospim_utils
+    python -m pip install --no-cache-dir -e "${MESOSPIM_SRC}[psfmodels]"; \
+    cp -R "${MESOSPIM_SRC}"/docker /opt/docker-src; \
+    rm -rf /root/.cache/pip /tmp/*
 
-
-
-# --- Clone ImarisConverter for ${USERNAME} ---
-ENV SRC_DIR="/opt"
 RUN set -eux; \
-    mkdir -p "${SRC_DIR}" && cd "${SRC_DIR}"; \
-    git clone --depth 1 --branch "main" "https://github.com/CBI-PITT/ImarisFileConverter_wine.git"; \
-    cd ImarisFileConverter_wine; \
-    rm -r "${SRC_DIR}/ImarisFileConverter_wine/.git"; \
-    chown -R ${USERNAME}:${USERNAME} ${SRC_DIR}/ImarisFileConverter_wine; \
-    chmod -R 775 ${SRC_DIR}/ImarisFileConverter_wine
+    mkdir -p "${FIJI_ROOT}"; \
+    wget -q -O /tmp/fiji.zip "${FIJI_ZIP_URL}"; \
+    unzip -q /tmp/fiji.zip -d /tmp/fiji-stage; \
+    if [ -d /tmp/fiji-stage/Fiji.app ]; then mv /tmp/fiji-stage/Fiji.app "${FIJI_ROOT}/Fiji.app"; else mv /tmp/fiji-stage/*/Fiji.app "${FIJI_ROOT}/Fiji.app"; fi; \
+    "${FIJI_ROOT}/Fiji.app/ImageJ-linux64" --update add-update-site BigStitcher https://sites.imagej.net/BigStitcher/; \
+    "${FIJI_ROOT}/Fiji.app/ImageJ-linux64" --update update; \
+    python -c 'from pathlib import Path; import hashlib; root = Path("/opt/fiji-linux"); db = root / "Fiji.app" / "db.xml.gz"; h = hashlib.sha256(db.read_bytes()).hexdigest() if db.exists() else "missing"; (root / ".fiji_bigstitcher_ready").write_text("\n".join(["fiji_zip_url=https://downloads.imagej.net/fiji/archive/stable/20250808-2217/fiji-stable-linux64-jdk.zip", "bigstitcher_site=https://sites.imagej.net/BigStitcher/", f"db_xml_gz_sha256={h}"]) + "\n", encoding="utf-8")'; \
+    rm -rf /tmp/fiji.zip /tmp/fiji-stage
 
-# Copy slurm init.d service scripts
-COPY etc/init.d/slurmctld /etc/init.d/slurmctld
-COPY etc/init.d/slurmd /etc/init.d/slurmd
-RUN sed -i 's/\r$//' /etc/init.d/slurmctld && chmod 555 /etc/init.d/slurmctld
-RUN sed -i 's/\r$//' /etc/init.d/slurmd && chmod 555 /etc/init.d/slurmd
-RUN chmod 755 /etc/init.d/slurm*
+RUN rm -rf /opt/ImarisFileConverter_wine \
+    && git clone --depth 1 --branch main https://github.com/CBI-PITT/ImarisFileConverter_wine.git /opt/ImarisFileConverter_wine \
+    && rm -rf /opt/ImarisFileConverter_wine/.git \
+    && chown -R "${USERNAME}:${USERNAME}" /opt/ImarisFileConverter_wine
 
-# Copy SLURM configuration
-COPY etc/slurm /etc/slurm
-RUN chmod 777 /etc/slurm/*
-RUN sed -i 's/\r$//' /etc/slurm/slurm.conf
-RUN sed -i 's/\r$//' /etc/slurm/cgroup.conf
-RUN sed -i 's/\r$//' /etc/slurm/gres.conf
-#COPY etc/slurm/cgroup.conf /etc/slurm/cgroup.conf
-#COPY etc/slurm/gres.conf /etc/slurm/gres.conf
+COPY docker/etc/init.d/slurmctld /etc/init.d/slurmctld
+COPY docker/etc/init.d/slurmd /etc/init.d/slurmd
+COPY docker/etc/slurm /etc/slurm
+COPY docker/startup.sh /etc/startup.sh
+COPY docker/map_wine.py /etc/map_wine.py
 
-# Startup configuration
-COPY startup.sh /etc/startup.sh
-RUN sed -i 's/\r$//' /etc/startup.sh && chmod 555 /etc/startup.sh
+RUN sed -i 's/\r$//' /etc/init.d/slurmctld /etc/init.d/slurmd /etc/startup.sh /etc/map_wine.py /etc/slurm/slurm.conf /etc/slurm/cgroup.conf /etc/slurm/gres.conf \
+    && chmod 555 /etc/init.d/slurmctld /etc/init.d/slurmd /etc/startup.sh /etc/map_wine.py \
+    && chmod 644 /etc/slurm/slurm.conf /etc/slurm/cgroup.conf /etc/slurm/gres.conf \
+    && cp /etc/slurm/slurm.conf /etc/slurm/slurm.conf.template \
+    && cp /etc/slurm/gres.conf /etc/slurm/gres.conf.template
 
-COPY map_wine.py /etc/map_wine.py
-RUN sed -i 's/\r$//' /etc/map_wine.py && chmod 555 /etc/map_wine.py
+RUN mkdir -p /data/c /data/z /data/config /data/work /home/${USERNAME}/.wine/dosdevices \
+    && chown -R "${USERNAME}:${USERNAME}" /data /home/${USERNAME} /opt/fiji-linux /opt/src /opt/docker-src
 
-# Initialize wine for ${USERNAME}
-RUN sudo -u ${USERNAME} winecfg
-
-# Set standard user as default
+RUN sudo -u "${USERNAME}" winecfg >/dev/null 2>&1 || true
 
 USER ${USERNAME}
-
-# Enable colored Bash terminal prompt
-RUN sed -i -e 's/#force_color_prompt=yes/force_color_prompt=yes/' /home/${USERNAME}/.bashrc
-
-# Set working directory and default command when running container
 WORKDIR /home/${USERNAME}
-CMD sudo /etc/startup.sh
 
+RUN sed -i -e 's/#force_color_prompt=yes/force_color_prompt=yes/' "/home/${USERNAME}/.bashrc"
 
-## SELECT DESIRED USER PRIVILEGE LEVEL ----------------------------------------
-#FROM stage-${USER_PRIVILEGE_LEVEL}
+CMD ["sudo", "/etc/startup.sh"]

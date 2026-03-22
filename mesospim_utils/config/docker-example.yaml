@@ -1,0 +1,161 @@
+general:
+  location_module: '/opt/src/mesospim_utils/mesospim_utils'
+  location_environment: '/opt/miniconda/bin/python'
+  metadata_filename: 'mesospim_metadata.json'
+  metadata_annotated_filename: 'mesospim_annotated_metadata.json'
+  montage_name: 'auto_montage.ims'
+  verbose: 1
+  overide_stage_direction: true
+
+  windows_mappings:
+    '/data/c': 'c:'
+    '/data/z': 'z:'
+    '/data/h': 'h:'
+    '/data/share': 'y:'
+
+  wine_mappings:
+    '/data/z': 'z:'
+    '/data/h': 'h:'
+    '/data/share': 'y:'
+
+  emission_map:
+    'emp': 405
+    'dapi': 450
+    'hoechst': 450
+    'gfp': 525
+    'yfp': 525
+    'green': 525
+    'rfp': 595
+    'red': 595
+    'cy5': 665
+    'far_red': 665
+    'cy7': 790
+
+  emission_to_rgb:
+    'default': [0.5, 0.5, 0.5]
+    '300-479': [0, 0, 1]
+    '480-540': [0, 1, 0]
+    '541-625': [1, 0, 0]
+    '627-730': [1, 0, 0.75]
+    '731-2000': [0.75, 0, 1]
+
+  username_pattern: '[\\/]([a-z]+-[a-z])[\\/]'
+
+decon:
+  script: 'rl.py'
+  output_dir: 'decon'
+  psf_threshold: 1.0e-5
+  vram_per_voxel: 2.36837e-5
+  max_vram: 24576
+  margin_vram: 0.95
+  default_objective: 'mesospim_air_2x'
+  objectives:
+    mesospim_air_2x:
+      na: 0.2
+      objective_immersion_ri_design: 1.000293
+      objective_immersion_ri_actual: 1.000293
+      objective_working_distance_um: 45000
+      coverslip_ri_design: 1.000293
+      coverslip_ri_actual: 1.515
+      coverslip_thickness_actual_um: 170
+      coverslip_thickness_design_um: 0
+
+align:
+  directory: 'align'
+  resolution_level_for_align: 3
+  correlation_threshold_for_alignment: 0.6
+  remove_outliers: true
+  offset_metric: 'median'
+  align_output_file_name: 'tile_offsets_microns.json'
+
+resample:
+  use_separate_align_data_per_sheet: false
+
+ims_converter:
+  wine_install_location: '/usr/local/bin/wine64'
+  imaris_installer_location: '/opt/ImarisFileConverter_wine/ImarisConvert.exe'
+  compression_level: 6
+
+imaris_stitcher:
+  path_to_imaris_stitcher_folder: 'C:\\Program Files\\Bitplane\\ImarisStitcher 10.2.0'
+  path_to_imaris_stitcher_temp_folder: 'Y:\\tmp\\stitch_tmp_files'
+  shared_windows_path_where_win_client_job_files_are_stored: 'Y:\\tmp\\stitch_jobs'
+  shared_linux_path_where_win_client_job_files_are_stored: '/data/share/tmp/stitch_jobs'
+  correlation_threshold_for_alignment: 0.6
+  percentage_of_machine_resources_to_use_for_stitching: 0.2
+  fraction_of_ram_for_processing: 0.2
+  compression_level: 6
+
+slurm:
+  dependencies:
+    'PARTITION': 'mycomputer'
+    'CPUS': 1
+    'JOB_LABEL': 'ms_depends'
+    'RAM_GB': 4
+    'GRES':
+    'PARALLEL_JOBS': 1
+    'NICE': 0
+    'TIME_LIMIT':
+  decon:
+    'PARTITION': 'mycomputer'
+    'CPUS': 1
+    'JOB_LABEL': 'ms_decon'
+    'RAM_GB': 64
+    'GRES':
+    'PARALLEL_JOBS': 1
+    'NICE': 0
+    'TIME_LIMIT':
+  align:
+    'PARTITION': 'mycomputer'
+    'CPUS': 12
+    'JOB_LABEL': 'ms_align'
+    'RAM_GB': 32
+    'GRES':
+    'PARALLEL_JOBS': 1
+    'NICE': 0
+    'TIME_LIMIT':
+  ims_convert:
+    'PARTITION': 'mycomputer'
+    'CPUS': 12
+    'JOB_LABEL': 'ms_ims_conv'
+    'RAM_GB': 32
+    'GRES':
+    'PARALLEL_JOBS': 4
+    'NICE': 0
+    'TIME_LIMIT':
+  omezarr:
+    'PARTITION': 'mycomputer'
+    'CPUS': 12
+    'JOB_LABEL': 'ms_omezarr'
+    'RAM_GB': 32
+    'GRES':
+    'PARALLEL_JOBS': 4
+    'NICE': 0
+    'TIME_LIMIT':
+  bigstitcher:
+    'PARTITION': 'mycomputer'
+    'CPUS': 16
+    'JOB_LABEL': 'ms_bigstitcher'
+    'RAM_GB': 64
+    'GRES':
+    'PARALLEL_JOBS': 1
+    'NICE': 0
+    'TIME_LIMIT':
+
+bigstitcher:
+  fiji_install_folder: '/opt/fiji-linux/Fiji.app'
+  downsample_in_x: 'automated'
+  downsample_in_y: 'automated'
+  downsample_in_z: 'automated'
+  downsample_refinement: '8/8/4'
+  blocksize_x: 256
+  blocksize_y: 256
+  blocksize_z: 256
+  blocksize_factor_x: 2
+  blocksize_factor_y: 2
+  blocksize_factor_z: 2
+  subsampling_factors: 'automated'
+  ram_fraction: 0.85
+
+dev:
+  slurm_top_priority: false

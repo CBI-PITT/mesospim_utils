@@ -9,6 +9,7 @@
 - Expected branch when this note was updated: `main`
 - The repository may be dirty from ongoing local work; inspect `git status` before editing.
 - Recent work has touched BigStitcher, metadata/config, Fiji install helpers, and packaging metadata.
+- Recent work has also touched the Windows-oriented Docker appliance under `docker/`.
 
 ## Current Focus Areas
 
@@ -34,6 +35,27 @@
   - tune channel-alignment/chromatic-aberration handling
   - adjust BigStitcher refinement downsampling and fusion memory settings
   - move deconvolution PSF/objective parameters out of hardcoded `rl.py` values and into config
+
+## Recent Change: Windows Docker Appliance Refresh
+
+- Reworked `docker/Dockerfile` into a multi-stage build that keeps source-built, pinned SLURM and Wine.
+- The image now installs the checked-out repo from local source instead of cloning GitHub during build.
+- Added `.dockerignore` to keep build context smaller and avoid baking machine-specific config into the image.
+- Reworked `docker/docker-compose.yml` around bind mounts rooted at `/data/c`, `/data/z`, `/data/config`, `/data/work`, and optional `/data/share`.
+- Updated `docker/.env` with Windows mount source variables (`MESO_C_SRC`, `MESO_Z_SRC`, `MESO_CONFIG_SRC`, `MESO_WORK_SRC`, `MESO_SHARE_SRC`).
+- `docker/startup.sh` now copies a Docker-specific config into `/data/config/main.yaml` on first run, restores SLURM config templates before mutation, and then starts `munge`, `slurmd`, and `slurmctld`.
+- `docker/map_wine.py` now reads the mounted config via `MESOSPIM_CONFIG` and maps Wine drives from `/data/...` roots.
+- Added `mesospim_utils/config/docker-example.yaml` with container-native paths and single-node SLURM defaults.
+- `mesospim_utils/constants.py` now honors the `MESOSPIM_CONFIG` environment variable before falling back to package config files.
+- Added Docker usage documentation in `README.md` and `docker/README.md`.
+
+## Docker Validation Notes
+
+- `bash -n docker/startup.sh` succeeded.
+- `python -m py_compile` succeeded for `docker/map_wine.py`, `mesospim_utils/constants.py`, and `mesospim_utils/fiji.py`.
+- `docker compose --env-file docker/.env -f docker/docker-compose.yml config` rendered successfully.
+- YAML parsing with the host Python environment was not possible here because `PyYAML` is not installed outside the project runtime environment.
+- The new Docker image build and in-container end-to-end smoke test still need to be run on a Windows/Docker Desktop machine.
 
 ## Recent Change: Objective Profiles For Deconvolution
 
@@ -93,6 +115,7 @@
 - BigStitcher/Fiji behavior, SLURM resource behavior, and config-driven workflows still need real environment verification after changes.
 - CLI `--help` smoke tests could not run in this environment because required runtime packages such as `psutil` and `tifffile` are not installed here.
 - Edited Python files were checked with `python -m py_compile` successfully.
+- The refreshed Docker appliance has only been syntax/config validated so far; it still needs a real Windows-hosted build and runtime verification.
 
 ## Open Questions
 
@@ -100,11 +123,15 @@
 - Are current ICP/channel-alignment relaxations sufficient for chromatic aberration cases, or still too aggressive?
 - Should any dependency notes or missing runtime packages be documented more explicitly in packaging files later?
 - When metadata eventually includes objective information, should it provide only an objective name or full numeric PSF parameters?
+- Does the new Dockerfile need extra runtime libraries for the pinned Wine build on the target Windows hosts?
+- Can `network_mode: host` remain removed on Docker Desktop while SLURM service communication stays reliable in practice?
 
 ## Suggested Resume Path For The Next Agent
 
 1. Read `AGENTS.md` for stable repo guidance.
 2. Run `git status` to understand in-progress local changes.
-3. If resuming alignment/OOM work, inspect `mesospim_utils/bigstitcher.py` and `mesospim_utils/bigstitcher_macro_templates.py` first.
-4. Check active values in `mesospim_utils/config/main.yaml` before assuming behavior from `example.yaml`.
-5. After finishing a work session, update this file with only the new handoff context.
+3. If resuming Docker work, inspect `docker/Dockerfile`, `docker/docker-compose.yml`, `docker/startup.sh`, and `mesospim_utils/config/docker-example.yaml` first.
+4. Build the Docker image on the real Windows target before changing more config assumptions.
+5. If resuming alignment/OOM work instead, inspect `mesospim_utils/bigstitcher.py` and `mesospim_utils/bigstitcher_macro_templates.py`.
+6. Check active values in `mesospim_utils/config/main.yaml` before assuming behavior from `example.yaml`.
+7. After finishing a work session, update this file with only the new handoff context.

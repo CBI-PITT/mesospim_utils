@@ -12,6 +12,13 @@ os.umask(0o006)
 
 def read_config():
 
+    env_config = os.environ.get('MESOSPIM_CONFIG')
+    if env_config:
+        config_path = Path(env_config).expanduser().resolve()
+        if config_path.is_file():
+            with open(config_path, 'r') as file:
+                return yaml.safe_load(file)
+
     # Define relative path
     config_path = Path(__file__).parent / 'config' / 'main.yaml'
     # Resolve it to an absolute path
@@ -151,6 +158,8 @@ BIGSTITCHER = config.get('bigstitcher')
 FIJI_INSTALL_LOCATION = BIGSTITCHER.get('fiji_install_folder')
 if not FIJI_INSTALL_LOCATION:
     FIJI_INSTALL_LOCATION = Path(__file__).resolve().parent.parent / 'fiji-linux' / 'Fiji.app'
+else:
+    FIJI_INSTALL_LOCATION = Path(FIJI_INSTALL_LOCATION)
 FIJI_EXECUTABLE = FIJI_INSTALL_LOCATION / "ImageJ-linux64"
 
 DOWNSAMPLE_IN_X = str(BIGSTITCHER.get('downsample_in_x'))

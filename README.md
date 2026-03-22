@@ -2,6 +2,41 @@
 
 ## This repository offers tools to deal with mesospim data at CBI
 
+## Docker on Windows
+
+The repository now includes a Windows-oriented Docker appliance under `docker/` for running a full single-node
+SLURM-based `mesospim_utils` workflow inside Docker Desktop with the WSL2 backend.
+
+- The container is designed for CPU-only execution first. GPU deconvolution is intended to be added back later.
+- SLURM and Wine are compiled from the pinned versions in `docker/.env`.
+- The container expects stable in-container mount roots under `/data`.
+- `C:` is bind-mounted directly, while network shares for `/data/z` and `/data/h` are intended to be mounted by Docker as CIFS volumes.
+- The default Wine mappings are `/data/z -> z:` and `/data/share -> y:`.
+
+Basic usage:
+
+```bash
+cd docker
+mkdir -p config work disabled-share
+docker compose build
+docker compose up -d
+docker compose exec mesospim_utils bash
+```
+
+By default the compose file mounts Windows-host-visible sources into:
+
+- `MESO_C_SRC -> /data/c`
+- `MESO_Z_SRC -> /data/z`
+- `MESO_H_SRC -> /data/h`
+- `MESO_CONFIG_SRC -> /data/config`
+- `MESO_WORK_SRC -> /data/work`
+- optional `MESO_SHARE_SRC -> /data/share`
+
+If `/data/config/main.yaml` does not exist at startup, the container copies
+`mesospim_utils/config/docker-example.yaml` into place automatically.
+
+See `docker/README.md` for Windows path examples using both drive letters and UNC-backed shares.
+
 #### Installing:
 
 ```bash
