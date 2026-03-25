@@ -97,7 +97,8 @@ DECON_SCRIPT = LOCATION_OF_MESOSPIM_UTILS_INSTALL + '/' + decon.get('script')
 DECON_DEFAULT_OUTPUT_DIR = decon.get('output_dir')
 
 PSF_THRESHOLD = decon.get('psf_threshold')
-MAX_VRAM = decon.get('max_vram') * decon.get('margin_vram')
+MARGIN_VRAM = decon.get('margin_vram')
+MAX_VRAM = decon.get('max_vram') * MARGIN_VRAM
 VRAM_PER_VOXEL = decon.get('vram_per_voxel') # Approximation based on real data
 DECON_DEFAULT_OBJECTIVE = decon.get('default_objective')
 DECON_OBJECTIVES = decon.get('objectives', {})

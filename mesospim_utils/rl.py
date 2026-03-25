@@ -29,7 +29,7 @@ from metadata import collect_all_metadata, get_ch_entry_for_file_name, get_entry
 
 from constants import ENV_PYTHON_LOC
 from constants import DECON_SCRIPT as LOC_OF_THIS_SCRIPT
-from constants import VRAM_PER_VOXEL, MAX_VRAM
+from constants import VRAM_PER_VOXEL, MAX_VRAM, MARGIN_VRAM
 from constants import DECON_DEFAULT_OBJECTIVE, DECON_OBJECTIVES
 from constants import VERBOSE
 
@@ -151,6 +151,8 @@ def prepare_cuda_runtime():
 
     device_name = torch.cuda.get_device_name(0)
     total_vram_mb = int(torch.cuda.get_device_properties(0).total_memory / (1024 ** 2))
+    # Obey overhead margin set in config
+    total_vram_mb = int(total_vram_mb * MARGIN_VRAM)
 
     if VERBOSE:
         print('CUDA available: True')
