@@ -127,7 +127,7 @@ RUN set -eux; \
     git remote add origin "${WINE_GITHUB}"; \
     git fetch --depth 1 origin "${WINE_COMMIT}"; \
     git checkout --detach FETCH_HEAD; \
-    ./configure --enable-win64 --without-x; \
+    ./configure --enable-win64; \
     CPUS=$(nproc || echo 1); \
     make -j"${CPUS}"; \
     make install DESTDIR=/tmp/wine-install
@@ -155,6 +155,7 @@ ENV MESOSPIM_CONTAINER_USER=${USERNAME}
 ENV MESOSPIM_SRC=${MESOSPIM_SRC}
 ENV MESOSPIM_CONFIG=/data/config/main.yaml
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MESOSPIM_UTILS=0.0.0
+ENV WINEPREFIX=/home/${USERNAME}/.wine
 
 COPY --from=slurm-build /tmp/slurm-install/ /opt/slurm-install/
 COPY --from=wine-build /tmp/wine-install/ /
@@ -274,10 +275,17 @@ RUN sed -i 's/\r$//' /etc/init.d/slurmctld /etc/init.d/slurmd /etc/startup.sh /e
     && cp /etc/slurm/slurm.conf /etc/slurm/slurm.conf.template \
     && cp /etc/slurm/gres.conf /etc/slurm/gres.conf.template
 
-RUN mkdir -p /data/c /data/z /data/config /data/work /home/${USERNAME}/.wine/dosdevices \
+RUN mkdir -p /data/c /data/z /data/config /data/work \
+        /home/${USERNAME}/.wine/dosdevices \
+        /home/${USERNAME}/.wine/drive_c \
+    && ln -sf ../drive_c /home/${USERNAME}/.wine/dosdevices/c: \
     && chown -R "${USERNAME}:${USERNAME}" /data /home/${USERNAME} /opt/fiji-linux /opt/src /opt/docker-src
 
-RUN sudo -u "${USERNAME}" winecfg >/dev/null 2>&1 || true
+RUN HOME=/home/${USERNAME} \
+    WINEPREFIX=/home/${USERNAME}/.wine \
+    sudo -E -u "${USERNAME}" wineboot --init 2>&1; \
+    test -d /home/${USERNAME}/.wine/drive_c/windows \
+    || { echo "ERROR: Wine prefix not initialised – drive_c/windows missing"; exit 1; }
 
 USER ${USERNAME}
 WORKDIR /home/${USERNAME}

@@ -14,6 +14,7 @@ general:
     '/data/share': 'y:'
 
   wine_mappings:
+    '/data/c': 'c:'
     '/data/z': 'z:'
     '/data/h': 'h:'
     '/data/share': 'y:'
@@ -73,7 +74,7 @@ resample:
 
 ims_converter:
   wine_install_location: '/usr/local/bin/wine64'
-  imaris_installer_location: '/opt/ImarisFileConverter_wine/ImarisConvert.exe'
+  imaris_installer_location: '/opt/ImarisFileConverter_wine/10.2.0/ImarisConvert.exe'
   compression_level: 6
 
 imaris_stitcher:

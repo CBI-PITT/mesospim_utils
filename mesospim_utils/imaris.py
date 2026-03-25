@@ -114,7 +114,7 @@ def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1), ou
 
     # Main ims converter command
     lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file[0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" {f' -il "{path_to_wine_mappings(layout_path)}"' if inputformat else ""} --logprogress --nthreads {SLURM_CPUS} --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
-
+    print(lines)
     # Change ims-file channel colors to match those from mesospim metadata
     # This runs the cmd-line utility defined in this same script that uses h5py to edit the .ims file after conversion.
     # It is important to run this after conversion because the converter will overwrite any pre-set colors.

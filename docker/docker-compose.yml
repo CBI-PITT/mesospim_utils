@@ -25,6 +25,8 @@ services:
     hostname: ${CONTAINER_HOSTNAME}
     tty: true
     stdin_open: true
+    security_opt:
+      - seccomp:unconfined
     environment:
       MESOSPIM_CONFIG: /data/config/main.yaml
       FIJI_ROOT: /opt/fiji-linux

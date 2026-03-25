@@ -20,6 +20,9 @@ if [ ! -f /data/config/main.yaml ] && [ -f /opt/src/mesospim_utils/mesospim_util
     ${sudo_cmd} cp /opt/src/mesospim_utils/mesospim_utils/config/docker-example.yaml /data/config/main.yaml
 fi
 
+# Symlink so mesospim_utils code finds main.yaml at its expected config path
+${sudo_cmd} ln -sf /data/config/main.yaml /opt/src/mesospim_utils/mesospim_utils/config/main.yaml
+
 ${sudo_cmd} env \
     APP_USER="${APP_USER}" \
     SLURM_CONF_TEMPLATE="${SLURM_CONF_TEMPLATE}" \
@@ -64,7 +67,16 @@ fi
 echo "Effective slurm.conf NodeName line:"
 grep '^NodeName=' "${SLURM_CONF}"
 
-mkdir -p /home/${APP_USER}/.wine/dosdevices
+export WINEPREFIX=/home/${APP_USER}/.wine
+mkdir -p /home/${APP_USER}/.wine/dosdevices /home/${APP_USER}/.wine/drive_c
+[ -L /home/${APP_USER}/.wine/dosdevices/c: ] || ln -sf ../drive_c /home/${APP_USER}/.wine/dosdevices/c:
+
+# Ensure Wine prefix is fully initialised (idempotent; covers volume-mount edge cases)
+if [ ! -d "/home/${APP_USER}/.wine/drive_c/windows" ]; then
+    echo "Wine prefix incomplete – running wineboot --init as ${APP_USER}"
+    HOME=/home/${APP_USER} sudo -E -u "${APP_USER}" wineboot --init 2>&1 || true
+fi
+
 service munge start
 service slurmd start
 service slurmctld start
