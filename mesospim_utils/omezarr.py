@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from gettext import translation
 from typing import Any, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from pathlib import Path
 
 import typer
 
