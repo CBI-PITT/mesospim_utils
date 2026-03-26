@@ -26,6 +26,7 @@ import tifffile
 import skimage
 from skimage import img_as_float32, img_as_uint
 
+from mesospim_utils.utils import ensure_path
 from psf import get_psf
 from metadata import collect_all_metadata
 
@@ -222,6 +223,159 @@ def set_ims_channel_color(ims_path:Path, channel:int, rgb:Tuple[float,float,floa
         g.attrs["Color"] = _as_char_array(color_str)           # e.g. "1 0 0" for red :contentReference[oaicite:1]{index=1}
         g.attrs["ColorMode"] = _as_char_array(mode_str)        # "BaseColor" or "TableColor" :contentReference[oaicite:2]{index=2}
 
+
+# def make_ims_from_tiff_series(tiff_series_path: Path):
+#     tiff_series_path = ensure_path(tiff_series_path)
+#     assert tiff_series_path.is_dir(), "Provided path must be a directory containing TIFF files"
+#
+#     # Get list of tif{f} files
+#     file_list = list(tiff_series_path.glob('*.tiff'))
+#     file_list += list(tiff_series_path.glob('*.tif'))
+#     assert len(file_list) > 0, "No TIFF files found"
+#
+#     # Sort files by channel
+#     channel_files = []
+#     for f in file_list:
+#         name = f.stem
+#         if 'c_' in name.lower():
+#             channel_part = name.split('c')[-1]
+#             channel_num = ''.join(filter(str.isdigit, channel_part))
+#             if channel_num.isdigit():
+#                 channel_files.append((int(channel_num), f))
+#     channel_files.sort(key=lambda x: x[0])  # Sort by channel number
+
+@app.command()
+def make_ims_from_tiff_series(tiff_series_path: Path, res: tuple[float, float, float] = (1, 1, 1), out_dir: Path = None,
+                after_slurm_jobs: list[str] = None, run_conversion: bool = True):
+    '''
+    Convert a single imaris file using a subprocess OR
+    if return_cmd=True, return a string command without running the subprocess
+
+    Files will be written to disk including the FileSeriesLayout files and a .bat file to execute the conversions
+
+    file = [file1.tif, file2.tif]
+
+    output.bat:
+    convert: file1.tif, file2.tif --> out.part
+    rename_output: out.part --> out.ims
+    '''
+
+    tiff_series_path = ensure_path(tiff_series_path)
+    assert tiff_series_path.is_dir(), "Provided path must be a directory containing TIFF files"
+
+    # Get list of tif{f} files
+    file_list = list(tiff_series_path.glob('*.tiff'))
+    file_list += list(tiff_series_path.glob('*.tif'))
+    assert len(file_list) > 0, "No TIFF files found"
+
+    # def channel_num_from_filename(filename):
+    #     num = filename.name.split('_c')[-1]  # String
+    #     num = num.split('_')[0]  # String
+    #     num = int(num)  # Int
+    #     return num
+    #
+    # # Make nested list where each nested list is 1 channel sorted by z slice order
+    # files = []
+    # idx = 0
+    # while True:
+    #     num = file.name.split('_c')[-1]  # String
+    #     num = num.split('_')[0]  # String
+    #     num = int(num)  # Int
+    #     ch = []
+
+    files_dict = {}
+    for ii in file_list:
+        num = ii.name.split('_c')[-1]  # String
+        num = num.split('_')[0]  # String
+        num = int(num)  # Int
+        if not num in files_dict:
+            files_dict[num] = [ii]
+        else:
+            files_dict[num].append(ii)
+
+    # Sort each channel's files by z slice order
+    for num in files_dict.keys():
+        files_dict[num] = sorted(files_dict[num])
+        # files_dict[num] = sorted(files_dict[num], key=lambda x: int(x.stem.split('_z')[-1].split('_')[0]))
+
+    # Create nested file list
+    files_nested_list = []
+    for idx in range(len(files_dict)):
+        files_nested_list.append(files_dict[idx])
+
+    file_len = len(files_nested_list[0])
+    assert all([len(x) == file_len for x in files_nested_list]), 'The number of files in each channel do not match'
+
+
+    ###  WE NOW HAVE A NESTED LIST OF FILES SORTED BY CHANNEL AND Z-SLICE ORDER, WE CAN PASS THIS TO THE CONVERTER
+
+    res_z, res_y, res_x = res
+
+    if not isinstance(file, list):
+        file = [file]
+
+    file = [Path(x) for x in file if not isinstance(x, Path)]
+
+    ext = file[0].suffix
+    inputformat = None  # For .h5 files this stays None
+    if ext == '.tif' or ext == '.tiff' or ext == '.btf':
+        inputformat = 'TiffSeries'
+
+    if not out_dir:
+        out_dir = file[0].parent / 'ims_files'
+    out_file = out_dir / (file[0].stem + '.ims')
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    log_location = out_file.parent / 'ims_convert_logs' / (out_file.stem + '.txt')
+    log_location.parent.mkdir(parents=True, exist_ok=True)
+
+    if out_file.exists():
+        return None, log_location, out_dir
+
+    if inputformat == 'TiffSeries':
+
+        layout_path = out_file.parent / 'ims_convert_layouts' / (out_file.stem + '_layout.txt')
+        layout_path.parent.mkdir(parents=True, exist_ok=True)
+
+        line = f'<FileSeriesLayout>'
+        for c_idx, c_files in enumerate(files_nested_list):
+            for z_idx, file in enumerate(c_files):
+                line += f'\n<ImageIndex name="{path_to_wine_mappings(file)}" x="0" y="0" z="{z_idx}" c="{c_idx}" t="0"/>'
+        line += '</FileSeriesLayout>'
+
+        with layout_path.open("w") as f:
+            f.write(line)
+
+    # Add channel colors using mesospim metadata if available
+    metadata_by_channel = collect_all_metadata(file[0])
+    rgb_colors = []
+    if metadata_by_channel:
+        for channel in metadata_by_channel:
+            channel_data = metadata_by_channel[channel]
+            first_tile = channel_data[0]
+            rgb = first_tile.get('rgb_representation', (0.5, 0.5, 0.5))  # Default to gray if no color info
+            rgb_colors.append(rgb)
+
+    # Main ims converter command
+    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file[0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" {f' -il "{path_to_wine_mappings(layout_path)}"' if inputformat else ""} --logprogress --nthreads {SLURM_CPUS} --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
+
+    # Change ims-file channel colors to match those from mesospim metadata
+    # This runs the cmd-line utility defined in this same script that uses h5py to edit the .ims file after conversion.
+    # It is important to run this after conversion because the converter will overwrite any pre-set colors.
+    if len(rgb_colors) > 0:
+        for c, rgb in enumerate(rgb_colors):
+            lines += f'\n\n{mesospim_root_application}/imaris.py set-ims-channel-color "{out_file}.part" {c} {rgb[0]} {rgb[1]} {rgb[2]}'
+
+    # BASH script if/then statements to rename the .ims.part file to .ims
+    lines = lines + f'\n\nif [ -f "{out_file}.part" ]; then\n  mv "{out_file}.part" "{out_file}"\n  echo "File renamed to {out_file}"\nelse\n  echo "File {out_file} does not exist."\nfi'
+
+    if run_conversion:
+        print(lines)
+        print('Running Conversion')
+        subprocess.run(f'#!/bin/bash\n\n{lines}', shell=True, capture_output=True)
+    else:
+        print(lines)
+        return lines, log_location, out_dir  # This will be a str bash script that can be executed separately to do the conversion
 
 if __name__ == "__main__":
     app()
