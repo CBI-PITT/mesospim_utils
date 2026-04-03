@@ -310,7 +310,9 @@ class OmeZarrV2Multiscale:
         return da.from_array(view, chunks=view.chunks, **from_array_kwargs)
 
 @app.command()
-def extract_tiff_series(ome_zarr_directory: Path, output_directory: Path, prefix: str='composite') -> None:
+def extract_tiff_series(ome_zarr_directory: Path, output_directory: Path, prefix: str=None) -> None:
+    if not prefix:
+        prefix = ome_zarr_directory.name[:-9] # Strip .ome.zarr
     ome_zarr = OmeZarrArray(ome_zarr_directory)
     ome_zarr.to_tiff_stack(output_directory, basename=prefix)
     return

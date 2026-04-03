@@ -149,7 +149,7 @@ def automated_method_slurm(dir_loc: Path,
         from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
 
         if final_file_type.lower() == 'ims':
-            fused_file_type = '.ome.zarr'
+            fused_file_type = 'omezarr'
         else:
             fused_file_type = final_file_type
 
@@ -329,7 +329,9 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     elif fused_file_type.lower() == 'omezarr' and final_file_type.lower() == 'ims':
         from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
         # Place tiffs in parent of omezarr and name omezarr.name + _tiffstack
-        tiff_series_out_dir = fused_out_dir_or_file.parent / fused_out_dir_or_file.name[:-9] + '_tiffstack'
+        fused_out_dir_or_file = ensure_path(fused_out_dir_or_file)
+        tiff_series_dir_name = str(fused_out_dir_or_file.name[:-9]) + '_tiffstack'
+        tiff_series_out_dir = fused_out_dir_or_file.parent / tiff_series_dir_name
 
         cmd = f'{mesospim_root_application}/omezarr.py extract-tiff-series'
         cmd += f' "{fused_out_dir_or_file}" "{tiff_series_out_dir}" --prefix composite'

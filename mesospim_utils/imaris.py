@@ -26,7 +26,7 @@ import tifffile
 import skimage
 from skimage import img_as_float32, img_as_uint
 
-from mesospim_utils.utils import ensure_path
+from utils import ensure_path
 from psf import get_psf
 from metadata import collect_all_metadata
 
@@ -311,19 +311,14 @@ def make_ims_from_tiff_series(tiff_series_path: Path, res: tuple[float, float, f
 
     res_z, res_y, res_x = res
 
-    if not isinstance(file, list):
-        file = [file]
-
-    file = [Path(x) for x in file if not isinstance(x, Path)]
-
-    ext = file[0].suffix
+    ext = files_nested_list[0][0].suffix
     inputformat = None  # For .h5 files this stays None
     if ext == '.tif' or ext == '.tiff' or ext == '.btf':
         inputformat = 'TiffSeries'
 
     if not out_dir:
-        out_dir = file[0].parent / 'ims_files'
-    out_file = out_dir / (file[0].stem + '.ims')
+        out_dir = files_nested_list[0][0].parent / 'ims_files'
+    out_file = out_dir / (files_nested_list[0][0].stem + '.ims')
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
     log_location = out_file.parent / 'ims_convert_logs' / (out_file.stem + '.txt')
@@ -347,7 +342,7 @@ def make_ims_from_tiff_series(tiff_series_path: Path, res: tuple[float, float, f
             f.write(line)
 
     # Add channel colors using mesospim metadata if available
-    metadata_by_channel = collect_all_metadata(file[0])
+    metadata_by_channel = collect_all_metadata(files_nested_list[0][0])
     rgb_colors = []
     if metadata_by_channel:
         for channel in metadata_by_channel:
@@ -357,7 +352,7 @@ def make_ims_from_tiff_series(tiff_series_path: Path, res: tuple[float, float, f
             rgb_colors.append(rgb)
 
     # Main ims converter command
-    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file[0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" {f' -il "{path_to_wine_mappings(layout_path)}"' if inputformat else ""} --logprogress --nthreads {SLURM_CPUS} --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
+    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(files_nested_list[0][0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" {f' -il "{path_to_wine_mappings(layout_path)}"' if inputformat else ""} --logprogress --nthreads {SLURM_CPUS} --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
 
     # Change ims-file channel colors to match those from mesospim metadata
     # This runs the cmd-line utility defined in this same script that uses h5py to edit the .ims file after conversion.
@@ -372,7 +367,8 @@ def make_ims_from_tiff_series(tiff_series_path: Path, res: tuple[float, float, f
     if run_conversion:
         print(lines)
         print('Running Conversion')
-        subprocess.run(f'#!/bin/bash\n\n{lines}', shell=True, capture_output=True)
+        # subprocess.run(f'#!/bin/bash\n\n{lines}', shell=True, capture_output=True)
+        subprocess.run(f'#!/bin/bash\n\n{lines}', shell=True)
     else:
         print(lines)
         return lines, log_location, out_dir  # This will be a str bash script that can be executed separately to do the conversion
