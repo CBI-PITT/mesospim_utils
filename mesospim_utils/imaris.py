@@ -318,6 +318,8 @@ def make_ims_from_tiff_series(tiff_series_path: Path, res: tuple[float, float, f
 
     if not out_dir:
         out_dir = files_nested_list[0][0].parent / 'ims_files'
+    else:
+        out_dir = ensure_path(out_dir)
     out_file = out_dir / (files_nested_list[0][0].stem + '.ims')
     out_file.parent.mkdir(parents=True, exist_ok=True)
 

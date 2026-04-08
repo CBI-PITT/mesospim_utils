@@ -349,6 +349,7 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
 
         cmd = f'{mesospim_root_application}/imaris.py make-ims-from-tiff-series'
         cmd += f' "{tiff_series_out_dir}" --res {res.z} {res.y} {res.x} --run-conversion'
+        cmd += f' --out-dir {tiff_series_out_dir.parent}'
 
         job_number = wrap_slurm(cmd,
                                 SLURM_PARAMETERS_IMARIS_CONVERTER, slurm_log_dir,
