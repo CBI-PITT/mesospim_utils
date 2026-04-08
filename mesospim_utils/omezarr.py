@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from gettext import translation
 from typing import Any, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
+from pathlib import Path
 
 import typer
 
@@ -11,6 +12,7 @@ import dask.array as da
 import numpy as np
 
 from ome_zarr_multiscale_writer.write import write_ome_zarr_multiscale
+from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
 from mesospim_btf import mesospim_btf_helper
 
 
@@ -306,6 +308,14 @@ class OmeZarrV2Multiscale:
         """
         view = self.get_level_view(level=level, logical_chunks=logical_chunks)
         return da.from_array(view, chunks=view.chunks, **from_array_kwargs)
+
+@app.command()
+def extract_tiff_series(ome_zarr_directory: Path, output_directory: Path, prefix: str=None) -> None:
+    if not prefix:
+        prefix = ome_zarr_directory.name[:-9] # Strip .ome.zarr
+    ome_zarr = OmeZarrArray(ome_zarr_directory)
+    ome_zarr.to_tiff_stack(output_directory, basename=prefix)
+    return
 
 @app.command()
 def test_func():
