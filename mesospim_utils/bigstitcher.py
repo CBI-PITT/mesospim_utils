@@ -84,8 +84,13 @@ def get_bigstitcher_omezarr_alignment_marco(
         downsample_in_z = scale_for_downsample_zyx[0]
 
     if automated_refinement_sampling:
-        refinement_factors = scale_factors_list_zyx[4 if sampling_num_max_idx >= 4 else sampling_num_max_idx]  # 5th downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
-        downsample_refinement = f'{refinement_factors[2]}/{refinement_factors[1]}/{refinement_factors[0]}'  # X/Y/Z
+        # Setup 3 stage refinement for channel alignment
+        # Start on level 5 (~16x in xy, if it exists) for initial coarse alignment, then level 4 for medium refinement, then level 3 for fine refinement
+        starting_level = 4 if sampling_num_max_idx >= 4 else sampling_num_max_idx
+        starting_level += 1
+        downsample_refinement = list(reversed(scale_factors_list_zyx[starting_level-3:starting_level]))  # 5th downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
+        # downsample_refinement list of tuples lowest res to highest res [(8,8,4),(4,4,2),(2,2,1)]
+        print(f'{downsample_refinement=}')
 
 
     macro = BIGSTITCHER_ALIGN_OMEZARR_OUT.format(
@@ -101,7 +106,12 @@ def get_bigstitcher_omezarr_alignment_marco(
         block_size_factor_y,
         block_size_factor_z,
         subsampling_factors,
-        downsample_refinement
+        downsample_refinement[0][2], # First y
+        downsample_refinement[0][0], # First z
+        downsample_refinement[1][2], # Second y
+        downsample_refinement[1][0], # Second z
+        downsample_refinement[2][2], # Third y
+        downsample_refinement[2][0]  # Third z
     )
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:
@@ -148,8 +158,14 @@ def get_bigstitcher_hdf5_alignment_marco(
         downsample_in_z = scale_for_downsample_zyx[0]
 
     if automated_refinement_sampling:
-        refinement_factors = scale_factors_list_zyx[4 if sampling_num_max_idx>=4 else sampling_num_max_idx]  # 5th downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
-        downsample_refinement = f'{refinement_factors[2]}/{refinement_factors[1]}/{refinement_factors[0]}'  # X/Y/Z
+        # Setup 3 stage refinement for channel alignment
+        # Start on level 5 (~16x in xy, if it exists) for initial coarse alignment, then level 4 for medium refinement, then level 3 for fine refinement
+        starting_level = 4 if sampling_num_max_idx >= 4 else sampling_num_max_idx
+        starting_level += 1
+        downsample_refinement = list(reversed(scale_factors_list_zyx[
+                                                  starting_level - 3:starting_level]))  # 5th downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
+        # downsample_refinement list of tuples lowest res to highest res [(8,8,4),(4,4,2),(2,2,1)]
+        print(f'{downsample_refinement=}')
 
 
     macro = BIGSTITCHER_ALIGN_HDF5_OUT.format(
@@ -165,7 +181,12 @@ def get_bigstitcher_hdf5_alignment_marco(
         block_size_factor_y,
         block_size_factor_z,
         subsampling_factors,
-        downsample_refinement
+        downsample_refinement[0][2],  # First y
+        downsample_refinement[0][0],  # First z
+        downsample_refinement[1][2],  # Second y
+        downsample_refinement[1][0],  # Second z
+        downsample_refinement[2][2],  # Third y
+        downsample_refinement[2][0]  # Third z
     )
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:
