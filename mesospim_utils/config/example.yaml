@@ -1,6 +1,7 @@
 general:
   location_module: '/h20/home/lab/src/mesospim_utils/mesospim_utils'
   location_environment: '/h20/home/lab/miniconda3/envs/mesospim_utils/bin/python'
+  location_basicpy_environment: '/h20/home/lab/miniconda3/envs/basicpy-cuda/bin/python'
   metadata_filename: 'mesospim_metadata.json'
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'
@@ -129,6 +130,24 @@ slurm:
     'PARALLEL_JOBS': 32 # In a slurm array, how many jobs will run in parallel
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  basicpy:
+    'PARTITION': 'ai'
+    'CPUS': 1
+    'JOB_LABEL': 'ms_basicpy'
+    'RAM_GB': 512
+    'GRES': 'gpu:1'
+    'PARALLEL_JOBS': 8
+    'NICE': 0
+    'TIME_LIMIT':
+  gain_correction:
+    'PARTITION': 'gpu'
+    'CPUS': 1
+    'JOB_LABEL': 'ms_gaincorr'
+    'RAM_GB': 512
+    'GRES':
+    'PARALLEL_JOBS': 8
+    'NICE': 0
+    'TIME_LIMIT':
   align:
     # MeosSPIM built in alignment tool *align_py.py  ** NOT imaris stitcher **
     'PARTITION': 'compute,gpu' #multiple partitions can be specified with comma separation part1,par2

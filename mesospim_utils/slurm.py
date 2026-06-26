@@ -7,7 +7,7 @@ import math
 
 from imaris import convert_ims, nested_list_tile_files_sorted_by_color
 from utils import ensure_path, get_user, get_file_size_gb
-from metadata import find_metadata_dir
+from metadata import find_metadata_dir, collect_all_metadata, get_first_entry
 from constants import DEV_SLURM_TOP_PRIORITY
 
 app = typer.Typer()
@@ -195,6 +195,103 @@ def make_sbatch_params(PARAMS, array_len=None):
     sbatch_cmd = f"{' '.join(filter(None, sbatch_options))}"
     return sbatch_cmd
 
+
+def get_channel_filter_output_collection(input_collection: Path, stage_dir_name: str, suffix: str):
+    input_collection = ensure_path(input_collection)
+    stage_root = input_collection.parent / stage_dir_name
+    collection_name = input_collection.name.removesuffix('.ome.zarr')
+    return stage_root / f'{collection_name}{suffix}.ome.zarr'
+
+
+def queue_preprocess_groups(
+    input_collection: Path,
+    output_collection: Path,
+    slurm_parameters_dictionary,
+    command_name: str,
+    extra_args: list[str] = None,
+    after_slurm_jobs: list[int] = None,
+):
+    from constants import LOCATION_BASICPY_ENV, LOCATION_OF_MESOSPIM_UTILS_INSTALL
+    from preprocess import discover_channel_filter_combinations_from_metadata, prepare_output_collection
+
+    input_collection = ensure_path(input_collection)
+    output_collection = ensure_path(output_collection)
+    extra_args = extra_args or []
+
+    prepare_output_collection(input_collection, output_collection)
+
+    metadata_by_channel = collect_all_metadata(input_collection)
+    first_metadata_entry = get_first_entry(metadata_by_channel)
+    username = first_metadata_entry.get('username', "")
+    log_dir = get_slurm_log_location(input_collection)
+
+    channel_filter_combinations = discover_channel_filter_combinations_from_metadata(metadata_by_channel)
+
+    commands = []
+    for channel, filt in channel_filter_combinations:
+        cmd = f'{LOCATION_BASICPY_ENV} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/preprocess.py {command_name}'
+        cmd += f' --input "{input_collection}"'
+        cmd += f' --output "{output_collection}"'
+        cmd += f' --channel "{channel}"'
+        cmd += f' --filter "{filt}"'
+        for arg in extra_args:
+            cmd += f' {arg}'
+        commands.append(cmd)
+
+    job_number = submit_array(
+        commands,
+        output_collection.parent,
+        slurm_parameters_dictionary,
+        log_dir,
+        after_slurm_jobs=after_slurm_jobs,
+        username=username,
+        log_suffix=command_name.replace('-', '_'),
+    )
+
+    return job_number, output_collection
+
+
+@app.command()
+def basicpy_dir(input_collection: Path, overwrite: bool = False, after_slurm_jobs: list[int] = None):
+    from constants import SLURM_PARAMETERS_BASICPY
+
+    output_collection = get_channel_filter_output_collection(
+        input_collection,
+        stage_dir_name='basicpy',
+        suffix='_BASICPY',
+    )
+
+    extra_args = ['--overwrite'] if overwrite else []
+    return queue_preprocess_groups(
+        input_collection,
+        output_collection,
+        SLURM_PARAMETERS_BASICPY,
+        'basicpy-apply',
+        extra_args=extra_args,
+        after_slurm_jobs=after_slurm_jobs,
+    )
+
+
+@app.command()
+def gain_correction_dir(input_collection: Path, overwrite: bool = False, after_slurm_jobs: list[int] = None):
+    from constants import SLURM_PARAMETERS_GAIN_CORRECTION
+
+    output_collection = get_channel_filter_output_collection(
+        input_collection,
+        stage_dir_name='gain_correction',
+        suffix='_GCORR',
+    )
+
+    extra_args = ['--overwrite'] if overwrite else []
+    return queue_preprocess_groups(
+        input_collection,
+        output_collection,
+        SLURM_PARAMETERS_GAIN_CORRECTION,
+        'gain-correction-apply',
+        extra_args=extra_args,
+        after_slurm_jobs=after_slurm_jobs,
+    )
+
 ######################################################################################################################
 ####  IMARIS CONVERTER FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
 ######################################################################################################################
@@ -282,18 +379,22 @@ def set_super_nice():
     '''
 
     from constants import (
+        SLURM_PARAMETERS_BASICPY,
         SLURM_PARAMETERS_OMEZARR,
         SLURM_PARAMETERS_DECON,
         SLURM_PARAMETERS_FOR_BIGSTITCHER,
         SLURM_PARAMETERS_FOR_DEPENDENCIES,
+        SLURM_PARAMETERS_GAIN_CORRECTION,
         SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN,
         SLURM_PARAMETERS_IMARIS_CONVERTER,
     )
 
+    SLURM_PARAMETERS_BASICPY['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_OMEZARR['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_DECON['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_FOR_BIGSTITCHER['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_FOR_DEPENDENCIES['NICE'] = SUPERNICE_VALUE
+    SLURM_PARAMETERS_GAIN_CORRECTION['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_IMARIS_CONVERTER['NICE'] = SUPERNICE_VALUE
 
@@ -385,9 +486,10 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
         return
 
     ## Wrap all commands in a bash array 'commands' and call each element as a separate job in the SLURM array
-    commands = 'commands=('
+    commands = 'commands=(' 
     for ii in cmd:
-        commands = f'{commands}\n\t"{ii.replace("\n\n",";").replace("\n",";").replace("\"","\\\"")}' # Strip new lines and make single line commands
+        escaped_command = ii.replace('\n\n', ';').replace('\n', ';').replace('"', '\\"')
+        commands = f'{commands}\n\t"{escaped_command}' # Strip new lines and make single line commands
         commands = commands.replace('then;','then').replace('else;','else') # Ensure no ; after then or else
         commands += '"'
         # commands = commands.replace('"', '\\"')
@@ -465,18 +567,20 @@ def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, arra
     assert (log_file or log_dir or log_parent_exists), 'Log location does not exist'
 
     # Format log output file/dir
+    log_prefix_text = f'{log_prefix}_' if log_prefix else ''
+    log_suffix_text = f'_{log_suffix}' if log_suffix else ''
     if array and log_dir:
-        log_location = log_location / f'{log_prefix + '_' if log_prefix else ""}%A_%a{'_' + log_suffix if log_suffix else ""}.log'
+        log_location = log_location / f'{log_prefix_text}%A_%a{log_suffix_text}.log'
     elif array and log_file:
-        log_location = log_location.parent / f'{log_prefix + '_' if log_prefix else ""}%A_%a{'_' + log_suffix if log_suffix else ""}.log'
+        log_location = log_location.parent / f'{log_prefix_text}%A_%a{log_suffix_text}.log'
     elif array and log_parent_exists:
-        log_location = log_location.parent / f'{log_prefix + '_' if log_prefix else ""}%A_%a{'_' + log_suffix if log_suffix else ""}.log'
+        log_location = log_location.parent / f'{log_prefix_text}%A_%a{log_suffix_text}.log'
     elif not array and log_dir:
-        log_location = log_location / f'{log_prefix + '_' if log_prefix else ""}%A{'_' + log_suffix if log_suffix else ""}.log'
+        log_location = log_location / f'{log_prefix_text}%A{log_suffix_text}.log'
     elif not array and log_file:
         pass
     elif not array and log_parent_exists:
-        log_location = log_location.parent / f'{log_prefix + '_' if log_prefix else ""}%A{'_' + log_suffix if log_suffix else ""}.log'
+        log_location = log_location.parent / f'{log_prefix_text}%A{log_suffix_text}.log'
 
     # Extract required parameters into simple names
     PARTITION = PARAMS.get('PARTITION')

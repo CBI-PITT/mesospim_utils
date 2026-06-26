@@ -149,13 +149,29 @@ python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automate
 # Kick off a fully automated processing of a dataset
 python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory>
 
+# Run BaSiCPy and gain correction before deconvolution
+python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --basicpy --gain-correction
+
 # Processing workflow:
 # 1) Metadata collection: mesospim metadata json files are generated or refreshed in the acquisition directory.
-# 2) Optional deconvolution: runs when `--decon` is enabled and a refractive index is available from metadata or `--refractive-index`.
-# 3) If the input is `.btf`, tiles are converted to OME-Zarr and a BigStitcher XML is generated.
-# 4) BigStitcher alignment and fusion run on SLURM using Fiji/BigStitcher.
-# 5) Final output is produced as OME-Zarr, HDF5, or IMS depending on `--final-file-type`.
+# 2) Optional preprocessing: if `--basicpy` is enabled, tiles are converted to OME-Zarr first when needed and BaSiCPy runs on OME-Zarr level 0 before rebuilding multiscales.
+# 3) Optional preprocessing: if `--gain-correction` is enabled, it runs after BaSiCPy on OME-Zarr level 0 and then rebuilds multiscales.
+# 4) Optional deconvolution: runs when `--decon` is enabled and a refractive index is available from metadata or `--refractive-index`.
+# 5) If the input is `.btf` and no earlier OME-Zarr conversion was needed, tiles are converted to OME-Zarr and a BigStitcher XML is generated.
+# 6) BigStitcher alignment and fusion run on SLURM using Fiji/BigStitcher.
+# 7) Final output is produced as OME-Zarr, HDF5, or IMS depending on `--final-file-type`.
 ```
+
+If both preprocessing flags are enabled, execution order is always:
+
+1. `--basicpy`
+2. `--gain-correction`
+3. `--decon`
+
+Cluster resource defaults for the preprocessing stages are configured in `mesospim_utils/config/example.yaml`:
+
+- `basicpy`: partition `ai`, `512 GB` RAM, `gpu:1`
+- `gain_correction`: partition `gpu`, `512 GB` RAM, no GPU request
 
 If deconvolution is enabled, objective parameters will be discovered from the MesoSPIM metadata if it includes the  `[OBJECTIVE PARAMETERS]`
 section. These metadata objective parameters are used by `automated-method-slurm` only when `--objective` is not passed.

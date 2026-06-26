@@ -47,6 +47,19 @@
 - `oversample_factor` now uses the `psf.py` default and is no longer configured per objective.
 - If `objective_immersion_ri_design` or `objective_immersion_ri_actual` is set to `'auto'`, `rl.py` now substitutes the actual sample RI used for deconvolution.
 
+## Recent Change: Pre-Deconvolution OME-Zarr Preprocessing
+
+- Added optional `--basicpy` and `--gain-correction` to `automated-method-slurm` in `mesospim_utils/automated.py`.
+- Preprocessing order is now fixed as: `basicpy -> gain correction -> decon`.
+- When preprocessing is enabled for `.btf` input, the workflow now converts tiles to OME-Zarr before deconvolution so the preprocessing stages can run on tile OME-Zarr data.
+- Added `mesospim_utils/preprocess.py` with low-level commands:
+  - `basicpy-apply`
+  - `gain-correction-apply`
+- Both preprocessing commands now operate only on OME-Zarr level `0` and then regenerate multiscales, matching the decon-style output pattern more closely than the original reference scripts.
+- Rows/cols now come from metadata `grid_size`; gain correction uses metadata `overlap` by default, with only the low-level command exposing an override.
+- Added SLURM config plumbing for `slurm.basicpy` and `slurm.gain_correction`, plus `general.location_basicpy_environment` in `config/example.yaml`.
+- Added XML regeneration before BigStitcher alignment for any new tile OME-Zarr collection produced by preprocessing or deconvolution.
+
 ## Active Debugging Note: BigStitcher OOM During Fusion
 
 - Observed failure mode: SLURM OOM kill during BigStitcher jobs launched from `automated_method_slurm()` through the BigStitcher alignment path.
@@ -93,6 +106,8 @@
 - BigStitcher/Fiji behavior, SLURM resource behavior, and config-driven workflows still need real environment verification after changes.
 - CLI `--help` smoke tests could not run in this environment because required runtime packages such as `psutil` and `tifffile` are not installed here.
 - Edited Python files were checked with `python -m py_compile` successfully.
+- `automated.py automated-method-slurm --help` succeeded in the configured `mesospim_utils` environment.
+- `preprocess.py --help` succeeded in `/h20/home/lab/miniconda3/envs/basicpy-cuda/bin/python` after removing the Typer dependency from that script.
 
 ## Open Questions
 
