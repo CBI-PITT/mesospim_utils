@@ -211,7 +211,7 @@ def queue_preprocess_groups(
     extra_args: list[str] = None,
     after_slurm_jobs: list[int] = None,
 ):
-    from constants import LOCATION_BASICPY_ENV, LOCATION_OF_MESOSPIM_UTILS_INSTALL
+    from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL
     from preprocess import discover_channel_filter_combinations_from_metadata, prepare_output_collection
 
     input_collection = ensure_path(input_collection)
@@ -229,7 +229,7 @@ def queue_preprocess_groups(
 
     commands = []
     for channel, filt in channel_filter_combinations:
-        cmd = f'{LOCATION_BASICPY_ENV} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/preprocess.py {command_name}'
+        cmd = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/preprocess.py {command_name}'
         cmd += f' --input "{input_collection}"'
         cmd += f' --output "{output_collection}"'
         cmd += f' --channel "{channel}"'

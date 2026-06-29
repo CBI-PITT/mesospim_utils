@@ -5,10 +5,13 @@ from collections import defaultdict
 from pathlib import Path
 import re
 import shutil
+import subprocess
+import tempfile
 
 import numpy as np
 import zarr
 
+from constants import LOCATION_BASICPY_ENV, LOCATION_OF_MESOSPIM_UTILS_INSTALL
 from metadata import collect_all_metadata, get_first_entry
 from utils import ensure_path
 
@@ -366,8 +369,6 @@ def process_basicpy_group(
     fitting_mode: str,
     overwrite: bool,
 ):
-    from basicpy import BaSiC
-
     rows, cols, _ = resolve_grid_and_overlap(input_collection)
     expected_n_tiles = rows * cols
     default_fit_tile = (expected_n_tiles - 1) // 2
@@ -381,45 +382,36 @@ def process_basicpy_group(
     validate_tile_set(tile_records, rows, cols, channel, filter_name)
 
     fit_tile = choose_fit_tile(tile_records, fit_tile, default_fit_tile)
-    fit_path = tile_records[fit_tile]['path']
-    fit_root = zarr.open_group(str(fit_path), mode='r')
-    fit_arr = fit_root['0']
-
-    print(f'Channel: {channel}  Filter: {filter_name}')
-    print(f'  Fit tile: {fit_tile}')
-    print('\tloading level 0 fit data')
-    orig = fit_arr[:].astype(np.float32)
-    orig = np.nan_to_num(orig) + 1
-
-    basic = BaSiC(fitting_mode=fitting_mode, device=device)
-
-    print('\tfitting BaSiCPy on level 0')
-    basic.fit(orig)
 
     prepare_output_collection(input_collection, output_collection)
 
-    for tile in sorted(tile_records):
-        record = tile_records[tile]
-        print(
-            f'\tprocessing tile {tile} '
-            f'Sh{record["sh"]} Rot{record["rot"]} '
-            f'{record["channel"]} {record["filter"]}'
-        )
+    with tempfile.TemporaryDirectory(prefix='basicpy_') as temp_dir_name:
+        temp_dir = Path(temp_dir_name)
 
-        src_root = zarr.open_group(str(record['path']), mode='r')
-        src_arr = src_root['0']
-        data = src_arr[:].astype(np.float32)
-        data = np.nan_to_num(data) + 1
+        cmd = [
+            str(LOCATION_BASICPY_ENV),
+            '-u',
+            str(Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL) / 'basicpy_worker.py'),
+            '--input', str(input_collection),
+            '--output', str(temp_dir),
+            '--channel', channel,
+            '--filter', filter_name,
+            '--fit-tile', str(fit_tile),
+            '--device', device,
+            '--fitting-mode', fitting_mode,
+        ]
+        subprocess.run(cmd, check=True)
 
-        corrected_data = basic.transform(data)
-        corrected_uint16 = np.clip(corrected_data, 0, 65535).astype(np.uint16)
+        for tile in sorted(tile_records):
+            record = tile_records[tile]
+            corrected_uint16 = np.load(temp_dir / f'{record["name"]}.npy', allow_pickle=False)
 
-        write_corrected_tile(
-            record['path'],
-            output_collection / record['name'],
-            corrected_uint16,
-            overwrite,
-        )
+            write_corrected_tile(
+                record['path'],
+                output_collection / record['name'],
+                corrected_uint16,
+                overwrite,
+            )
 
 
 def apply_gain_to_stack(stack, gain, out_dtype):
