@@ -62,6 +62,8 @@
 - Rows/cols now come from metadata `grid_size`; gain correction uses metadata `overlap` by default, with only the low-level command exposing an override.
 - Added SLURM config plumbing for `slurm.basicpy` and `slurm.gain_correction`, plus `general.location_basicpy_environment` in `config/example.yaml`.
 - Added XML regeneration before BigStitcher alignment for any new tile OME-Zarr collection produced by preprocessing or deconvolution.
+- Preprocess-triggered BigStitcher alignment submission now reuses the older working queue shape: `queue_bigstitcher_alignment()` submits `automated.py big-stitcher-align` with `SLURM_PARAMETERS_FOR_BIGSTITCHER` instead of the lightweight dependency profile.
+- Added conservative output-based skip logic for preprocess group submission in `mesospim_utils/slurm.py`: unless `--overwrite` is requested, completed `basicpy-apply` and `gain-correction-apply` channel/filter groups are skipped when all expected output tiles are present and each expected tile contains valid tile-level multiscale metadata with all listed dataset paths present.
 
 ## Recent Change: Remove `/tmp` Staging From BaSiCPy Apply
 
@@ -121,6 +123,8 @@
 - `preprocess.py --help` succeeded in `/h20/home/lab/miniconda3/envs/basicpy-cuda/bin/python` after removing the Typer dependency from that script.
 - After the `/tmp`-staging removal, `mesospim_utils/preprocess.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` and `mesospim_utils/basicpy_worker.py` compiled successfully in `/h20/home/lab/miniconda3/envs/basicpy-cuda/bin/python`.
 - `basicpy_worker.py --help` in the `basicpy-cuda` environment still hung past the local timeout during this session, so runtime validation of the new per-tile `.basicpy_tmp` path is still needed on a real dataset.
+- `mesospim_utils/automated.py`, `mesospim_utils/slurm.py`, and `mesospim_utils/preprocess.py` compiled successfully after restoring BigStitcher queueing and adding preprocess completion checks.
+- Direct validation against `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic` confirmed `is_preprocess_group_complete(...) == True` for both existing BasicPy channel/filter groups and both gain-correction channel/filter groups once the check was corrected to validate tile-level multiscales rather than the collection root.
 
 ## Open Questions
 

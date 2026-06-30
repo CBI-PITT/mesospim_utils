@@ -81,7 +81,7 @@ def queue_bigstitcher_xml(dir_loc: Path, collection_dir: Path, after_job_number:
 
 
 def queue_bigstitcher_alignment(dir_loc: Path, collection_dir: Path, final_file_type: str, after_job_number: int = None, supernice: bool = False):
-    from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
+    from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
 
     if final_file_type.lower() == 'ims':
         fused_file_type = 'omezarr'
@@ -101,7 +101,7 @@ def queue_bigstitcher_alignment(dir_loc: Path, collection_dir: Path, final_file_
 
     return wrap_slurm(
         cmd,
-        SLURM_PARAMETERS_FOR_DEPENDENCIES,
+        SLURM_PARAMETERS_FOR_BIGSTITCHER,
         slurm_log_dir,
         after_slurm_jobs=[after_job_number] if after_job_number else None,
         username=username,

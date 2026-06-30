@@ -3,6 +3,7 @@ from pathlib import Path
 import subprocess
 import os
 import math
+import json
 
 
 from imaris import convert_ims, nested_list_tile_files_sorted_by_color
@@ -203,6 +204,80 @@ def get_channel_filter_output_collection(input_collection: Path, stage_dir_name:
     return stage_root / f'{collection_name}{suffix}.ome.zarr'
 
 
+def tile_output_has_multiscales(tile_path: Path) -> bool:
+    zattrs_path = ensure_path(tile_path) / '.zattrs'
+    if not zattrs_path.is_file():
+        return False
+
+    try:
+        zattrs = json.loads(zattrs_path.read_text())
+    except (OSError, IOError, json.JSONDecodeError):
+        return False
+
+    multiscales = zattrs.get('multiscales')
+    if not multiscales:
+        return False
+
+    datasets = multiscales[0].get('datasets', [])
+    if len(datasets) == 0:
+        return False
+
+    for dataset in datasets:
+        dataset_path = dataset.get('path')
+        if not dataset_path:
+            return False
+        if not (tile_path / dataset_path).exists():
+            return False
+
+    return True
+
+
+def is_preprocess_group_complete(
+    input_collection: Path,
+    output_collection: Path,
+    channel: str,
+    filt: str,
+) -> bool:
+    from preprocess import discover_tiles, resolve_grid_and_overlap, validate_tile_set
+
+    input_collection = ensure_path(input_collection)
+    output_collection = ensure_path(output_collection)
+
+    if not output_collection.is_dir():
+        return False
+
+    rows, cols, _ = resolve_grid_and_overlap(input_collection)
+
+    try:
+        input_records_by_combo = discover_tiles(input_collection)
+        output_records_by_combo = discover_tiles(output_collection)
+    except RuntimeError:
+        return False
+
+    combo = (channel, filt)
+    if combo not in input_records_by_combo or combo not in output_records_by_combo:
+        return False
+
+    input_tile_records = input_records_by_combo[combo]
+    output_tile_records = output_records_by_combo[combo]
+
+    try:
+        validate_tile_set(input_tile_records, rows, cols, channel, filt)
+        validate_tile_set(output_tile_records, rows, cols, channel, filt)
+    except RuntimeError:
+        return False
+
+    for tile, record in input_tile_records.items():
+        out_record = output_tile_records.get(tile)
+        if out_record is None or out_record['name'] != record['name']:
+            return False
+
+        if not tile_output_has_multiscales(out_record['path']):
+            return False
+
+    return True
+
+
 def queue_preprocess_groups(
     input_collection: Path,
     output_collection: Path,
@@ -210,6 +285,7 @@ def queue_preprocess_groups(
     command_name: str,
     extra_args: list[str] = None,
     after_slurm_jobs: list[int] = None,
+    overwrite: bool = False,
 ):
     from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL
     from preprocess import discover_channel_filter_combinations_from_metadata, prepare_output_collection
@@ -229,6 +305,10 @@ def queue_preprocess_groups(
 
     commands = []
     for channel, filt in channel_filter_combinations:
+        if not overwrite and is_preprocess_group_complete(input_collection, output_collection, channel, filt):
+            print(f'Skipping completed {command_name} group: {channel} / {filt}')
+            continue
+
         cmd = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/preprocess.py {command_name}'
         cmd += f' --input "{input_collection}"'
         cmd += f' --output "{output_collection}"'
@@ -237,6 +317,10 @@ def queue_preprocess_groups(
         for arg in extra_args:
             cmd += f' {arg}'
         commands.append(cmd)
+
+    if not commands:
+        print(f'All {command_name} groups already complete in {output_collection}')
+        return None, output_collection
 
     job_number = submit_array(
         commands,
@@ -269,6 +353,7 @@ def basicpy_dir(input_collection: Path, overwrite: bool = False, after_slurm_job
         'basicpy-apply',
         extra_args=extra_args,
         after_slurm_jobs=after_slurm_jobs,
+        overwrite=overwrite,
     )
 
 
@@ -290,6 +375,7 @@ def gain_correction_dir(input_collection: Path, overwrite: bool = False, after_s
         'gain-correction-apply',
         extra_args=extra_args,
         after_slurm_jobs=after_slurm_jobs,
+        overwrite=overwrite,
     )
 
 ######################################################################################################################
