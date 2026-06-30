@@ -6,7 +6,6 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import tempfile
 
 import numpy as np
 import zarr
@@ -384,34 +383,44 @@ def process_basicpy_group(
     fit_tile = choose_fit_tile(tile_records, fit_tile, default_fit_tile)
 
     prepare_output_collection(input_collection, output_collection)
+    temp_dir = output_collection / '.basicpy_tmp'
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory(prefix='basicpy_') as temp_dir_name:
-        temp_dir = Path(temp_dir_name)
+    for tile in sorted(tile_records):
+        record = tile_records[tile]
+        temp_output = temp_dir / f'{record["name"]}.npy'
+        if temp_output.exists():
+            temp_output.unlink()
 
         cmd = [
             str(LOCATION_BASICPY_ENV),
             '-u',
             str(Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL) / 'basicpy_worker.py'),
             '--input', str(input_collection),
-            '--output', str(temp_dir),
+            '--temp-output', str(temp_output),
             '--channel', channel,
             '--filter', filter_name,
             '--fit-tile', str(fit_tile),
+            '--target-tile', str(tile),
             '--device', device,
             '--fitting-mode', fitting_mode,
         ]
         subprocess.run(cmd, check=True)
 
-        for tile in sorted(tile_records):
-            record = tile_records[tile]
-            corrected_uint16 = np.load(temp_dir / f'{record["name"]}.npy', allow_pickle=False)
-
+        corrected_uint16 = np.load(temp_output, allow_pickle=False)
+        try:
             write_corrected_tile(
                 record['path'],
                 output_collection / record['name'],
                 corrected_uint16,
                 overwrite,
             )
+        finally:
+            if temp_output.exists():
+                temp_output.unlink()
+
+    if temp_dir.exists() and not any(temp_dir.iterdir()):
+        temp_dir.rmdir()
 
 
 def apply_gain_to_stack(stack, gain, out_dtype):
