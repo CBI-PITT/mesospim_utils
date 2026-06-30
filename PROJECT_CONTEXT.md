@@ -65,6 +65,13 @@
 - Preprocess-triggered BigStitcher alignment submission now reuses the older working queue shape: `queue_bigstitcher_alignment()` submits `automated.py big-stitcher-align` with `SLURM_PARAMETERS_FOR_BIGSTITCHER` instead of the lightweight dependency profile.
 - Added conservative output-based skip logic for preprocess group submission in `mesospim_utils/slurm.py`: unless `--overwrite` is requested, completed `basicpy-apply` and `gain-correction-apply` channel/filter groups are skipped when all expected output tiles are present and each expected tile contains valid tile-level multiscale metadata with all listed dataset paths present.
 
+## Recent Change: BigStitcher XML Tile Path Fix
+
+- Fixed `modify_file_names_in_annotated_metadata()` in `mesospim_utils/metadata.py` so the default `.ome.zarr` rewrite is idempotent.
+- Before this fix, metadata entries that already ended in `.ome.zarr` were rewritten to `.ome.zarr.ome.zarr`, which produced invalid `<zgroup path="...">` entries in generated BigStitcher XML.
+- The failure was reproduced on `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr.xml` and matched the user-reported BigStitcher `AllenOMEZarrProperties.getDataType(...)` NPE.
+- Regenerated that XML after the patch and confirmed the tile paths now end in a single `.ome.zarr` suffix.
+
 ## Recent Change: Remove `/tmp` Staging From BaSiCPy Apply
 
 - `process_basicpy_group()` no longer stages corrected tiles as `.npy` files in `tempfile.TemporaryDirectory()`.
@@ -125,6 +132,8 @@
 - `basicpy_worker.py --help` in the `basicpy-cuda` environment still hung past the local timeout during this session, so runtime validation of the new per-tile `.basicpy_tmp` path is still needed on a real dataset.
 - `mesospim_utils/automated.py`, `mesospim_utils/slurm.py`, and `mesospim_utils/preprocess.py` compiled successfully after restoring BigStitcher queueing and adding preprocess completion checks.
 - Direct validation against `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic` confirmed `is_preprocess_group_complete(...) == True` for both existing BasicPy channel/filter groups and both gain-correction channel/filter groups once the check was corrected to validate tile-level multiscales rather than the collection root.
+- `mesospim_utils/metadata.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after making the `.ome.zarr` filename rewrite idempotent.
+- Regenerated `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr.xml` and verified there were no remaining `.ome.zarr.ome.zarr` paths.
 
 ## Open Questions
 
