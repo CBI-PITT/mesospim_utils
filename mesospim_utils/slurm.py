@@ -24,7 +24,7 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
               out_file_type: str='.tif', file_type: str='.btf',
               denoise_sigma: float=None, sharpen: bool=False,
               half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=None,
-              num_parallel: int=None
+              num_parallel: int=None, after_slurm_jobs: list[int]=None, ram_estimate_dir: Path=None
               ):
     '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
     import subprocess
@@ -33,6 +33,7 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
     from constants import DECON_SCRIPT, MAX_VRAM
 
     path = ensure_path(dir_loc)
+    ram_estimate_dir = ensure_path(ram_estimate_dir) if ram_estimate_dir else None
     # scripts_and_psf_dir = out_dir
     if out_dir:
         pass
@@ -53,14 +54,39 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
 
     # log_dir = out_dir / 'logs'
     log_dir = get_slurm_log_location(path)
-    file_list = list(path.glob('*' + file_type))
+    file_list = sorted(path.glob('*' + file_type))
+
+    reference_file_list = file_list
+    if not reference_file_list and ram_estimate_dir:
+        reference_file_list = sorted(ram_estimate_dir.glob('*' + file_type))
+
+        if not reference_file_list and file_type == '.ome.zarr':
+            reference_file_list = sorted(ram_estimate_dir.glob('*.btf'))
+
+    if not reference_file_list:
+        searched = [f"{path} (*{file_type})"]
+        if ram_estimate_dir:
+            searched.append(f"{ram_estimate_dir} (*{file_type})")
+            if file_type == '.ome.zarr':
+                searched.append(f"{ram_estimate_dir} (*.btf)")
+        raise FileNotFoundError(f'No files found for deconvolution input or RAM estimation. Searched: {", ".join(searched)}')
+
+    if not file_list:
+        if file_type == '.ome.zarr':
+            file_list = [
+                path / (ref.name if str(ref).endswith('.ome.zarr') else f'{ref.name}.ome.zarr')
+                for ref in reference_file_list
+            ]
+        else:
+            file_list = [path / ref.name for ref in reference_file_list]
 
     # Dynamically determine how much RAM to allocate for SLURM to support decon, assumes all files are the same size.
-    if Path(file_list[0]).is_file():
-        file_size_to_decon = get_file_size_gb(file_list[0])
-    elif str(file_list[0]).endswith('.ome.zarr'):
+    size_reference = reference_file_list[0]
+    if Path(size_reference).is_file():
+        file_size_to_decon = get_file_size_gb(size_reference)
+    elif str(size_reference).endswith('.ome.zarr'):
         from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
-        file_size_to_decon = OmeZarrArray(file_list[0]).nbytes / (1024 ** 3)  # ensure it's a valid zarr
+        file_size_to_decon = OmeZarrArray(size_reference).nbytes / (1024 ** 3)  # ensure it's a valid zarr
 
     # Arbitrary multiplier by 2
     file_size_to_decon *= 2
@@ -152,7 +178,8 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
         with open(file_to_run, 'w') as f:
             f.write(commands)
 
-        output = subprocess.run(f'sbatch {file_to_run}', shell=True, capture_output=True)
+        sbatch_cmd = sbatch_depends(f'sbatch {file_to_run}', after_slurm_jobs)
+        output = subprocess.run(sbatch_cmd, shell=True, capture_output=True)
         prefix_len = len(b'Submitted batch job ')
         job_number = int(output.stdout[prefix_len:-1])
         print(f'SBATCH Job #: {job_number}')

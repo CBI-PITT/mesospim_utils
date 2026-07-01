@@ -72,6 +72,14 @@
 - The failure was reproduced on `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr.xml` and matched the user-reported BigStitcher `AllenOMEZarrProperties.getDataType(...)` NPE.
 - Regenerated that XML after the patch and confirmed the tile paths now end in a single `.ome.zarr` suffix.
 
+## Recent Change: Decon Queueing After Preprocess
+
+- Fixed `mesospim_utils/slurm.py::decon_dir()` so it no longer crashes when preprocess output collections are scheduled but not populated yet.
+- Added `after_slurm_jobs` support to `decon_dir()` so decon now waits for upstream `basicpy` / `gain_correction` jobs.
+- Added `ram_estimate_dir` fallback support so decon can size SLURM RAM from the original input collection when the future preprocess output collection is still empty.
+- For `.ome.zarr` preprocess workflows, RAM estimation now falls back to the original root OME-Zarr collection.
+- For `.btf` preprocess workflows, RAM estimation and future tile-name templating now fall back to the raw `.btf` inputs so the older workflow remains operational.
+
 ## Recent Change: Remove `/tmp` Staging From BaSiCPy Apply
 
 - `process_basicpy_group()` no longer stages corrected tiles as `.npy` files in `tempfile.TemporaryDirectory()`.
@@ -134,6 +142,7 @@
 - Direct validation against `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic` confirmed `is_preprocess_group_complete(...) == True` for both existing BasicPy channel/filter groups and both gain-correction channel/filter groups once the check was corrected to validate tile-level multiscales rather than the collection root.
 - `mesospim_utils/metadata.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after making the `.ome.zarr` filename rewrite idempotent.
 - Regenerated `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr.xml` and verified there were no remaining `.ome.zarr.ome.zarr` paths.
+- `mesospim_utils/automated.py` and `mesospim_utils/slurm.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after adding decon dependency chaining and RAM-estimation fallback behavior for preprocess workflows.
 
 ## Open Questions
 

@@ -191,6 +191,10 @@ def automated_method_slurm(dir_loc: Path,
     job_number = None
     slurm_log_dir = get_slurm_log_location(dir_loc)
     out_dir = dir_loc
+    decon_ram_estimate_dir = out_dir
+
+    if file_type == '.ome.zarr':
+        decon_ram_estimate_dir = out_dir
 
     if file_type == '.btf' and preprocess_enabled:
         print('Setting up script to convert BTF tiles to OME-Zarr before preprocessing')
@@ -228,7 +232,18 @@ def automated_method_slurm(dir_loc: Path,
         print('Queueing DECON of MesoSPIM tiles on SLURM')
         out_file_type = '.ome.zarr' if file_type == '.ome.zarr' else '.btf'
         # decon_dir should inherit supernice value if set, so that all downstream processes will run with elevated nice value
-        job_number, out_dir = decon_dir(out_dir, refractive_index, objective=objective, file_type=file_type, out_file_type=out_file_type, iterations=iterations, frames_per_chunk=frames_per_chunk, num_parallel=num_parallel)
+        job_number, out_dir = decon_dir(
+            out_dir,
+            refractive_index,
+            objective=objective,
+            file_type=file_type,
+            out_file_type=out_file_type,
+            iterations=iterations,
+            frames_per_chunk=frames_per_chunk,
+            num_parallel=num_parallel,
+            after_slurm_jobs=[job_number] if job_number else None,
+            ram_estimate_dir=decon_ram_estimate_dir,
+        )
         print((job_number, out_dir))
         file_type = out_file_type
 
