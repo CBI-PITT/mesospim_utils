@@ -18,12 +18,40 @@ from utils import ensure_path
 TILE_RE = re.compile(
     r"^(?P<mag>[^_]+)_"
     r"Tile(?P<tile>\d+)_"
-    r"(?P<channel>[^_]+)_"
-    r"(?P<filter>[^_]+)_"
+    r"(?P<channel>[^_]+)"
+    r"(?:_(?P<filter>.*?))?_"
     r"Sh(?P<sh>[01])_"
     r"Rot(?P<rot>[-+]?\d+(?:\.\d+)?)"
     r"\.ome\.zarr$"
 )
+
+CHANNEL_ONLY_FILTER = '__channel_only__'
+
+
+def normalize_filter_name(filter_name):
+    if filter_name is None:
+        return CHANNEL_ONLY_FILTER
+
+    filter_name = str(filter_name).strip()
+    if not filter_name:
+        return CHANNEL_ONLY_FILTER
+
+    return filter_name
+
+
+def build_metadata_combo_lookup(metadata_by_channel):
+    combo_lookup = {}
+
+    for channel_key, entries in metadata_by_channel.items():
+        for entry in entries:
+            channel = str(entry.get('channel', channel_key))
+            filter_name = normalize_filter_name(entry.get('CFG', {}).get('Filter'))
+
+            file_name = entry.get('file_name')
+            if file_name:
+                combo_lookup[Path(str(file_name)).name] = (channel, filter_name)
+
+    return combo_lookup
 
 
 def copy_attrs(src, dst):
@@ -32,8 +60,14 @@ def copy_attrs(src, dst):
         dst.attrs[key] = value
 
 
-def discover_tiles(src_base: Path):
+def discover_tiles(src_base: Path, metadata_by_channel=None):
     records_by_combo = defaultdict(dict)
+    src_base = ensure_path(src_base)
+
+    if metadata_by_channel is None:
+        metadata_by_channel = collect_all_metadata(src_base)
+
+    metadata_combo_lookup = build_metadata_combo_lookup(metadata_by_channel)
 
     for path in sorted(src_base.glob('*.ome.zarr')):
         match = TILE_RE.match(path.name)
@@ -43,8 +77,10 @@ def discover_tiles(src_base: Path):
 
         info = match.groupdict()
         tile = int(info['tile'])
-        channel = info['channel']
-        filt = info['filter']
+        channel, filt = metadata_combo_lookup.get(
+            path.name,
+            (str(info['channel']), normalize_filter_name(info.get('filter'))),
+        )
         combo = (channel, filt)
 
         if tile in records_by_combo[combo]:
@@ -73,19 +109,11 @@ def discover_tiles(src_base: Path):
 def discover_channel_filter_combinations_from_metadata(metadata_by_channel):
     combinations = set()
 
-    for _, entries in metadata_by_channel.items():
+    for channel_key, entries in metadata_by_channel.items():
         for entry in entries:
-            file_name = entry.get('file_name_no_extension', entry.get('file_name'))
-            if file_name is None:
-                continue
-
-            file_name = f'{file_name}.ome.zarr' if not str(file_name).endswith('.ome.zarr') else str(file_name)
-            match = TILE_RE.match(file_name)
-            if match is None:
-                continue
-
-            info = match.groupdict()
-            combinations.add((info['channel'], info['filter']))
+            channel = str(entry.get('channel', channel_key))
+            filter_name = normalize_filter_name(entry.get('CFG', {}).get('Filter'))
+            combinations.add((channel, filter_name))
 
     if not combinations:
         raise RuntimeError('No channel/filter combinations could be derived from metadata.')

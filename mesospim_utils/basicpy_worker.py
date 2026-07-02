@@ -7,20 +7,52 @@ import numpy as np
 import zarr
 from basicpy import BaSiC
 
+from metadata import collect_all_metadata
+
 
 TILE_RE = re.compile(
     r"^(?P<mag>[^_]+)_"
     r"Tile(?P<tile>\d+)_"
-    r"(?P<channel>[^_]+)_"
-    r"(?P<filter>[^_]+)_"
+    r"(?P<channel>[^_]+)"
+    r"(?:_(?P<filter>.*?))?_"
     r"Sh(?P<sh>[01])_"
     r"Rot(?P<rot>[-+]?\d+(?:\.\d+)?)"
     r"\.ome\.zarr$"
 )
 
+CHANNEL_ONLY_FILTER = '__channel_only__'
+
+
+def normalize_filter_name(filter_name):
+    if filter_name is None:
+        return CHANNEL_ONLY_FILTER
+
+    filter_name = str(filter_name).strip()
+    if not filter_name:
+        return CHANNEL_ONLY_FILTER
+
+    return filter_name
+
+
+def build_metadata_combo_lookup(metadata_by_channel):
+    combo_lookup = {}
+
+    for channel_key, entries in metadata_by_channel.items():
+        for entry in entries:
+            channel = str(entry.get('channel', channel_key))
+            filter_name = normalize_filter_name(entry.get('CFG', {}).get('Filter'))
+
+            file_name = entry.get('file_name')
+            if file_name:
+                combo_lookup[Path(str(file_name)).name] = (channel, filter_name)
+
+    return combo_lookup
+
 
 def discover_tiles(src_base: Path):
     records_by_combo = defaultdict(dict)
+    metadata_by_channel = collect_all_metadata(src_base)
+    metadata_combo_lookup = build_metadata_combo_lookup(metadata_by_channel)
 
     for path in sorted(src_base.glob('*.ome.zarr')):
         match = TILE_RE.match(path.name)
@@ -29,14 +61,18 @@ def discover_tiles(src_base: Path):
 
         info = match.groupdict()
         tile = int(info['tile'])
-        combo = (info['channel'], info['filter'])
+        channel, filter_name = metadata_combo_lookup.get(
+            path.name,
+            (str(info['channel']), normalize_filter_name(info.get('filter'))),
+        )
+        combo = (channel, filter_name)
         records_by_combo[combo][tile] = {
             'path': path,
             'name': path.name,
             'sh': int(info['sh']),
             'rot': info['rot'],
-            'channel': info['channel'],
-            'filter': info['filter'],
+            'channel': channel,
+            'filter': filter_name,
         }
 
     return records_by_combo

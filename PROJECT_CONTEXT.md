@@ -86,6 +86,23 @@
 - `automated_method_slurm()` now queues `queue_bigstitcher_xml(dir_loc, out_dir, ...)` before decon starts when the current decon input is `.ome.zarr`.
 - The downstream post-decon `queue_bigstitcher_xml(..., out_dir)` and `queue_bigstitcher_alignment(..., out_dir)` steps remain unchanged, so stitching still targets the decon collection rather than the pre-decon collection.
 
+## Recent Change: Metadata-First Preprocess Grouping
+
+- Fixed preprocess compatibility for older OME-Zarr datasets whose tile names omit the filter segment, e.g. `Mag4_Tile0_Ch405_Sh1_Rot0.12.ome.zarr`.
+- `mesospim_utils/preprocess.py` now derives preprocess grouping from metadata first rather than reparsing channel/filter pairs from tile filenames.
+- The tile-name regex used by preprocess and `basicpy_worker.py` now accepts both modern names with explicit filter tokens and older names without them.
+- When filename filter text is absent, grouping falls back to metadata `CFG.Filter`; only if metadata is missing does it fall back to a channel-only sentinel.
+- This keeps newer channel+filter workflows working while allowing older datasets to be grouped effectively by channel via metadata.
+
+## Recent Change: Filter Tokens With Underscores
+
+- Fixed preprocess tile-name parsing for older OME-Zarr datasets whose filename filter token contains underscores, e.g. `Flt525_50_(GFP)`.
+- The preprocess and `basicpy_worker.py` tile regex now capture the optional filter segment lazily up to `_Sh`, instead of assuming the filter token contains no underscores.
+- This preserves support for all three observed naming styles:
+  - no filter in tile name: `..._Ch405_Sh1_...`
+  - simple filter token: `..._Ch488_FltGFP_Sh1_...`
+  - underscored filter token: `..._Ch488_Flt525_50_(GFP)_Sh1_...`
+
 ## Recent Change: Remove `/tmp` Staging From BaSiCPy Apply
 
 - `process_basicpy_group()` no longer stages corrected tiles as `.npy` files in `tempfile.TemporaryDirectory()`.
@@ -150,6 +167,10 @@
 - Regenerated `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr.xml` and verified there were no remaining `.ome.zarr.ome.zarr` paths.
 - `mesospim_utils/automated.py` and `mesospim_utils/slurm.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after adding decon dependency chaining and RAM-estimation fallback behavior for preprocess workflows.
 - `mesospim_utils/automated.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after adding pre-decon OME-Zarr XML generation for the decon worker XML-cloning step.
+- `mesospim_utils/preprocess.py` and `mesospim_utils/basicpy_worker.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after switching preprocess grouping to metadata-first discovery.
+- Validation on `/CBI_FastStore/test_data/mesospim/omezarr/eye/Mag4x_Ch488_Ch405.ome.zarr` now reports preprocess groups `[('405', 'Dapi'), ('488', '525/50 (GFP)')]` even though the tile directory names do not include filter tokens.
+- Validation on `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr` still reports the expected modern groups `[('488', 'GFP'), ('561', 'RFP')]`.
+- Validation on `/CBI_FastStore/test_data/mesospim/omezarr/012926_omezarr_exosomes_2/exosomes_test2_Mag16x_Ch488_Ch561.ome.zarr` now reports preprocess groups `[('488', '525/50 (GFP)'), ('561', '595/44 (RFP)')]` and correctly recognizes tile names containing `Flt525_50_(GFP)` / `Flt595_44_(RFP)`.
 
 ## Open Questions
 
