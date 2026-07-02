@@ -80,6 +80,12 @@
 - For `.ome.zarr` preprocess workflows, RAM estimation now falls back to the original root OME-Zarr collection.
 - For `.btf` preprocess workflows, RAM estimation and future tile-name templating now fall back to the raw `.btf` inputs so the older workflow remains operational.
 
+## Recent Change: Pre-Decon XML Generation
+
+- Fixed an OME-Zarr decon workflow ordering bug where `rl.py` decon workers expected the input collection XML to exist so they could clone it into the decon output collection.
+- `automated_method_slurm()` now queues `queue_bigstitcher_xml(dir_loc, out_dir, ...)` before decon starts when the current decon input is `.ome.zarr`.
+- The downstream post-decon `queue_bigstitcher_xml(..., out_dir)` and `queue_bigstitcher_alignment(..., out_dir)` steps remain unchanged, so stitching still targets the decon collection rather than the pre-decon collection.
+
 ## Recent Change: Remove `/tmp` Staging From BaSiCPy Apply
 
 - `process_basicpy_group()` no longer stages corrected tiles as `.npy` files in `tempfile.TemporaryDirectory()`.
@@ -143,6 +149,7 @@
 - `mesospim_utils/metadata.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after making the `.ome.zarr` filename rewrite idempotent.
 - Regenerated `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr.xml` and verified there were no remaining `.ome.zarr.ome.zarr` paths.
 - `mesospim_utils/automated.py` and `mesospim_utils/slurm.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after adding decon dependency chaining and RAM-estimation fallback behavior for preprocess workflows.
+- `mesospim_utils/automated.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after adding pre-decon OME-Zarr XML generation for the decon worker XML-cloning step.
 
 ## Open Questions
 

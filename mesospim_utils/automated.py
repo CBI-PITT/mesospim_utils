@@ -228,6 +228,11 @@ def automated_method_slurm(dir_loc: Path,
         file_type = '.ome.zarr'
 
     if refractive_index and decon:
+        if file_type == '.ome.zarr':
+            print('Queueing BigStitcher XML generation before DECON so decon workers can clone collection metadata')
+            job_number = queue_bigstitcher_xml(dir_loc, out_dir, after_job_number=job_number, supernice=supernice)
+            print(f'Queued pre-DECON BigStitcher XML build process number: {job_number}')
+
         ## Decon:
         print('Queueing DECON of MesoSPIM tiles on SLURM')
         out_file_type = '.ome.zarr' if file_type == '.ome.zarr' else '.btf'
