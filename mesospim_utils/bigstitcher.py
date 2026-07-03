@@ -13,6 +13,7 @@ import typer
 from pathlib import Path
 import shutil
 import json
+import re
 
 # Installed Package imports
 import zarr
@@ -204,6 +205,167 @@ def does_dir_contain_bigstitcher_metadata(path):
         return None
     return zarr_xml_files[0]
 
+
+def get_bigstitcher_fused_output_path(path: Path, format: str='omezarr') -> Path:
+    """
+    Return the expected fused BigStitcher output path for a directory.
+    """
+    omezarr_xml = does_dir_contain_bigstitcher_metadata(path)
+    if not omezarr_xml:
+        raise FileNotFoundError(f'No BigStitcher XML found in {path}')
+
+    omezarr_xml = ensure_path(omezarr_xml)
+    fused_out_dir_or_file = str(omezarr_xml).removesuffix('.ome.zarr.xml')
+    if format == 'omezarr':
+        fused_out_dir_or_file = fused_out_dir_or_file + '_montage.ome.zarr'
+    elif format == 'hdf5':
+        fused_out_dir_or_file = fused_out_dir_or_file + '_montage.h5'
+    else:
+        raise ValueError(f'Unsupported BigStitcher fused output format: {format}')
+
+    return ensure_path(fused_out_dir_or_file)
+
+
+def get_bigstitcher_tiff_series_output_path(fused_omezarr_path: Path) -> Path:
+    fused_omezarr_path = ensure_path(fused_omezarr_path)
+    tiff_series_dir_name = str(fused_omezarr_path.name[:-9]) + '_tiffstack'
+    return fused_omezarr_path.parent / tiff_series_dir_name
+
+
+def is_bigstitcher_log_successful(log_dir: Path, fused_output_path: Path=None) -> bool:
+    """
+    Detect whether a prior BigStitcher SLURM log indicates successful fusion.
+
+    Prefer the explicit success marker added by this pipeline. For older logs,
+    fall back to the fusion-stage banner as long as the log does not contain
+    obvious failure markers.
+    """
+    log_dir = ensure_path(log_dir)
+    if not log_dir.exists():
+        return False
+
+    fused_output_name = ensure_path(fused_output_path).name if fused_output_path else None
+    explicit_marker = 'BIGSTITCHER_SUCCESS:'
+    failure_pattern = re.compile(r'(exception|outofmemory|killed|cancelled|terminated|traceback|failed)', re.IGNORECASE)
+
+    for log_file in sorted(log_dir.glob('*_align_fuse_bigstitcher.log')):
+        try:
+            content = log_file.read_text(errors='ignore')
+        except (OSError, IOError):
+            continue
+
+        if explicit_marker in content:
+            if fused_output_name is None or fused_output_name in content:
+                return True
+
+        if fused_output_name and fused_output_name not in content:
+            continue
+
+        if 'Creating Fused Dataset to OME-Zarr' in content or 'Creating Fused Dataset to HDF5' in content:
+            if not failure_pattern.search(content):
+                return True
+
+    return False
+
+
+def is_bigstitcher_omezarr_scale_metadata_complete(source_xml_or_dir: Path, fused_omezarr_path: Path) -> bool:
+    source_xml_or_dir = ensure_path(source_xml_or_dir)
+    fused_omezarr_path = ensure_path(fused_omezarr_path)
+
+    if source_xml_or_dir.as_posix().endswith('.ome.zarr.xml'):
+        omezarr_xml = source_xml_or_dir
+    else:
+        omezarr_xml = does_dir_contain_bigstitcher_metadata(source_xml_or_dir)
+        if not omezarr_xml:
+            return False
+        omezarr_xml = ensure_path(omezarr_xml)
+
+    target_zattr_path = fused_omezarr_path / '.zattrs'
+    if not target_zattr_path.is_file():
+        return False
+
+    try:
+        scales_list_zyx, _, _ = determine_sampling_factors_for_bigstitcher(omezarr_xml)
+        target_zattr = json.loads(target_zattr_path.read_text())
+        datasets = target_zattr.get('multiscales', [])[0].get('datasets', [])
+    except Exception:
+        return False
+
+    if len(datasets) != len(scales_list_zyx):
+        return False
+
+    for dataset in datasets:
+        try:
+            idx = int(dataset.get('path'))
+            expected_scale = [1, 1] + scales_list_zyx[idx]
+            actual_scale = dataset['coordinateTransformations'][0]['scale']
+        except (IndexError, KeyError, TypeError, ValueError):
+            return False
+
+        if list(actual_scale) != list(expected_scale):
+            return False
+
+    return True
+
+
+def is_bigstitcher_omezarr_montage_valid_and_complete(source_xml_or_dir: Path, fused_omezarr_path: Path) -> bool:
+    from omezarr import validate_ome_zarr_multiscale
+
+    fused_omezarr_path = ensure_path(fused_omezarr_path)
+    if not fused_omezarr_path.is_dir():
+        return False
+
+    return (
+        validate_ome_zarr_multiscale(fused_omezarr_path)
+        and is_bigstitcher_omezarr_scale_metadata_complete(source_xml_or_dir, fused_omezarr_path)
+    )
+
+
+def is_bigstitcher_tiff_series_complete(tiff_series_dir: Path, metadata_by_channel: dict) -> bool:
+    tiff_series_dir = ensure_path(tiff_series_dir)
+    if not tiff_series_dir.is_dir() or not metadata_by_channel:
+        return False
+
+    first_entry = get_first_entry(metadata_by_channel)
+    tile_shape = first_entry.get('tile_shape')
+    if not tile_shape or len(tile_shape) < 1:
+        return False
+
+    expected_tiff_count = len(metadata_by_channel) * int(tile_shape[0])
+    tiff_files = sorted(tiff_series_dir.glob('*.tif')) + sorted(tiff_series_dir.glob('*.tiff'))
+    if len(tiff_files) != expected_tiff_count:
+        return False
+
+    file_sizes = [tiff_file.stat().st_size for tiff_file in tiff_files if tiff_file.is_file()]
+    if len(file_sizes) != expected_tiff_count:
+        return False
+    if any(size <= 0 for size in file_sizes):
+        return False
+    if len(set(file_sizes)) != 1:
+        return False
+
+    return True
+
+
+def should_skip_bigstitcher_run(dir_loc: Path, fused_file_type: str, final_file_type: str, log_dir: Path, metadata_by_channel: dict) -> tuple[bool, str]:
+    if fused_file_type.lower() != 'omezarr':
+        return False, ''
+
+    fused_output_path = get_bigstitcher_fused_output_path(dir_loc, format=fused_file_type)
+    has_successful_log = is_bigstitcher_log_successful(log_dir, fused_output_path=fused_output_path)
+    if not has_successful_log:
+        return False, ''
+
+    if is_bigstitcher_omezarr_montage_valid_and_complete(dir_loc, fused_output_path):
+        return True, 'existing valid montage ome.zarr and successful BigStitcher log'
+
+    if final_file_type.lower() == 'ims' and not fused_output_path.exists():
+        tiff_series_dir = get_bigstitcher_tiff_series_output_path(fused_output_path)
+        if is_bigstitcher_tiff_series_complete(tiff_series_dir, metadata_by_channel):
+            return True, 'successful BigStitcher log and complete TIFF stack from prior montage extraction'
+
+    return False, ''
+
 @app.command()
 def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr'):
     '''
@@ -226,15 +388,12 @@ def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr'):
     shutil.copy(omezarr_xml, backup_xml)
 
     macro_file = bigstitcher_dir / 'macro.ijm'
+    fused_out_dir_or_file = get_bigstitcher_fused_output_path(path, format=format)
 
     # Writes macro file
     if format == 'omezarr':
-        fused_out_dir_or_file = str(omezarr_xml).removesuffix('.ome.zarr.xml')
-        fused_out_dir_or_file = fused_out_dir_or_file + '_montage.ome.zarr'
         _ = get_bigstitcher_omezarr_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
     elif format == 'hdf5':
-        fused_out_dir_or_file = str(omezarr_xml).removesuffix('.ome.zarr.xml')
-        fused_out_dir_or_file = fused_out_dir_or_file + '_montage.h5'
         _ = get_bigstitcher_hdf5_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
 
     return bigstitcher_dir, fused_out_dir_or_file, macro_file
@@ -713,5 +872,3 @@ def test_func():
 
 if __name__ == '__main__':
     app()
-
-

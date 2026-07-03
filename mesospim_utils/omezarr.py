@@ -20,6 +20,34 @@ from mesospim_btf import mesospim_btf_helper
 app = typer.Typer()
 
 
+def validate_ome_zarr_multiscale(path: Path, probe_reads: bool = True) -> bool:
+    """
+    Validate that a path is a readable multiscale OME-Zarr dataset.
+
+    This is intended as a lightweight completeness check before downstream
+    processing skips a costly regeneration step.
+    """
+    try:
+        path = Path(path)
+        multiscale = OmeZarrV2Multiscale(path)
+
+        if multiscale.num_levels <= 0:
+            return False
+
+        for level in range(multiscale.num_levels):
+            arr = multiscale.open_level_array(level)
+            if any(int(dim) <= 0 for dim in arr.shape):
+                return False
+
+            if probe_reads:
+                probe = tuple(slice(0, 1) for _ in range(arr.ndim))
+                _ = arr[probe]
+
+        return True
+    except Exception:
+        return False
+
+
 ######################################################################################################################
 ####  OME-ZARR CONVERTER FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
 ######################################################################################################################

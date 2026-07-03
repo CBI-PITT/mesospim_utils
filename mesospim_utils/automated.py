@@ -24,10 +24,14 @@ from slurm import (
 from utils import ensure_path, common_prefix, strip_after
 from imaris import convert_ims
 from bigstitcher import (does_dir_contain_bigstitcher_metadata,
-                         get_ome_zarr_directory_from_xml,
-                         get_bigstitcher_omezarr_alignment_marco,
-                         make_bigstitcher_slurm_dir_and_macro,
-                         adjust_scale_in_bigstitcher_produced_ome_zarr)
+                          get_ome_zarr_directory_from_xml,
+                          get_bigstitcher_omezarr_alignment_marco,
+                          make_bigstitcher_slurm_dir_and_macro,
+                          adjust_scale_in_bigstitcher_produced_ome_zarr,
+                          get_bigstitcher_fused_output_path,
+                          get_bigstitcher_tiff_series_output_path,
+                          is_bigstitcher_tiff_series_complete,
+                          should_skip_bigstitcher_run)
 
 
 mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
@@ -298,15 +302,35 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
 
     username = first_metadata_entry.get('username', "")
 
-    bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type)
-    cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
+    skip_bigstitcher, skip_reason = should_skip_bigstitcher_run(
+        dir_loc,
+        fused_file_type,
+        final_file_type,
+        slurm_log_dir,
+        metadata_by_channel,
+    )
 
-    job_number = None
-    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
-                            after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'align_fuse_bigstitcher')
-    print(f'BigStitcher process number: {job_number}')
+    fused_out_dir_or_file = get_bigstitcher_fused_output_path(dir_loc, format=fused_file_type)
+    tiff_series_out_dir = None
+    if fused_file_type.lower() == 'omezarr' and final_file_type.lower() == 'ims':
+        tiff_series_out_dir = get_bigstitcher_tiff_series_output_path(fused_out_dir_or_file)
+
+    if skip_bigstitcher:
+        print(f'Skipping BigStitcher rerun: {skip_reason}')
+        job_number = None
+    else:
+        bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type)
+        cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
+        cmd += f' && printf "BIGSTITCHER_SUCCESS: {Path(fused_out_dir_or_file).name}\\n"'
+
+        job_number = None
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
+                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'align_fuse_bigstitcher')
+        print(f'BigStitcher process number: {job_number}')
 
     if final_file_type.lower() == 'omezarr' and not final_file_type.lower() == 'ims':
+        if skip_bigstitcher:
+            return
         cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
         cmd += f' "{dir_loc}" "{fused_out_dir_or_file}"'
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
@@ -328,18 +352,17 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
 
     elif fused_file_type.lower() == 'omezarr' and final_file_type.lower() == 'ims':
         from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
-        # Place tiffs in parent of omezarr and name omezarr.name + _tiffstack
         fused_out_dir_or_file = ensure_path(fused_out_dir_or_file)
-        tiff_series_dir_name = str(fused_out_dir_or_file.name[:-9]) + '_tiffstack'
-        tiff_series_out_dir = fused_out_dir_or_file.parent / tiff_series_dir_name
+        if not is_bigstitcher_tiff_series_complete(tiff_series_out_dir, metadata_by_channel):
+            cmd = f'{mesospim_root_application}/omezarr.py extract-tiff-series'
+            cmd += f' "{fused_out_dir_or_file}" "{tiff_series_out_dir}" --prefix composite'
 
-        cmd = f'{mesospim_root_application}/omezarr.py extract-tiff-series'
-        cmd += f' "{fused_out_dir_or_file}" "{tiff_series_out_dir}" --prefix composite'
-
-        job_number = wrap_slurm(cmd,
-                                SLURM_PARAMETERS_IMARIS_CONVERTER, slurm_log_dir,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'omezarr_to_tiff_stack')
-        print(f'Convert OME-Zarr to Tiff Stack: {job_number}')
+            job_number = wrap_slurm(cmd,
+                                    SLURM_PARAMETERS_IMARIS_CONVERTER, slurm_log_dir,
+                                    after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'omezarr_to_tiff_stack')
+            print(f'Convert OME-Zarr to Tiff Stack: {job_number}')
+        else:
+            print(f'Skipping OME-Zarr to TIFF extraction: complete TIFF stack already exists at {tiff_series_out_dir}')
 
         # Make ims from tiffseries
         metadata = collect_all_metadata(dir_loc)
@@ -410,4 +433,3 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
 
 if __name__ == "__main__":
     app()
-

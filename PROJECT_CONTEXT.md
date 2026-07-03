@@ -35,6 +35,19 @@
   - adjust BigStitcher refinement downsampling and fusion memory settings
   - move deconvolution PSF/objective parameters out of hardcoded `rl.py` values and into config
 
+## Recent Change: BigStitcher Rerun Skip Logic
+
+- Added a skip gate to `mesospim_utils/automated.py::big_stitcher_align()` so BigStitcher is not requeued when prior work is already complete.
+- Added helpers in `mesospim_utils/bigstitcher.py` to:
+  - derive expected fused montage and TIFF-stack output paths
+  - detect successful prior BigStitcher logs
+  - validate the IMS cleanup case where the montage OME-Zarr was removed after TIFF extraction
+- Added `validate_ome_zarr_multiscale()` in `mesospim_utils/omezarr.py` for lightweight fused OME-Zarr validation.
+- Current skip policy is conservative and only applies to OME-Zarr fusion paths:
+  - skip if a prior BigStitcher success log exists and `_montage.ome.zarr` validates as complete
+  - for `final_file_type=ims`, also skip if the montage is absent but the `_tiffstack` directory exists with exactly `channels * z_planes` TIFFs and all TIFFs have the same nonzero size
+- New BigStitcher submissions now append an explicit `BIGSTITCHER_SUCCESS:` marker to the SLURM log after Fiji exits cleanly.
+
 ## Recent Change: Objective Profiles For Deconvolution
 
 - Added objective-profile support under `decon.objectives` in `mesospim_utils/config/example.yaml`.
@@ -93,6 +106,7 @@
 - BigStitcher/Fiji behavior, SLURM resource behavior, and config-driven workflows still need real environment verification after changes.
 - CLI `--help` smoke tests could not run in this environment because required runtime packages such as `psutil` and `tifffile` are not installed here.
 - Edited Python files were checked with `python -m py_compile` successfully.
+- The new BigStitcher skip logic was syntax-checked here with `python3 -m py_compile`, but still needs runtime verification against real SLURM logs and a real `_tiffstack` directory.
 
 ## Open Questions
 
