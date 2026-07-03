@@ -268,6 +268,35 @@ def is_bigstitcher_log_successful(log_dir: Path, fused_output_path: Path=None) -
     return False
 
 
+def is_tiff_generation_log_successful(log_dir: Path, tiff_series_dir: Path=None) -> bool:
+    """
+    Detect whether a prior OME-Zarr to TIFF extraction completed successfully.
+
+    This trusts only the explicit success marker written by the current
+    pipeline after the extraction command exits cleanly.
+    """
+    log_dir = ensure_path(log_dir)
+    if not log_dir.exists():
+        return False
+
+    tiff_series_name = ensure_path(tiff_series_dir).name if tiff_series_dir else None
+    explicit_marker = 'OMEZARR_TO_TIFF_SUCCESS:'
+
+    for log_file in sorted(log_dir.glob('*_omezarr_to_tiff_stack.log')):
+        try:
+            content = log_file.read_text(errors='ignore')
+        except (OSError, IOError):
+            continue
+
+        if explicit_marker not in content:
+            continue
+
+        if tiff_series_name is None or tiff_series_name in content:
+            return True
+
+    return False
+
+
 def is_bigstitcher_omezarr_scale_metadata_complete(source_xml_or_dir: Path, fused_omezarr_path: Path) -> bool:
     source_xml_or_dir = ensure_path(source_xml_or_dir)
     fused_omezarr_path = ensure_path(fused_omezarr_path)
@@ -361,7 +390,10 @@ def should_skip_bigstitcher_run(dir_loc: Path, fused_file_type: str, final_file_
 
     if final_file_type.lower() == 'ims' and not fused_output_path.exists():
         tiff_series_dir = get_bigstitcher_tiff_series_output_path(fused_output_path)
-        if is_bigstitcher_tiff_series_complete(tiff_series_dir, metadata_by_channel):
+        if (
+            is_bigstitcher_tiff_series_complete(tiff_series_dir, metadata_by_channel)
+            and is_tiff_generation_log_successful(log_dir, tiff_series_dir)
+        ):
             return True, 'successful BigStitcher log and complete TIFF stack from prior montage extraction'
 
     return False, ''

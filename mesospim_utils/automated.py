@@ -31,6 +31,7 @@ from bigstitcher import (does_dir_contain_bigstitcher_metadata,
                           get_bigstitcher_fused_output_path,
                           get_bigstitcher_tiff_series_output_path,
                           is_bigstitcher_tiff_series_complete,
+                          is_tiff_generation_log_successful,
                           should_skip_bigstitcher_run)
 
 
@@ -353,16 +354,22 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     elif fused_file_type.lower() == 'omezarr' and final_file_type.lower() == 'ims':
         from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
         fused_out_dir_or_file = ensure_path(fused_out_dir_or_file)
-        if not is_bigstitcher_tiff_series_complete(tiff_series_out_dir, metadata_by_channel):
+        tiff_generation_complete = (
+            is_bigstitcher_tiff_series_complete(tiff_series_out_dir, metadata_by_channel)
+            and is_tiff_generation_log_successful(slurm_log_dir, tiff_series_out_dir)
+        )
+
+        if not tiff_generation_complete:
             cmd = f'{mesospim_root_application}/omezarr.py extract-tiff-series'
             cmd += f' "{fused_out_dir_or_file}" "{tiff_series_out_dir}" --prefix composite'
+            cmd += f' && printf "OMEZARR_TO_TIFF_SUCCESS: {Path(tiff_series_out_dir).name}\\n"'
 
             job_number = wrap_slurm(cmd,
                                     SLURM_PARAMETERS_IMARIS_CONVERTER, slurm_log_dir,
                                     after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'omezarr_to_tiff_stack')
             print(f'Convert OME-Zarr to Tiff Stack: {job_number}')
         else:
-            print(f'Skipping OME-Zarr to TIFF extraction: complete TIFF stack already exists at {tiff_series_out_dir}')
+            print(f'Skipping OME-Zarr to TIFF extraction: complete TIFF stack with success marker already exists at {tiff_series_out_dir}')
 
         # Make ims from tiffseries
         metadata = collect_all_metadata(dir_loc)
