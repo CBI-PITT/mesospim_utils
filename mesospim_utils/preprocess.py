@@ -386,6 +386,29 @@ def resolve_grid_and_overlap(input_collection: Path):
     return grid_size.y, grid_size.x, overlap
 
 
+def middle_tile_col_major(rows: int, cols: int) -> int:
+    """
+    Return the tile index closest to the center of a rectangular grid.
+
+    Tile numbering is column-major:
+        tile_index = col * rows + row
+
+    If multiple tiles are equally close to the grid center,
+    return the one with the lowest tile number.
+    """
+
+    if rows < 1 or cols < 1:
+        raise ValueError("rows and cols must both be >= 1")
+
+    # For even dimensions, the center falls between tiles.
+    # Choosing floor gives the lower row/column among equally central options,
+    # which also gives the lowest tile number in column-major order.
+    center_row = (rows - 1) // 2
+    center_col = (cols - 1) // 2
+
+    return center_col * rows + center_row
+
+
 def process_basicpy_group(
     input_collection: Path,
     output_collection: Path,
@@ -398,7 +421,7 @@ def process_basicpy_group(
 ):
     rows, cols, _ = resolve_grid_and_overlap(input_collection)
     expected_n_tiles = rows * cols
-    default_fit_tile = (expected_n_tiles - 1) // 2
+    default_fit_tile = middle_tile_col_major(rows, cols)
 
     records_by_combo = discover_tiles(input_collection)
     combo = (channel, filter_name)
@@ -409,6 +432,7 @@ def process_basicpy_group(
     validate_tile_set(tile_records, rows, cols, channel, filter_name)
 
     fit_tile = choose_fit_tile(tile_records, fit_tile, default_fit_tile)
+    print("=============== fit tile =============", fit_tile)
 
     prepare_output_collection(input_collection, output_collection)
     temp_dir = output_collection / '.basicpy_tmp'
