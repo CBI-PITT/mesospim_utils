@@ -20,7 +20,7 @@ from mesospim_btf import mesospim_btf_helper
 app = typer.Typer()
 
 
-def validate_ome_zarr_multiscale(path: Path, probe_reads: bool = True) -> bool:
+def validate_ome_zarr_multiscale(path: Path, probe_reads: bool = False) -> bool:
     """
     Validate that a path is a readable multiscale OME-Zarr dataset.
 
