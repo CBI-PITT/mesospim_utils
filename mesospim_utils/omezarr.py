@@ -10,6 +10,7 @@ import typer
 import zarr
 import dask.array as da
 import numpy as np
+import tifffile
 
 from ome_zarr_multiscale_writer.write import write_ome_zarr_multiscale
 from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
@@ -241,6 +242,9 @@ class OmeZarrV2Multiscale:
             raise TypeError(f"Object at path '{path}' is not a Zarr array.")
         return arr
 
+    def get_level_shape(self, level: int = 0) -> Tuple[int, ...]:
+        return tuple(self.open_level_array(level).shape)
+
     # ------------------------------------------------------------------
     # Chunked view + Dask
     # ------------------------------------------------------------------
@@ -315,6 +319,37 @@ def extract_tiff_series(ome_zarr_directory: Path, output_directory: Path, prefix
         prefix = ome_zarr_directory.name[:-9] # Strip .ome.zarr
     ome_zarr = OmeZarrArray(ome_zarr_directory)
     ome_zarr.to_tiff_stack(output_directory, basename=prefix)
+    return
+
+@app.command()
+def extract_single_tiff_plane(
+    ome_zarr_directory: Path,
+    output_directory: Path,
+    resolution_level: int = 0,
+    channel: int = 0,
+    z: int = 0,
+    prefix: str = None,
+) -> None:
+    ome_zarr_directory = Path(ome_zarr_directory)
+    output_directory = Path(output_directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    if not prefix:
+        prefix = ome_zarr_directory.name[:-9] # Strip .ome.zarr
+
+    ome_zarr = OmeZarrV2Multiscale(ome_zarr_directory)
+    level_array = ome_zarr.open_level_array(resolution_level)
+
+    if len(level_array.shape) != 5:
+        raise ValueError(
+            f"Expected a 5D OME-Zarr array shaped (t, c, z, y, x), got {level_array.shape}"
+        )
+
+    plane = da.array(level_array)[0, channel, z, :, :].compute()
+    out_file = output_directory / (
+        f'{prefix}_r{resolution_level:02d}_t00_c{channel:02d}_z{z:04d}.tif'
+    )
+    tifffile.imwrite(out_file, plane, tile=(512, 512), compression='zlib')
     return
 
 @app.command()

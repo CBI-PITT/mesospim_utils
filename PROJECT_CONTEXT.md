@@ -35,6 +35,16 @@
   - adjust BigStitcher refinement downsampling and fusion memory settings
   - move deconvolution PSF/objective parameters out of hardcoded `rl.py` values and into config
 
+## Recent Change: IMS Export From Fused OME-Zarr
+
+- The `--final-file-type ims` path in `mesospim_utils/automated.py` no longer uses one bulk `extract-tiff-series` job.
+- Added `--ims-resolution-level` to `automated-method-slurm` and `big-stitcher-align`; default is `0`.
+- The fused OME-Zarr to IMS path now submits one SLURM array per channel, with one task per z-plane TIFF.
+- Added `extract-single-tiff-plane` in `mesospim_utils/omezarr.py` to read one plane from `(t, c, z, y, x)` and write one tiled zlib-compressed TIFF.
+- TIFF output is flat in the `*_tiffstack` directory and uses names like `composite_r00_t00_c00_z0000.tif` so the current Imaris TIFF-series ingestion can group by channel and z order.
+- `mesospim_utils/imaris.py make_ims_from_tiff_series()` now names the final IMS file from the TIFF-series directory name instead of the first TIFF stem.
+- While validating this change, a pre-existing invalid nested f-string in `mesospim_utils/imaris.py` was simplified so the touched files now compile under Python 3.12.
+
 ## Recent Change: Objective Profiles For Deconvolution
 
 - Added objective-profile support under `decon.objectives` in `mesospim_utils/config/example.yaml`.
@@ -93,6 +103,8 @@
 - BigStitcher/Fiji behavior, SLURM resource behavior, and config-driven workflows still need real environment verification after changes.
 - CLI `--help` smoke tests could not run in this environment because required runtime packages such as `psutil` and `tifffile` are not installed here.
 - Edited Python files were checked with `python -m py_compile` successfully.
+- For the IMS export change, `python3.12 -m py_compile mesospim_utils/automated.py mesospim_utils/omezarr.py mesospim_utils/imaris.py` succeeded in this environment.
+- CLI help still could not be exercised here because runtime packages such as `typer` are not installed in the available Python 3.12 environment.
 
 ## Open Questions
 

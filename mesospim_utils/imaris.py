@@ -114,7 +114,17 @@ def convert_ims(file: list[str], res: tuple[float, float, float] = (1, 1, 1), ou
             rgb_colors.append(rgb)
 
     # Main ims converter command
-    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(file[0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" {f' -il "{path_to_wine_mappings(layout_path)}"' if inputformat else ""} --logprogress --nthreads {SLURM_CPUS} --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
+    layout_arg = f' -il "{path_to_wine_mappings(layout_path)}"' if inputformat else ''
+    inputformat_arg = f' --inputformat {inputformat}' if inputformat else ''
+    lines = (
+        f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}"'
+        f' --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z}'
+        f' -i "{path_to_wine_mappings(file[0])}"'
+        f' -o "{path_to_wine_mappings(out_file).as_posix()}.part"'
+        f'{layout_arg} --logprogress --nthreads {SLURM_CPUS}'
+        f' --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024}'
+        f' -of Imaris5 -a{inputformat_arg}'
+    )
 
     # Change ims-file channel colors to match those from mesospim metadata
     # This runs the cmd-line utility defined in this same script that uses h5py to edit the .ims file after conversion.
@@ -320,7 +330,7 @@ def make_ims_from_tiff_series(tiff_series_path: Path, res: tuple[float, float, f
         out_dir = files_nested_list[0][0].parent / 'ims_files'
     else:
         out_dir = ensure_path(out_dir)
-    out_file = out_dir / (files_nested_list[0][0].stem + '.ims')
+    out_file = out_dir / (tiff_series_path.name + '.ims')
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
     log_location = out_file.parent / 'ims_convert_logs' / (out_file.stem + '.txt')
@@ -354,7 +364,17 @@ def make_ims_from_tiff_series(tiff_series_path: Path, res: tuple[float, float, f
             rgb_colors.append(rgb)
 
     # Main ims converter command
-    lines = f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}" --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z} -i "{path_to_wine_mappings(files_nested_list[0][0])}" -o "{path_to_wine_mappings(out_file).as_posix() + ".part"}" {f' -il "{path_to_wine_mappings(layout_path)}"' if inputformat else ""} --logprogress --nthreads {SLURM_CPUS} --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024} -of Imaris5 -a{f" --inputformat {inputformat}" if inputformat else ""}'
+    layout_arg = f' -il "{path_to_wine_mappings(layout_path)}"' if inputformat else ''
+    inputformat_arg = f' --inputformat {inputformat}' if inputformat else ''
+    lines = (
+        f'{WINE_INSTALL_LOC} "{IMARIS_CONVERTER_LOC}"'
+        f' --voxelsizex {res_x} --voxelsizey {res_y} --voxelsizez {res_z}'
+        f' -i "{path_to_wine_mappings(files_nested_list[0][0])}"'
+        f' -o "{path_to_wine_mappings(out_file).as_posix()}.part"'
+        f'{layout_arg} --logprogress --nthreads {SLURM_CPUS}'
+        f' --compression {IMS_CONVERTER_COMPRESSION_LEVEL} -ps {SLURM_RAM_MB * 1024}'
+        f' -of Imaris5 -a{inputformat_arg}'
+    )
 
     # Change ims-file channel colors to match those from mesospim metadata
     # This runs the cmd-line utility defined in this same script that uses h5py to edit the .ims file after conversion.
@@ -377,6 +397,4 @@ def make_ims_from_tiff_series(tiff_series_path: Path, res: tuple[float, float, f
 
 if __name__ == "__main__":
     app()
-
-
 
