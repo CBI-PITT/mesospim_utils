@@ -45,6 +45,19 @@
 - `mesospim_utils/imaris.py make_ims_from_tiff_series()` now names the final IMS file from the TIFF-series directory name instead of the first TIFF stem.
 - While validating this change, a pre-existing invalid nested f-string in `mesospim_utils/imaris.py` was simplified so the touched files now compile under Python 3.12.
 
+## Recent Change: BigStitcher Rerun Skip Logic
+
+- Added a skip gate to `mesospim_utils/automated.py::big_stitcher_align()` so BigStitcher is not requeued when prior work is already complete.
+- Added helpers in `mesospim_utils/bigstitcher.py` to:
+  - derive expected fused montage and TIFF-stack output paths
+  - detect successful prior BigStitcher logs
+  - validate the IMS cleanup case where the montage OME-Zarr was removed after TIFF extraction
+- Added `validate_ome_zarr_multiscale()` in `mesospim_utils/omezarr.py` for lightweight fused OME-Zarr validation.
+- Current skip policy is conservative and only applies to OME-Zarr fusion paths:
+  - skip if a prior BigStitcher success log exists and `_montage.ome.zarr` validates as complete
+  - for `final_file_type=ims`, also skip if the montage is absent but the `_tiffstack` directory exists with exactly `channels * z_planes` TIFFs and all TIFFs have the same nonzero size
+- New BigStitcher submissions now append an explicit `BIGSTITCHER_SUCCESS:` marker to the SLURM log after Fiji exits cleanly.
+
 ## Recent Change: Objective Profiles For Deconvolution
 
 - Added objective-profile support under `decon.objectives` in `mesospim_utils/config/example.yaml`.
@@ -105,6 +118,7 @@
 - Edited Python files were checked with `python -m py_compile` successfully.
 - For the IMS export change, `python3.12 -m py_compile mesospim_utils/automated.py mesospim_utils/omezarr.py mesospim_utils/imaris.py` succeeded in this environment.
 - CLI help still could not be exercised here because runtime packages such as `typer` are not installed in the available Python 3.12 environment.
+- The new BigStitcher skip logic was syntax-checked here with `python3 -m py_compile`, but still needs runtime verification against real SLURM logs and a real `_tiffstack` directory.
 
 ## Open Questions
 
