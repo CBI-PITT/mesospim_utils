@@ -44,6 +44,8 @@
 - TIFF output is flat in the `*_tiffstack` directory and uses names like `composite_r00_t00_c00_z0000.tif` so the current Imaris TIFF-series ingestion can group by channel and z order.
 - `mesospim_utils/imaris.py make_ims_from_tiff_series()` now names the final IMS file from the TIFF-series directory name instead of the first TIFF stem.
 - While validating this change, a pre-existing invalid nested f-string in `mesospim_utils/imaris.py` was simplified so the touched files now compile under Python 3.12.
+- Follow-up fix after a branch merge: the IMS path now checks TIFF completion before queueing any extraction jobs, the old bulk `extract-tiff-series` fallback was removed from the automated IMS branch, and TIFF success is now based on one explicit log marker per extracted z-plane.
+- TIFF completeness for skip logic now uses the requested `--ims-resolution-level` shape from the source OME-Zarr instead of acquisition tile metadata, so nonzero multiscale levels can skip correctly.
 
 ## Recent Change: BigStitcher Rerun Skip Logic
 

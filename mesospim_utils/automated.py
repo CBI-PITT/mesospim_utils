@@ -307,6 +307,10 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     slurm_log_dir = get_slurm_log_location(dir_loc)
 
     username = first_metadata_entry.get('username', "")
+    source_omezarr_xml = does_dir_contain_bigstitcher_metadata(dir_loc)
+    source_omezarr_dir = get_ome_zarr_directory_from_xml(source_omezarr_xml) if source_omezarr_xml else None
+    if fused_file_type.lower() == 'omezarr' and final_file_type.lower() == 'ims' and source_omezarr_dir is None:
+        raise FileNotFoundError(f'Could not locate source OME-Zarr directory from BigStitcher metadata in {dir_loc}')
 
     skip_bigstitcher, skip_reason = should_skip_bigstitcher_run(
         dir_loc,
@@ -361,34 +365,37 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         fused_out_dir_or_file = ensure_path(fused_out_dir_or_file)
         tiff_series_dir_name = str(fused_out_dir_or_file.name[:-9]) + '_tiffstack'
         tiff_series_out_dir = fused_out_dir_or_file.parent / tiff_series_dir_name
-        extraction_job_numbers = queue_omezarr_tiff_extraction_arrays(
-            fused_out_dir_or_file,
-            tiff_series_out_dir,
-            resolution_level=ims_resolution_level,
-            slurm_log_dir=slurm_log_dir,
-            username=username,
-            after_slurm_jobs=[job_number] if job_number else None,
-            prefix='composite',
-        )
-        if extraction_job_numbers:
-            job_number = extraction_job_numbers[-1]
-        print(f'Convert OME-Zarr to Tiff Stack: {extraction_job_numbers}')
         tiff_generation_complete = (
-            is_bigstitcher_tiff_series_complete(tiff_series_out_dir, metadata_by_channel)
-            and is_tiff_generation_log_successful(slurm_log_dir, tiff_series_out_dir)
+            is_bigstitcher_tiff_series_complete(
+                tiff_series_out_dir,
+                source_omezarr_dir,
+                resolution_level=ims_resolution_level,
+            )
+            and is_tiff_generation_log_successful(
+                slurm_log_dir,
+                tiff_series_out_dir,
+                source_omezarr_dir,
+                resolution_level=ims_resolution_level,
+            )
         )
 
-        if not tiff_generation_complete:
-            cmd = f'{mesospim_root_application}/omezarr.py extract-tiff-series'
-            cmd += f' "{fused_out_dir_or_file}" "{tiff_series_out_dir}" --prefix composite'
-            cmd += f' && printf "OMEZARR_TO_TIFF_SUCCESS: {Path(tiff_series_out_dir).name}\\n"'
-
-            job_number = wrap_slurm(cmd,
-                                    SLURM_PARAMETERS_IMARIS_CONVERTER, slurm_log_dir,
-                                    after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'omezarr_to_tiff_stack')
-            print(f'Convert OME-Zarr to Tiff Stack: {job_number}')
+        if tiff_generation_complete:
+            extraction_job_numbers = []
+            print(f'Skipping OME-Zarr to TIFF extraction: complete TIFF stack with per-plane success markers already exists at {tiff_series_out_dir}')
         else:
-            print(f'Skipping OME-Zarr to TIFF extraction: complete TIFF stack with success marker already exists at {tiff_series_out_dir}')
+            extraction_job_numbers = queue_omezarr_tiff_extraction_arrays(
+                fused_out_dir_or_file,
+                source_omezarr_dir,
+                tiff_series_out_dir,
+                resolution_level=ims_resolution_level,
+                slurm_log_dir=slurm_log_dir,
+                username=username,
+                after_slurm_jobs=[job_number] if job_number else None,
+                prefix='composite',
+            )
+            if extraction_job_numbers:
+                job_number = extraction_job_numbers[-1]
+            print(f'Convert OME-Zarr to Tiff Stack: {extraction_job_numbers}')
 
         # Make ims from tiffseries
         metadata = collect_all_metadata(dir_loc)
@@ -396,10 +403,10 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         res = determine_xyz_resolution(first_entry)  # zyx
         res_z, res_y, res_x = res.z, res.y, res.x
 
-        ome_zarr = OmeZarrV2Multiscale(fused_out_dir_or_file)
+        ome_zarr = OmeZarrV2Multiscale(source_omezarr_dir)
         level_shape = ome_zarr.get_level_shape(ims_resolution_level)
         if len(level_shape) != 5:
-            raise ValueError(f'Expected fused OME-Zarr level to be 5D, got shape {level_shape}')
+            raise ValueError(f'Expected source OME-Zarr level to be 5D, got shape {level_shape}')
 
         level_array = ome_zarr.open_level_array(ims_resolution_level)
         if hasattr(level_array, 'attrs'):
@@ -426,7 +433,8 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
 
 
 def queue_omezarr_tiff_extraction_arrays(
-    ome_zarr_directory: Path,
+    fused_omezarr_directory: Path,
+    reference_omezarr_directory: Path,
     output_directory: Path,
     resolution_level: int,
     slurm_log_dir: Path,
@@ -436,14 +444,15 @@ def queue_omezarr_tiff_extraction_arrays(
 ):
     from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
 
-    ome_zarr_directory = ensure_path(ome_zarr_directory)
+    fused_omezarr_directory = ensure_path(fused_omezarr_directory)
+    reference_omezarr_directory = ensure_path(reference_omezarr_directory)
     output_directory = ensure_path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    ome_zarr = OmeZarrV2Multiscale(ome_zarr_directory)
+    ome_zarr = OmeZarrV2Multiscale(reference_omezarr_directory)
     level_shape = ome_zarr.get_level_shape(resolution_level)
     if len(level_shape) != 5:
-        raise ValueError(f'Expected a fused OME-Zarr level shaped (t, c, z, y, x), got {level_shape}')
+        raise ValueError(f'Expected a reference OME-Zarr level shaped (t, c, z, y, x), got {level_shape}')
 
     _, num_channels, z_layers, _, _ = level_shape
     job_numbers = []
@@ -453,11 +462,12 @@ def queue_omezarr_tiff_extraction_arrays(
         commands = []
         for z in range(z_layers):
             cmd = f'{mesospim_root_application}/omezarr.py extract-single-tiff-plane'
-            cmd += f' "{ome_zarr_directory}" "{output_directory}"'
+            cmd += f' "{fused_omezarr_directory}" "{output_directory}"'
             cmd += f' --resolution-level {resolution_level}'
             cmd += f' --channel {channel}'
             cmd += f' --z {z}'
             cmd += f' --prefix {prefix}'
+            cmd += f' && printf "OMEZARR_TO_TIFF_SUCCESS: {output_directory.name} r{resolution_level:02d} c{channel:02d} z{z:04d}\\n"'
             commands.append(cmd)
 
         if not commands:

@@ -268,33 +268,56 @@ def is_bigstitcher_log_successful(log_dir: Path, fused_output_path: Path=None) -
     return False
 
 
-def is_tiff_generation_log_successful(log_dir: Path, tiff_series_dir: Path=None) -> bool:
-    """
-    Detect whether a prior OME-Zarr to TIFF extraction completed successfully.
+def _get_omezarr_level_shape(omezarr_path: Path, resolution_level: int) -> tuple[int, int, int, int, int]:
+    from omezarr import OmeZarrV2Multiscale
 
-    This trusts only the explicit success marker written by the current
-    pipeline after the extraction command exits cleanly.
+    omezarr_path = ensure_path(omezarr_path)
+    multiscale = OmeZarrV2Multiscale(omezarr_path)
+    shape = tuple(multiscale.get_level_shape(resolution_level))
+    if len(shape) != 5:
+        raise ValueError(f'Expected OME-Zarr level shaped (t, c, z, y, x), got {shape}')
+    return shape
+
+
+def is_tiff_generation_log_successful(log_dir: Path, tiff_series_dir: Path, reference_omezarr_path: Path, resolution_level: int = 0) -> bool:
+    """
+    Detect whether per-plane OME-Zarr to TIFF extraction completed successfully.
+
+    Success requires one explicit log marker for every expected `(channel, z)`
+    plane at the requested multiscale level.
     """
     log_dir = ensure_path(log_dir)
     if not log_dir.exists():
         return False
 
-    tiff_series_name = ensure_path(tiff_series_dir).name if tiff_series_dir else None
+    tiff_series_dir = ensure_path(tiff_series_dir)
+    tiff_series_name = tiff_series_dir.name
     explicit_marker = 'OMEZARR_TO_TIFF_SUCCESS:'
+    _, num_channels, z_layers, _, _ = _get_omezarr_level_shape(reference_omezarr_path, resolution_level)
+    expected_markers = {
+        (channel, z)
+        for channel in range(num_channels)
+        for z in range(z_layers)
+    }
+    seen_markers = set()
+    marker_pattern = re.compile(
+        rf'{explicit_marker}\s+{re.escape(tiff_series_name)}\s+'
+        rf'r(?P<resolution>\d+)\s+c(?P<channel>\d+)\s+z(?P<z>\d+)',
+        re.IGNORECASE,
+    )
 
-    for log_file in sorted(log_dir.glob('*_omezarr_to_tiff_stack.log')):
+    for log_file in sorted(log_dir.glob('*_omezarr_to_tiff_stack_c*.log')):
         try:
             content = log_file.read_text(errors='ignore')
         except (OSError, IOError):
             continue
 
-        if explicit_marker not in content:
-            continue
+        for match in marker_pattern.finditer(content):
+            if int(match.group('resolution')) != resolution_level:
+                continue
+            seen_markers.add((int(match.group('channel')), int(match.group('z'))))
 
-        if tiff_series_name is None or tiff_series_name in content:
-            return True
-
-    return False
+    return seen_markers == expected_markers
 
 
 def is_bigstitcher_omezarr_scale_metadata_complete(source_xml_or_dir: Path, fused_omezarr_path: Path) -> bool:
@@ -353,30 +376,41 @@ def is_bigstitcher_omezarr_montage_valid_and_complete(source_xml_or_dir: Path, f
     )
 
 
-def is_bigstitcher_tiff_series_complete(tiff_series_dir: Path, metadata_by_channel: dict) -> bool:
+def is_bigstitcher_tiff_series_complete(tiff_series_dir: Path, reference_omezarr_path: Path, resolution_level: int = 0) -> bool:
     tiff_series_dir = ensure_path(tiff_series_dir)
-    if not tiff_series_dir.is_dir() or not metadata_by_channel:
+    if not tiff_series_dir.is_dir():
         return False
 
-    first_entry = get_first_entry(metadata_by_channel)
-    tile_shape = first_entry.get('tile_shape')
-    if not tile_shape or len(tile_shape) < 1:
-        return False
-
-    expected_tiff_count = len(metadata_by_channel) * int(tile_shape[0])
+    _, num_channels, z_layers, _, _ = _get_omezarr_level_shape(reference_omezarr_path, resolution_level)
+    expected_tiff_count = num_channels * z_layers
     tiff_files = sorted(tiff_series_dir.glob('*.tif')) + sorted(tiff_series_dir.glob('*.tiff'))
     if len(tiff_files) != expected_tiff_count:
         return False
 
-    file_sizes = [tiff_file.stat().st_size for tiff_file in tiff_files if tiff_file.is_file()]
-    if len(file_sizes) != expected_tiff_count:
-        return False
-    if any(size <= 0 for size in file_sizes):
-        return False
-    if len(set(file_sizes)) != 1:
-        return False
+    expected_pairs = {
+        (channel, z)
+        for channel in range(num_channels)
+        for z in range(z_layers)
+    }
+    seen_pairs = set()
+    file_name_pattern = re.compile(
+        r'_r(?P<resolution>\d+)_t\d+_c(?P<channel>\d+)_z(?P<z>\d+)\.tif{1,2}$',
+        re.IGNORECASE,
+    )
 
-    return True
+    for tiff_file in tiff_files:
+        if not tiff_file.is_file() or tiff_file.stat().st_size <= 0:
+            return False
+
+        match = file_name_pattern.search(tiff_file.name)
+        if not match:
+            return False
+        if int(match.group('resolution')) != resolution_level:
+            return False
+
+        seen_pairs.add((int(match.group('channel')), int(match.group('z'))))
+
+    return seen_pairs == expected_pairs
 
 
 def should_skip_bigstitcher_run(dir_loc: Path, fused_file_type: str, final_file_type: str, log_dir: Path, metadata_by_channel: dict) -> tuple[bool, str]:
@@ -390,14 +424,6 @@ def should_skip_bigstitcher_run(dir_loc: Path, fused_file_type: str, final_file_
 
     if is_bigstitcher_omezarr_montage_valid_and_complete(dir_loc, fused_output_path):
         return True, 'existing valid montage ome.zarr and successful BigStitcher log'
-
-    if final_file_type.lower() == 'ims' and not fused_output_path.exists():
-        tiff_series_dir = get_bigstitcher_tiff_series_output_path(fused_output_path)
-        if (
-            is_bigstitcher_tiff_series_complete(tiff_series_dir, metadata_by_channel)
-            and is_tiff_generation_log_successful(log_dir, tiff_series_dir)
-        ):
-            return True, 'successful BigStitcher log and complete TIFF stack from prior montage extraction'
 
     return False, ''
 
