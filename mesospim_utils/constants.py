@@ -149,7 +149,9 @@ IMARIS_CONVERTER_LOC = Path(IMARIS_CONVERTER_LOC)
 BIGSTITCHER = config.get('bigstitcher')
 
 FIJI_INSTALL_LOCATION = BIGSTITCHER.get('fiji_install_folder')
-if not FIJI_INSTALL_LOCATION:
+if FIJI_INSTALL_LOCATION:
+    FIJI_INSTALL_LOCATION = Path(FIJI_INSTALL_LOCATION)
+else:
     FIJI_INSTALL_LOCATION = Path(__file__).resolve().parent.parent / 'fiji-linux' / 'Fiji.app'
 FIJI_EXECUTABLE = FIJI_INSTALL_LOCATION / "ImageJ-linux64"
 
