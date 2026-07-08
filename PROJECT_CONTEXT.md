@@ -46,6 +46,8 @@
 - While validating this change, a pre-existing invalid nested f-string in `mesospim_utils/imaris.py` was simplified so the touched files now compile under Python 3.12.
 - Follow-up fix after a branch merge: the IMS path now checks TIFF completion before queueing any extraction jobs, the old bulk `extract-tiff-series` fallback was removed from the automated IMS branch, and TIFF success is now based on one explicit log marker per extracted z-plane.
 - TIFF completeness for skip logic now uses the requested `--ims-resolution-level` shape from the source OME-Zarr instead of acquisition tile metadata, so nonzero multiscale levels can skip correctly.
+- Follow-up follow-up: the BigStitcher XML points to an OME-Zarr collection root that contains per-tile child OME-Zarrs, not a root multiscale image. IMS skip/extraction logic now resolves one representative child tile OME-Zarr for pre-fusion multiscale shape and scale-factor reads, while still extracting TIFFs from the fused montage OME-Zarr.
+- Follow-up follow-up follow-up: representative source tiles can be 3D `(z, y, x)` rather than 5D. The OME-Zarr reader now normalizes source-level z-depth and scale extraction across both 3D per-tile and 5D datasets via `get_level_zyx_info()`, and the IMS skip/extraction path uses that normalized information instead of assuming 5D source arrays.
 
 ## Recent Change: BigStitcher Rerun Skip Logic
 

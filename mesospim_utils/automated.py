@@ -28,6 +28,7 @@ from bigstitcher import (does_dir_contain_bigstitcher_metadata,
                          make_bigstitcher_slurm_dir_and_macro,
                          adjust_scale_in_bigstitcher_produced_ome_zarr,
                          get_ome_zarr_directory_from_xml,
+                         get_reference_multiscale_tile_path,
                          get_bigstitcher_fused_output_path,
                          get_bigstitcher_tiff_series_output_path,
                          is_bigstitcher_tiff_series_complete,
@@ -309,8 +310,11 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     username = first_metadata_entry.get('username', "")
     source_omezarr_xml = does_dir_contain_bigstitcher_metadata(dir_loc)
     source_omezarr_dir = get_ome_zarr_directory_from_xml(source_omezarr_xml) if source_omezarr_xml else None
+    reference_tile_omezarr = None
     if fused_file_type.lower() == 'omezarr' and final_file_type.lower() == 'ims' and source_omezarr_dir is None:
         raise FileNotFoundError(f'Could not locate source OME-Zarr directory from BigStitcher metadata in {dir_loc}')
+    if source_omezarr_dir is not None:
+        reference_tile_omezarr = get_reference_multiscale_tile_path(source_omezarr_dir)
 
     skip_bigstitcher, skip_reason = should_skip_bigstitcher_run(
         dir_loc,
@@ -368,13 +372,15 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         tiff_generation_complete = (
             is_bigstitcher_tiff_series_complete(
                 tiff_series_out_dir,
-                source_omezarr_dir,
+                reference_tile_omezarr,
+                num_channels=len(metadata_by_channel),
                 resolution_level=ims_resolution_level,
             )
             and is_tiff_generation_log_successful(
                 slurm_log_dir,
                 tiff_series_out_dir,
-                source_omezarr_dir,
+                reference_tile_omezarr,
+                num_channels=len(metadata_by_channel),
                 resolution_level=ims_resolution_level,
             )
         )
@@ -384,9 +390,10 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
             print(f'Skipping OME-Zarr to TIFF extraction: complete TIFF stack with per-plane success markers already exists at {tiff_series_out_dir}')
         else:
             extraction_job_numbers = queue_omezarr_tiff_extraction_arrays(
-                fused_out_dir_or_file,
-                source_omezarr_dir,
-                tiff_series_out_dir,
+                fused_omezarr_directory=fused_out_dir_or_file,
+                reference_tile_omezarr_directory=reference_tile_omezarr,
+                num_channels=len(metadata_by_channel),
+                output_directory=tiff_series_out_dir,
                 resolution_level=ims_resolution_level,
                 slurm_log_dir=slurm_log_dir,
                 username=username,
@@ -403,22 +410,12 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         res = determine_xyz_resolution(first_entry)  # zyx
         res_z, res_y, res_x = res.z, res.y, res.x
 
-        ome_zarr = OmeZarrV2Multiscale(source_omezarr_dir)
-        level_shape = ome_zarr.get_level_shape(ims_resolution_level)
-        if len(level_shape) != 5:
-            raise ValueError(f'Expected source OME-Zarr level to be 5D, got shape {level_shape}')
-
-        level_array = ome_zarr.open_level_array(ims_resolution_level)
-        if hasattr(level_array, 'attrs'):
-            coordinate_transformations = level_array.attrs.get('coordinateTransformations', [])
-            for transform in coordinate_transformations:
-                if transform.get('type') == 'scale':
-                    scale = transform.get('scale', [])
-                    if len(scale) == 5:
-                        res_z = res_z * scale[2]
-                        res_y = res_y * scale[3]
-                        res_x = res_x * scale[4]
-                    break
+        ome_zarr = OmeZarrV2Multiscale(reference_tile_omezarr)
+        level_info = ome_zarr.get_level_zyx_info(ims_resolution_level)
+        scale_zyx = level_info['scale_zyx']
+        res_z = res_z * scale_zyx[0]
+        res_y = res_y * scale_zyx[1]
+        res_x = res_x * scale_zyx[2]
 
 
         cmd = f'{mesospim_root_application}/imaris.py make-ims-from-tiff-series'
@@ -434,7 +431,8 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
 
 def queue_omezarr_tiff_extraction_arrays(
     fused_omezarr_directory: Path,
-    reference_omezarr_directory: Path,
+    reference_tile_omezarr_directory: Path,
+    num_channels: int,
     output_directory: Path,
     resolution_level: int,
     slurm_log_dir: Path,
@@ -445,16 +443,13 @@ def queue_omezarr_tiff_extraction_arrays(
     from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
 
     fused_omezarr_directory = ensure_path(fused_omezarr_directory)
-    reference_omezarr_directory = ensure_path(reference_omezarr_directory)
+    reference_tile_omezarr_directory = ensure_path(reference_tile_omezarr_directory)
     output_directory = ensure_path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
 
-    ome_zarr = OmeZarrV2Multiscale(reference_omezarr_directory)
-    level_shape = ome_zarr.get_level_shape(resolution_level)
-    if len(level_shape) != 5:
-        raise ValueError(f'Expected a reference OME-Zarr level shaped (t, c, z, y, x), got {level_shape}')
-
-    _, num_channels, z_layers, _, _ = level_shape
+    ome_zarr = OmeZarrV2Multiscale(reference_tile_omezarr_directory)
+    level_info = ome_zarr.get_level_zyx_info(resolution_level)
+    z_layers = level_info['z_layers']
     job_numbers = []
     dependency_job_ids = after_slurm_jobs
 

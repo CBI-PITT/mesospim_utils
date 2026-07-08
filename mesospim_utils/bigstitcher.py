@@ -268,18 +268,15 @@ def is_bigstitcher_log_successful(log_dir: Path, fused_output_path: Path=None) -
     return False
 
 
-def _get_omezarr_level_shape(omezarr_path: Path, resolution_level: int) -> tuple[int, int, int, int, int]:
+def _get_omezarr_level_zyx_info(omezarr_path: Path, resolution_level: int) -> dict[str, Any]:
     from omezarr import OmeZarrV2Multiscale
 
     omezarr_path = ensure_path(omezarr_path)
     multiscale = OmeZarrV2Multiscale(omezarr_path)
-    shape = tuple(multiscale.get_level_shape(resolution_level))
-    if len(shape) != 5:
-        raise ValueError(f'Expected OME-Zarr level shaped (t, c, z, y, x), got {shape}')
-    return shape
+    return multiscale.get_level_zyx_info(resolution_level)
 
 
-def is_tiff_generation_log_successful(log_dir: Path, tiff_series_dir: Path, reference_omezarr_path: Path, resolution_level: int = 0) -> bool:
+def is_tiff_generation_log_successful(log_dir: Path, tiff_series_dir: Path, reference_tile_omezarr_path: Path, num_channels: int, resolution_level: int = 0) -> bool:
     """
     Detect whether per-plane OME-Zarr to TIFF extraction completed successfully.
 
@@ -293,7 +290,7 @@ def is_tiff_generation_log_successful(log_dir: Path, tiff_series_dir: Path, refe
     tiff_series_dir = ensure_path(tiff_series_dir)
     tiff_series_name = tiff_series_dir.name
     explicit_marker = 'OMEZARR_TO_TIFF_SUCCESS:'
-    _, num_channels, z_layers, _, _ = _get_omezarr_level_shape(reference_omezarr_path, resolution_level)
+    z_layers = _get_omezarr_level_zyx_info(reference_tile_omezarr_path, resolution_level)['z_layers']
     expected_markers = {
         (channel, z)
         for channel in range(num_channels)
@@ -376,12 +373,12 @@ def is_bigstitcher_omezarr_montage_valid_and_complete(source_xml_or_dir: Path, f
     )
 
 
-def is_bigstitcher_tiff_series_complete(tiff_series_dir: Path, reference_omezarr_path: Path, resolution_level: int = 0) -> bool:
+def is_bigstitcher_tiff_series_complete(tiff_series_dir: Path, reference_tile_omezarr_path: Path, num_channels: int, resolution_level: int = 0) -> bool:
     tiff_series_dir = ensure_path(tiff_series_dir)
     if not tiff_series_dir.is_dir():
         return False
 
-    _, num_channels, z_layers, _, _ = _get_omezarr_level_shape(reference_omezarr_path, resolution_level)
+    z_layers = _get_omezarr_level_zyx_info(reference_tile_omezarr_path, resolution_level)['z_layers']
     expected_tiff_count = num_channels * z_layers
     tiff_files = sorted(tiff_series_dir.glob('*.tif')) + sorted(tiff_series_dir.glob('*.tiff'))
     if len(tiff_files) != expected_tiff_count:
@@ -468,6 +465,27 @@ def list_mesospim_ome_zarr_tile_dirs(path_to_mesospim_omezarr:Path):
     tile_dir_list = path_to_mesospim_omezarr.glob('*')
     tile_dir_list = [p for p in tile_dir_list if p.is_dir()]
     return tile_dir_list
+
+
+def get_reference_multiscale_tile_path(path_to_mesospim_omezarr: Path) -> Path:
+    """
+    Return a representative child tile OME-Zarr that contains multiscales.
+
+    The collection root referenced by the BigStitcher XML is a container of per-tile
+    OME-Zarr datasets, not usually a multiscale image itself.
+    """
+    from omezarr import validate_ome_zarr_multiscale
+
+    path_to_mesospim_omezarr = ensure_path(path_to_mesospim_omezarr)
+    tile_dir_list = sorted(list_mesospim_ome_zarr_tile_dirs(path_to_mesospim_omezarr))
+
+    for tile_dir in tile_dir_list:
+        if validate_ome_zarr_multiscale(tile_dir):
+            return tile_dir
+
+    raise FileNotFoundError(
+        f'No child multiscale OME-Zarr tile was found in collection root {path_to_mesospim_omezarr}'
+    )
 
 def list_mesospim_ome_zarr_zattrs(path_to_mesospim_omezarr:Path):
     '''
