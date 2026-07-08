@@ -31,6 +31,7 @@ from bigstitcher import (does_dir_contain_bigstitcher_metadata,
                          get_reference_multiscale_tile_path,
                          get_bigstitcher_fused_output_path,
                          get_bigstitcher_tiff_series_output_path,
+                         get_missing_tiff_planes_by_channel,
                          is_bigstitcher_tiff_series_complete,
                          is_tiff_generation_log_successful,
                          should_skip_bigstitcher_run)
@@ -369,23 +370,15 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         fused_out_dir_or_file = ensure_path(fused_out_dir_or_file)
         tiff_series_dir_name = str(fused_out_dir_or_file.name[:-9]) + '_tiffstack'
         tiff_series_out_dir = fused_out_dir_or_file.parent / tiff_series_dir_name
-        tiff_generation_complete = (
-            is_bigstitcher_tiff_series_complete(
-                tiff_series_out_dir,
-                reference_tile_omezarr,
-                num_channels=len(metadata_by_channel),
-                resolution_level=ims_resolution_level,
-            )
-            and is_tiff_generation_log_successful(
-                slurm_log_dir,
-                tiff_series_out_dir,
-                reference_tile_omezarr,
-                num_channels=len(metadata_by_channel),
-                resolution_level=ims_resolution_level,
-            )
+        missing_tiff_planes_by_channel = get_missing_tiff_planes_by_channel(
+            slurm_log_dir,
+            tiff_series_out_dir,
+            reference_tile_omezarr,
+            num_channels=len(metadata_by_channel),
+            resolution_level=ims_resolution_level,
         )
 
-        if tiff_generation_complete:
+        if not missing_tiff_planes_by_channel:
             extraction_job_numbers = []
             print(f'Skipping OME-Zarr to TIFF extraction: complete TIFF stack with per-plane success markers already exists at {tiff_series_out_dir}')
         else:
@@ -398,11 +391,13 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
                 slurm_log_dir=slurm_log_dir,
                 username=username,
                 after_slurm_jobs=[job_number] if job_number else None,
+                missing_z_by_channel=missing_tiff_planes_by_channel,
                 prefix='composite',
             )
             if extraction_job_numbers:
                 job_number = extraction_job_numbers[-1]
-            print(f'Convert OME-Zarr to Tiff Stack: {extraction_job_numbers}')
+            total_missing_tiff_planes = sum(len(z_values) for z_values in missing_tiff_planes_by_channel.values())
+            print(f'Convert OME-Zarr to Tiff Stack: {extraction_job_numbers} ({total_missing_tiff_planes} missing planes across {len(missing_tiff_planes_by_channel)} channels)')
 
         # Make ims from tiffseries
         metadata = collect_all_metadata(dir_loc)
@@ -438,6 +433,7 @@ def queue_omezarr_tiff_extraction_arrays(
     slurm_log_dir: Path,
     username: str = '',
     after_slurm_jobs: list[int] = None,
+    missing_z_by_channel: dict[int, list[int]] = None,
     prefix: str = 'composite',
 ):
     from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
@@ -455,7 +451,8 @@ def queue_omezarr_tiff_extraction_arrays(
 
     for channel in range(num_channels):
         commands = []
-        for z in range(z_layers):
+        z_values = missing_z_by_channel.get(channel, []) if missing_z_by_channel is not None else range(z_layers)
+        for z in z_values:
             cmd = f'{mesospim_root_application}/omezarr.py extract-single-tiff-plane'
             cmd += f' "{fused_omezarr_directory}" "{output_directory}"'
             cmd += f' --resolution-level {resolution_level}'

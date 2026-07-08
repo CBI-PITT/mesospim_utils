@@ -276,32 +276,27 @@ def _get_omezarr_level_zyx_info(omezarr_path: Path, resolution_level: int) -> di
     return multiscale.get_level_zyx_info(resolution_level)
 
 
-def is_tiff_generation_log_successful(log_dir: Path, tiff_series_dir: Path, reference_tile_omezarr_path: Path, num_channels: int, resolution_level: int = 0) -> bool:
-    """
-    Detect whether per-plane OME-Zarr to TIFF extraction completed successfully.
-
-    Success requires one explicit log marker for every expected `(channel, z)`
-    plane at the requested multiscale level.
-    """
-    log_dir = ensure_path(log_dir)
-    if not log_dir.exists():
-        return False
-
-    tiff_series_dir = ensure_path(tiff_series_dir)
-    tiff_series_name = tiff_series_dir.name
-    explicit_marker = 'OMEZARR_TO_TIFF_SUCCESS:'
+def _get_expected_tiff_plane_pairs(reference_tile_omezarr_path: Path, num_channels: int, resolution_level: int) -> set[tuple[int, int]]:
     z_layers = _get_omezarr_level_zyx_info(reference_tile_omezarr_path, resolution_level)['z_layers']
-    expected_markers = {
+    return {
         (channel, z)
         for channel in range(num_channels)
         for z in range(z_layers)
     }
-    seen_markers = set()
+
+
+def _get_logged_tiff_success_pairs(log_dir: Path, tiff_series_name: str, resolution_level: int) -> set[tuple[int, int]]:
+    log_dir = ensure_path(log_dir)
+    if not log_dir.exists():
+        return set()
+
+    explicit_marker = 'OMEZARR_TO_TIFF_SUCCESS:'
     marker_pattern = re.compile(
         rf'{explicit_marker}\s+{re.escape(tiff_series_name)}\s+'
         rf'r(?P<resolution>\d+)\s+c(?P<channel>\d+)\s+z(?P<z>\d+)',
         re.IGNORECASE,
     )
+    seen_markers = set()
 
     for log_file in sorted(log_dir.glob('*_omezarr_to_tiff_stack_c*.log')):
         try:
@@ -314,6 +309,67 @@ def is_tiff_generation_log_successful(log_dir: Path, tiff_series_dir: Path, refe
                 continue
             seen_markers.add((int(match.group('channel')), int(match.group('z'))))
 
+    return seen_markers
+
+
+def get_completed_tiff_planes(log_dir: Path, tiff_series_dir: Path, resolution_level: int = 0) -> set[tuple[int, int]]:
+    tiff_series_dir = ensure_path(tiff_series_dir)
+    if not tiff_series_dir.is_dir():
+        return set()
+
+    successful_log_pairs = _get_logged_tiff_success_pairs(log_dir, tiff_series_dir.name, resolution_level)
+    completed_pairs = set()
+    tiff_files = sorted(tiff_series_dir.glob('*.tif')) + sorted(tiff_series_dir.glob('*.tiff'))
+    file_name_pattern = re.compile(
+        r'_r(?P<resolution>\d+)_t\d+_c(?P<channel>\d+)_z(?P<z>\d+)\.tif{1,2}$',
+        re.IGNORECASE,
+    )
+
+    for tiff_file in tiff_files:
+        if not tiff_file.is_file() or tiff_file.stat().st_size <= 0:
+            continue
+
+        match = file_name_pattern.search(tiff_file.name)
+        if not match:
+            continue
+        if int(match.group('resolution')) != resolution_level:
+            continue
+
+        pair = (int(match.group('channel')), int(match.group('z')))
+        if pair in successful_log_pairs:
+            completed_pairs.add(pair)
+
+    return completed_pairs
+
+
+def get_missing_tiff_planes_by_channel(log_dir: Path, tiff_series_dir: Path, reference_tile_omezarr_path: Path, num_channels: int, resolution_level: int = 0) -> dict[int, list[int]]:
+    expected_pairs = _get_expected_tiff_plane_pairs(reference_tile_omezarr_path, num_channels, resolution_level)
+    completed_pairs = get_completed_tiff_planes(log_dir, tiff_series_dir, resolution_level=resolution_level)
+    missing_pairs = expected_pairs - completed_pairs
+
+    missing_by_channel = {}
+    for channel in range(num_channels):
+        missing_z = sorted(z for current_channel, z in missing_pairs if current_channel == channel)
+        if missing_z:
+            missing_by_channel[channel] = missing_z
+
+    return missing_by_channel
+
+
+def is_tiff_generation_log_successful(log_dir: Path, tiff_series_dir: Path, reference_tile_omezarr_path: Path, num_channels: int, resolution_level: int = 0) -> bool:
+    """
+    Detect whether per-plane OME-Zarr to TIFF extraction completed successfully.
+
+    Success requires one explicit log marker for every expected `(channel, z)`
+    plane at the requested multiscale level.
+    """
+    log_dir = ensure_path(log_dir)
+    if not log_dir.exists():
+        return False
+
+    tiff_series_dir = ensure_path(tiff_series_dir)
+    expected_markers = _get_expected_tiff_plane_pairs(reference_tile_omezarr_path, num_channels, resolution_level)
+    seen_markers = _get_logged_tiff_success_pairs(log_dir, tiff_series_dir.name, resolution_level)
     return seen_markers == expected_markers
 
 
