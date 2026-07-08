@@ -385,9 +385,10 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
         return
 
     ## Wrap all commands in a bash array 'commands' and call each element as a separate job in the SLURM array
-    commands = 'commands=('
+    commands = 'commands=(' 
     for ii in cmd:
-        commands = f'{commands}\n\t"{ii.replace("\n\n",";").replace("\n",";").replace("\"","\\\"")}' # Strip new lines and make single line commands
+        escaped_command = ii.replace('\n\n', ';').replace('\n', ';').replace('"', '\\"')
+        commands = f'{commands}\n\t"{escaped_command}' # Strip new lines and make single line commands
         commands = commands.replace('then;','then').replace('else;','else') # Ensure no ; after then or else
         commands += '"'
         # commands = commands.replace('"', '\\"')
@@ -465,18 +466,20 @@ def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, arra
     assert (log_file or log_dir or log_parent_exists), 'Log location does not exist'
 
     # Format log output file/dir
+    log_prefix_str = f'{log_prefix}_' if log_prefix else ''
+    log_suffix_str = f'_{log_suffix}' if log_suffix else ''
     if array and log_dir:
-        log_location = log_location / f'{log_prefix + '_' if log_prefix else ""}%A_%a{'_' + log_suffix if log_suffix else ""}.log'
+        log_location = log_location / f'{log_prefix_str}%A_%a{log_suffix_str}.log'
     elif array and log_file:
-        log_location = log_location.parent / f'{log_prefix + '_' if log_prefix else ""}%A_%a{'_' + log_suffix if log_suffix else ""}.log'
+        log_location = log_location.parent / f'{log_prefix_str}%A_%a{log_suffix_str}.log'
     elif array and log_parent_exists:
-        log_location = log_location.parent / f'{log_prefix + '_' if log_prefix else ""}%A_%a{'_' + log_suffix if log_suffix else ""}.log'
+        log_location = log_location.parent / f'{log_prefix_str}%A_%a{log_suffix_str}.log'
     elif not array and log_dir:
-        log_location = log_location / f'{log_prefix + '_' if log_prefix else ""}%A{'_' + log_suffix if log_suffix else ""}.log'
+        log_location = log_location / f'{log_prefix_str}%A{log_suffix_str}.log'
     elif not array and log_file:
         pass
     elif not array and log_parent_exists:
-        log_location = log_location.parent / f'{log_prefix + '_' if log_prefix else ""}%A{'_' + log_suffix if log_suffix else ""}.log'
+        log_location = log_location.parent / f'{log_prefix_str}%A{log_suffix_str}.log'
 
     # Extract required parameters into simple names
     PARTITION = PARAMS.get('PARTITION')
@@ -521,12 +524,8 @@ def sbatch_depends(sbatch_script, list_of_job_ids:list[int]=None):
     ## For spinning off on slurm
     depends_statement = ''
     if isinstance(list_of_job_ids, list):
-        for idx, job in enumerate(list_of_job_ids):
-            if idx == 0:
-                depends_statement = f' --depend=afterok:{job} --kill-on-invalid-dep=yes '
-            else:
-                depends_statement += f':{job}'
-    depends_statement += ' '
+        job_ids = ':'.join(str(job) for job in list_of_job_ids)
+        depends_statement = f' --depend=afterok:{job_ids} --kill-on-invalid-dep=yes '
 
     return f'sbatch{depends_statement}{sbatch_script[7:]}'
 

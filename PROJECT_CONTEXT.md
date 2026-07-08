@@ -48,6 +48,8 @@
 - TIFF completeness for skip logic now uses the requested `--ims-resolution-level` shape from the source OME-Zarr instead of acquisition tile metadata, so nonzero multiscale levels can skip correctly.
 - Follow-up follow-up: the BigStitcher XML points to an OME-Zarr collection root that contains per-tile child OME-Zarrs, not a root multiscale image. IMS skip/extraction logic now resolves one representative child tile OME-Zarr for pre-fusion multiscale shape and scale-factor reads, while still extracting TIFFs from the fused montage OME-Zarr.
 - Follow-up follow-up follow-up: representative source tiles can be 3D `(z, y, x)` rather than 5D. The OME-Zarr reader now normalizes source-level z-depth and scale extraction across both 3D per-tile and 5D datasets via `get_level_zyx_info()`, and the IMS skip/extraction path uses that normalized information instead of assuming 5D source arrays.
+- Follow-up follow-up follow-up follow-up: the IMS TIFF extraction path now reuses previously extracted planes on a per-plane basis. A plane is treated as complete only when the TIFF exists, has nonzero size, and has a matching `OMEZARR_TO_TIFF_SUCCESS:` log marker. When the TIFF stack is partial, the pipeline now submits compact SLURM arrays containing only the missing z-plane extraction commands for each affected channel instead of requeueing every plane.
+- Follow-up follow-up follow-up follow-up follow-up: the downstream TIFF-to-IMS dependency path exposed a pre-existing bug in `slurm.py::sbatch_depends()` where multiple `afterok` job IDs were formatted as `--depend=afterok:job1 --kill-on-invalid-dep=yes :job2`, which `sbatch` rejects. This is now fixed to emit one valid colon-joined dependency list. While validating that fix, two additional pre-existing Python 3.12 parser issues in `slurm.py` were also normalized: command escaping in `submit_array()` and log filename formatting in `format_sbatch_wrap()`.
 
 ## Recent Change: BigStitcher Rerun Skip Logic
 
@@ -123,6 +125,8 @@
 - For the IMS export change, `python3.12 -m py_compile mesospim_utils/automated.py mesospim_utils/omezarr.py mesospim_utils/imaris.py` succeeded in this environment.
 - CLI help still could not be exercised here because runtime packages such as `typer` are not installed in the available Python 3.12 environment.
 - The new BigStitcher skip logic was syntax-checked here with `python3 -m py_compile`, but still needs runtime verification against real SLURM logs and a real `_tiffstack` directory.
+- The partial IMS TIFF-resume change was syntax-checked here with `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py mesospim_utils/bigstitcher.py`, but still needs runtime verification against a partially populated `_tiffstack` plus real SLURM logs.
+- The SLURM dependency/log-format follow-up was syntax-checked here with `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/slurm.py`.
 
 ## Open Questions
 
