@@ -111,6 +111,16 @@
 - This was changed to avoid failures where `/tmp` filled up even though the final destination filesystem had enough free space.
 - Tradeoff: the current implementation re-fits BaSiCPy for each target tile, so it should use less temporary disk but may be slower than the prior batch-worker design.
 
+## Recent Change: BaSiCPy Fit Tile Uses Weighted Center And Low-Res Size Score
+
+- Updated `mesospim_utils/preprocess.py` so the default BaSiCPy fit tile for tile OME-Zarr collections is no longer always the middle of the field of view.
+- When `--fit-tile` is not passed, preprocess now inspects each tile's lowest-resolution multiscale dataset using the last dataset entry from tile `multiscales` metadata.
+- If that lowest-resolution dataset is compressed, preprocess computes the on-disk size of that dataset directory only, using a recursive `os.scandir(...)` size walk.
+- It then assigns each tile a weighted score of `0.6 * center_proximity + 0.4 * normalized_low_res_size` and chooses the tile with the highest total score.
+- This applies both to native `.ome.zarr` inputs and to `.btf` datasets that were converted to tile OME-Zarr before preprocessing.
+- If compression is not enabled for the lowest-resolution dataset, preprocess falls back to the previous middle-of-field-of-view fit-tile behavior.
+- The `basicpy-apply --help` text was updated to describe the new default fit-tile rule.
+
 ## Active Debugging Note: BigStitcher OOM During Fusion
 
 - Observed failure mode: SLURM OOM kill during BigStitcher jobs launched from `automated_method_slurm()` through the BigStitcher alignment path.
@@ -171,6 +181,9 @@
 - Validation on `/CBI_FastStore/test_data/mesospim/omezarr/eye/Mag4x_Ch488_Ch405.ome.zarr` now reports preprocess groups `[('405', 'Dapi'), ('488', '525/50 (GFP)')]` even though the tile directory names do not include filter tokens.
 - Validation on `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr` still reports the expected modern groups `[('488', 'GFP'), ('561', 'RFP')]`.
 - Validation on `/CBI_FastStore/test_data/mesospim/omezarr/012926_omezarr_exosomes_2/exosomes_test2_Mag16x_Ch488_Ch561.ome.zarr` now reports preprocess groups `[('488', '525/50 (GFP)'), ('561', '595/44 (RFP)')]` and correctly recognizes tile names containing `Flt525_50_(GFP)` / `Flt595_44_(RFP)`.
+- `python -m py_compile mesospim_utils/preprocess.py mesospim_utils/basicpy_worker.py` succeeded after the BaSiCPy fit-tile selection change.
+- `python mesospim_utils/preprocess.py --help` succeeded after the BaSiCPy fit-tile selection change.
+- `python mesospim_utils/automated.py automated-method-slurm --help` could not be re-run in this environment during this session because `typer` is not installed in the current local Python.
 
 ## Open Questions
 

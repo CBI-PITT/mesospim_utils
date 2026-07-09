@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+import os
 from pathlib import Path
 import re
 import shutil
@@ -121,7 +122,7 @@ def discover_channel_filter_combinations_from_metadata(metadata_by_channel):
     return sorted(combinations)
 
 
-def choose_fit_tile(tile_records, requested_fit_tile, default_fit_tile):
+def choose_fit_tile(tile_records, requested_fit_tile, default_fit_tile, rows, cols):
     if requested_fit_tile is not None:
         if requested_fit_tile not in tile_records:
             raise RuntimeError(
@@ -131,18 +132,155 @@ def choose_fit_tile(tile_records, requested_fit_tile, default_fit_tile):
             )
         return requested_fit_tile
 
+    compressed_fit_tile = choose_scored_lowres_compressed_tile(
+        tile_records,
+        rows=rows,
+        cols=cols,
+    )
+    if compressed_fit_tile is not None:
+        return compressed_fit_tile
+
     if default_fit_tile in tile_records:
+        print(
+            f'Compression is not enabled for the lowest multiscale level. '
+            f'Using default fit tile {default_fit_tile}.'
+        )
         return default_fit_tile
 
     available = sorted(tile_records)
     fallback = available[len(available) // 2]
 
     print(
-        f'Default fit tile {default_fit_tile} is missing. '
+        f'Compression is not enabled for the lowest multiscale level and '
+        f'default fit tile {default_fit_tile} is missing. '
         f'Using available tile {fallback} instead.'
     )
 
     return fallback
+
+
+def get_folder_size(folder_path):
+    total_size = 0
+
+    try:
+        for entry in os.scandir(folder_path):
+            if entry.is_file(follow_symlinks=False):
+                total_size += entry.stat(follow_symlinks=False).st_size
+            elif entry.is_dir(follow_symlinks=False):
+                total_size += get_folder_size(entry.path)
+    except PermissionError:
+        pass
+
+    return total_size
+
+
+def get_lowest_resolution_dataset_path(tile_path: Path) -> str:
+    tile_path = ensure_path(tile_path)
+    tile_root = zarr.open_group(str(tile_path), mode='r', zarr_version=2)
+    multiscales = tile_root.attrs.get('multiscales')
+
+    if not multiscales:
+        raise RuntimeError(f'No multiscales metadata found in tile {tile_path}')
+
+    datasets = multiscales[0].get('datasets', [])
+    if len(datasets) == 0:
+        raise RuntimeError(f'No multiscale datasets found in tile {tile_path}')
+
+    dataset_path = datasets[-1].get('path')
+    if not dataset_path:
+        raise RuntimeError(f'Lowest multiscale dataset path is missing in tile {tile_path}')
+
+    return str(dataset_path)
+
+
+def is_lowest_resolution_dataset_compressed(tile_path: Path, dataset_path: str) -> bool:
+    tile_path = ensure_path(tile_path)
+    tile_root = zarr.open_group(str(tile_path), mode='r', zarr_version=2)
+    dataset = tile_root[dataset_path]
+    return getattr(dataset, 'compressor', None) is not None
+
+
+def center_proximity_score(tile: int, rows: int, cols: int) -> float:
+    row = tile % rows
+    col = tile // rows
+
+    center_row = (rows - 1) / 2.0
+    center_col = (cols - 1) / 2.0
+    distance = ((row - center_row) ** 2 + (col - center_col) ** 2) ** 0.5
+
+    max_distance = (center_row ** 2 + center_col ** 2) ** 0.5
+    if max_distance == 0:
+        return 1.0
+
+    return 1.0 - (distance / max_distance)
+
+
+def normalize_scores(values_by_tile):
+    values = list(values_by_tile.values())
+    min_value = min(values)
+    max_value = max(values)
+
+    if max_value == min_value:
+        return {tile: 1.0 for tile in values_by_tile}
+
+    return {
+        tile: (value - min_value) / (max_value - min_value)
+        for tile, value in values_by_tile.items()
+    }
+
+
+def choose_scored_lowres_compressed_tile(tile_records, rows: int, cols: int):
+    dataset_sizes = {}
+
+    for tile in sorted(tile_records):
+        record = tile_records[tile]
+        dataset_path = get_lowest_resolution_dataset_path(record['path'])
+
+        if not is_lowest_resolution_dataset_compressed(record['path'], dataset_path):
+            return None
+
+        dataset_dir = record['path'] / dataset_path
+        dataset_sizes[tile] = get_folder_size(dataset_dir)
+        print(f'Lowest-resolution dataset size for tile {tile}: {dataset_sizes[tile]} bytes')
+
+    size_scores = normalize_scores(dataset_sizes)
+    center_scores = {
+        tile: center_proximity_score(tile, rows=rows, cols=cols)
+        for tile in tile_records
+    }
+
+    best_tile = None
+    best_score = None
+    best_center_score = None
+
+    for tile in sorted(tile_records):
+        center_score = center_scores[tile]
+        size_score = size_scores[tile]
+        total_score = (0.6 * center_score) + (0.4 * size_score)
+        print(
+            f'Fit-tile score for tile {tile}: '
+            f'center={center_score:.3f} size={size_score:.3f} total={total_score:.3f}'
+        )
+
+        if (
+            best_score is None
+            or total_score > best_score
+            or (
+                total_score == best_score
+                and center_score > best_center_score
+            )
+        ):
+            best_tile = tile
+            best_score = total_score
+            best_center_score = center_score
+
+    if best_tile is not None:
+        print(
+            f'Using tile {best_tile} for BaSiCPy fit based on weighted '
+            f'center/size score ({best_score:.3f}; weights center=0.6 size=0.4).'
+        )
+
+    return best_tile
 
 
 def robust_overlap_ratio(
@@ -431,7 +569,7 @@ def process_basicpy_group(
     tile_records = records_by_combo[combo]
     validate_tile_set(tile_records, rows, cols, channel, filter_name)
 
-    fit_tile = choose_fit_tile(tile_records, fit_tile, default_fit_tile)
+    fit_tile = choose_fit_tile(tile_records, fit_tile, default_fit_tile, rows, cols)
     print("=============== fit tile =============", fit_tile)
 
     prepare_output_collection(input_collection, output_collection)
@@ -635,7 +773,7 @@ def build_parser():
     basicpy_parser.add_argument('--output', '-o', required=True, type=Path, help='Output folder for corrected tile .ome.zarr directories.')
     basicpy_parser.add_argument('--channel', required=True, help='Channel name to process.')
     basicpy_parser.add_argument('--filter', dest='filter_name', required=True, help='Filter name to process.')
-    basicpy_parser.add_argument('--fit-tile', type=int, default=None, help='Tile index to fit BaSiCPy on. Defaults to the center-ish tile from metadata grid size.')
+    basicpy_parser.add_argument('--fit-tile', type=int, default=None, help='Tile index to fit BaSiCPy on. Defaults to a weighted center/size score on the compressed lowest-resolution dataset directory, or the center-ish tile if compression is not used.')
     basicpy_parser.add_argument('--device', default='cuda', choices=['cpu', 'cuda'], help='BaSiCPy device.')
     basicpy_parser.add_argument('--fitting-mode', default='approximate', choices=['approximate', 'ladmap'], help='BaSiCPy fitting mode.')
     basicpy_parser.add_argument('--overwrite', action='store_true', help='Overwrite existing output tile directories.')
