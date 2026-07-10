@@ -403,7 +403,13 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
     # commands += 'bash -lc "$cmd"'
 
     location_for_sbatch_script = ensure_path(location_for_sbatch_script)
-    name_of_sbatch_script = location_for_sbatch_script / 'sbatch.sh'
+    script_name_parts = ['sbatch']
+    if log_prefix:
+        script_name_parts.append(log_prefix)
+    if log_suffix:
+        script_name_parts.append(log_suffix)
+    script_name = '_'.join(script_name_parts) + '.sh'
+    name_of_sbatch_script = location_for_sbatch_script / script_name
     with open(name_of_sbatch_script, 'w') as f:
         f.write(commands)
     os.chmod(name_of_sbatch_script, 0o770)
