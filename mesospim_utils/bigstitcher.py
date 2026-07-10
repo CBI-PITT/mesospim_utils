@@ -246,7 +246,7 @@ def is_bigstitcher_log_successful(log_dir: Path, fused_output_path: Path=None) -
 
     fused_output_name = ensure_path(fused_output_path).name if fused_output_path else None
     explicit_marker = 'BIGSTITCHER_SUCCESS:'
-    failure_pattern = re.compile(r'(exception|outofmemory|killed|cancelled|terminated|traceback|failed)', re.IGNORECASE)
+    failure_pattern = re.compile(r'(outofmemory|killed|cancelled|terminated|traceback|failed)', re.IGNORECASE)
 
     for log_file in sorted(log_dir.glob('*_align_fuse_bigstitcher.log')):
         try:
@@ -422,7 +422,8 @@ def is_bigstitcher_omezarr_montage_valid_and_complete(source_xml_or_dir: Path, f
     fused_omezarr_path = ensure_path(fused_omezarr_path)
     if not fused_omezarr_path.is_dir():
         return False
-
+    print("=========================validate_ome_zarr_multiscale", validate_ome_zarr_multiscale(fused_omezarr_path))
+    print("=========================is_bigstitcher_omezarr_scale_metadata_complete", is_bigstitcher_omezarr_scale_metadata_complete(source_xml_or_dir, fused_omezarr_path))
     return (
         validate_ome_zarr_multiscale(fused_omezarr_path)
         and is_bigstitcher_omezarr_scale_metadata_complete(source_xml_or_dir, fused_omezarr_path)
@@ -472,6 +473,7 @@ def should_skip_bigstitcher_run(dir_loc: Path, fused_file_type: str, final_file_
 
     fused_output_path = get_bigstitcher_fused_output_path(dir_loc, format=fused_file_type)
     has_successful_log = is_bigstitcher_log_successful(log_dir, fused_output_path=fused_output_path)
+    print("==================has_successful_log", has_successful_log)
     if not has_successful_log:
         return False, ''
 

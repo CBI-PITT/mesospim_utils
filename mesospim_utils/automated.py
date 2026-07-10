@@ -435,6 +435,7 @@ def queue_omezarr_tiff_extraction_arrays(
     after_slurm_jobs: list[int] = None,
     missing_z_by_channel: dict[int, list[int]] = None,
     prefix: str = 'composite',
+    batch_size: int = 10,
 ):
     from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
 
@@ -452,14 +453,16 @@ def queue_omezarr_tiff_extraction_arrays(
     for channel in range(num_channels):
         commands = []
         z_values = missing_z_by_channel.get(channel, []) if missing_z_by_channel is not None else range(z_layers)
-        for z in z_values:
-            cmd = f'{mesospim_root_application}/omezarr.py extract-single-tiff-plane'
+        batch_starts = sorted({(int(z) // batch_size) * batch_size for z in z_values})
+
+        for start_z in batch_starts:
+            cmd = f'{mesospim_root_application}/omezarr.py extract-tiff-plane-batch'
             cmd += f' "{fused_omezarr_directory}" "{output_directory}"'
             cmd += f' --resolution-level {resolution_level}'
             cmd += f' --channel {channel}'
-            cmd += f' --z {z}'
+            cmd += f' --start-z {start_z}'
+            cmd += f' --batch-size {batch_size}'
             cmd += f' --prefix {prefix}'
-            cmd += f' && printf "OMEZARR_TO_TIFF_SUCCESS: {output_directory.name} r{resolution_level:02d} c{channel:02d} z{z:04d}\\n"'
             commands.append(cmd)
 
         if not commands:
