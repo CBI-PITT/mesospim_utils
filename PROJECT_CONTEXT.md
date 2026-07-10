@@ -117,6 +117,7 @@
 - When `--fit-tile` is not passed, preprocess now inspects each tile's lowest-resolution multiscale dataset using the last dataset entry from tile `multiscales` metadata.
 - If that lowest-resolution dataset is compressed, preprocess computes the on-disk size of that dataset directory only, using a recursive `os.scandir(...)` size walk.
 - It then assigns each tile a weighted score of `0.6 * center_proximity + 0.4 * normalized_low_res_size` and chooses the tile with the highest total score.
+- `center_proximity` now uses a squared-distance falloff, `1 - (distance / max_distance) ** 2`, so near-center tiles are penalized less sharply than the earlier linear distance score.
 - This applies both to native `.ome.zarr` inputs and to `.btf` datasets that were converted to tile OME-Zarr before preprocessing.
 - If compression is not enabled for the lowest-resolution dataset, preprocess falls back to the previous middle-of-field-of-view fit-tile behavior.
 - The `basicpy-apply --help` text was updated to describe the new default fit-tile rule.

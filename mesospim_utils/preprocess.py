@@ -212,7 +212,7 @@ def center_proximity_score(tile: int, rows: int, cols: int) -> float:
     if max_distance == 0:
         return 1.0
 
-    return 1.0 - (distance / max_distance)
+    return 1.0 - ((distance / max_distance) ** 2)
 
 
 def normalize_scores(values_by_tile):
