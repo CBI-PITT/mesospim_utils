@@ -10,6 +10,7 @@ import typer
 import zarr
 import dask.array as da
 import numpy as np
+import tifffile
 
 from ome_zarr_multiscale_writer.write import write_ome_zarr_multiscale
 from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
@@ -269,6 +270,42 @@ class OmeZarrV2Multiscale:
             raise TypeError(f"Object at path '{path}' is not a Zarr array.")
         return arr
 
+    def get_level_shape(self, level: int = 0) -> Tuple[int, ...]:
+        return tuple(self.open_level_array(level).shape)
+
+    def get_level_scale(self, level: int = 0) -> Tuple[float, ...]:
+        dataset = self._datasets[level]
+        for transform in dataset.get('coordinateTransformations', []):
+            if transform.get('type') == 'scale':
+                return tuple(transform.get('scale', []))
+
+        level_array = self.open_level_array(level)
+        if hasattr(level_array, 'attrs'):
+            for transform in level_array.attrs.get('coordinateTransformations', []):
+                if transform.get('type') == 'scale':
+                    return tuple(transform.get('scale', []))
+
+        return tuple()
+
+    def get_level_zyx_info(self, level: int = 0) -> dict[str, Tuple[int, ...] | int | Tuple[float, float, float]]:
+        shape = self.get_level_shape(level)
+        scale = self.get_level_scale(level)
+
+        if len(shape) == 3:
+            z_layers = int(shape[0])
+            scale_zyx = tuple(scale[:3]) if len(scale) >= 3 else (1.0, 1.0, 1.0)
+        elif len(shape) == 5:
+            z_layers = int(shape[2])
+            scale_zyx = tuple(scale[2:5]) if len(scale) >= 5 else (1.0, 1.0, 1.0)
+        else:
+            raise ValueError(f'Expected OME-Zarr level shape to be 3D or 5D, got {shape}')
+
+        return {
+            'shape': shape,
+            'z_layers': z_layers,
+            'scale_zyx': scale_zyx,
+        }
+
     # ------------------------------------------------------------------
     # Chunked view + Dask
     # ------------------------------------------------------------------
@@ -343,6 +380,86 @@ def extract_tiff_series(ome_zarr_directory: Path, output_directory: Path, prefix
         prefix = ome_zarr_directory.name[:-9] # Strip .ome.zarr
     ome_zarr = OmeZarrArray(ome_zarr_directory)
     ome_zarr.to_tiff_stack(output_directory, basename=prefix)
+    return
+
+@app.command()
+def extract_single_tiff_plane(
+    ome_zarr_directory: Path,
+    output_directory: Path,
+    resolution_level: int = 0,
+    channel: int = 0,
+    z: int = 0,
+    prefix: str = None,
+) -> None:
+    ome_zarr_directory = Path(ome_zarr_directory)
+    output_directory = Path(output_directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    if not prefix:
+        prefix = ome_zarr_directory.name[:-9] # Strip .ome.zarr
+
+    ome_zarr = OmeZarrV2Multiscale(ome_zarr_directory)
+    level_array = ome_zarr.open_level_array(resolution_level)
+
+    if len(level_array.shape) != 5:
+        raise ValueError(
+            f"Expected a 5D OME-Zarr array shaped (t, c, z, y, x), got {level_array.shape}"
+        )
+
+    plane = da.array(level_array)[0, channel, z, :, :].compute()
+    out_file = output_directory / (
+        f'{prefix}_r{resolution_level:02d}_t00_c{channel:02d}_z{z:04d}.tif'
+    )
+    tifffile.imwrite(out_file, plane)
+    return
+
+
+@app.command()
+def extract_tiff_plane_batch(
+    ome_zarr_directory: Path,
+    output_directory: Path,
+    resolution_level: int = 0,
+    channel: int = 0,
+    start_z: int = 0,
+    batch_size: int = 10,
+    prefix: str = None,
+) -> None:
+    ome_zarr_directory = Path(ome_zarr_directory)
+    output_directory = Path(output_directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
+
+    if not prefix:
+        prefix = ome_zarr_directory.name[:-9] # Strip .ome.zarr
+
+    ome_zarr = OmeZarrV2Multiscale(ome_zarr_directory)
+    level_array = ome_zarr.open_level_array(resolution_level)
+
+    if len(level_array.shape) != 5:
+        raise ValueError(
+            f"Expected a 5D OME-Zarr array shaped (t, c, z, y, x), got {level_array.shape}"
+        )
+
+    z_layers = level_array.shape[2]
+    if start_z < 0 or start_z >= z_layers:
+        raise ValueError(f"start_z {start_z} is out of range for {z_layers} z-layers")
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be positive, got {batch_size}")
+
+    stop_z = min(start_z + batch_size, z_layers)
+    planes = da.array(level_array)[0, channel, start_z:stop_z, :, :].compute()
+
+    for z_offset, plane in enumerate(planes):
+        z = start_z + z_offset
+        out_file = output_directory / (
+            f'{prefix}_r{resolution_level:02d}_t00_c{channel:02d}_z{z:04d}.tif'
+        )
+        if out_file.exists() and out_file.stat().st_size > 0:
+            print(f'OMEZARR_TO_TIFF_SUCCESS: {output_directory.name} r{resolution_level:02d} c{channel:02d} z{z:04d}')
+            continue
+
+        tifffile.imwrite(out_file, plane)
+        print(f'OMEZARR_TO_TIFF_SUCCESS: {output_directory.name} r{resolution_level:02d} c{channel:02d} z{z:04d}')
+
     return
 
 @app.command()
