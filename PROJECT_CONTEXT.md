@@ -119,6 +119,12 @@
 - This prevents one group from deleting an empty temp directory used by another in-flight group, which had caused intermittent `FileNotFoundError` failures at `np.save(...)` while the second channel was finishing.
 - `mesospim_utils/basicpy_worker.py` is still owned by another user on this machine and was not edited in this session; the race was fixed from the orchestrating preprocess side instead.
 
+## Recent Change: BaSiCPy Tile-Level Resume
+
+- Added tile-level resume logic to `mesospim_utils/preprocess.py::process_basicpy_group()`.
+- When `--overwrite` is not set, BaSiCPy now skips tiles whose existing output tile directory already has valid tile-level multiscales metadata and all referenced dataset paths present.
+- This allows reruns after a partial failure to continue from the remaining incomplete tiles rather than recomputing the whole channel/filter group.
+
 ## Recent Change: BaSiCPy Fit Tile Uses Weighted Center And Low-Res Size Score
 
 - Updated `mesospim_utils/preprocess.py` so the default BaSiCPy fit tile for tile OME-Zarr collections is no longer always the middle of the field of view.
@@ -192,6 +198,7 @@
 - Validation on `/CBI_FastStore/test_data/mesospim/omezarr/012926_omezarr_exosomes_2/exosomes_test2_Mag16x_Ch488_Ch561.ome.zarr` now reports preprocess groups `[('488', '525/50 (GFP)'), ('561', '595/44 (RFP)')]` and correctly recognizes tile names containing `Flt525_50_(GFP)` / `Flt595_44_(RFP)`.
 - `python -m py_compile mesospim_utils/preprocess.py mesospim_utils/basicpy_worker.py` succeeded after the BaSiCPy fit-tile selection change.
 - `python -m py_compile mesospim_utils/preprocess.py` succeeded after the per-group `.basicpy_tmp` change for concurrent multi-channel BaSiCPy runs.
+- `python -m py_compile mesospim_utils/preprocess.py` succeeded after adding tile-level BaSiCPy resume checks.
 - `python mesospim_utils/preprocess.py --help` succeeded after the BaSiCPy fit-tile selection change.
 - `python mesospim_utils/automated.py automated-method-slurm --help` could not be re-run in this environment during this session because `typer` is not installed in the current local Python.
 - `python -m py_compile mesospim_utils/automated.py mesospim_utils/slurm.py mesospim_utils/preprocess.py` succeeded after reordering the workflow to `.btf -> .ome.zarr`, then `decon -> basicpy -> gain correction`.

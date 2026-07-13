@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+import json
 import os
 from pathlib import Path
 import re
@@ -490,6 +491,34 @@ def prepare_output_collection(input_collection: Path, output_collection: Path):
             shutil.copy2(src, dst)
 
 
+def tile_output_has_multiscales(tile_path: Path) -> bool:
+    zattrs_path = ensure_path(tile_path) / '.zattrs'
+    if not zattrs_path.is_file():
+        return False
+
+    try:
+        zattrs = json.loads(zattrs_path.read_text())
+    except (OSError, IOError, json.JSONDecodeError):
+        return False
+
+    multiscales = zattrs.get('multiscales')
+    if not multiscales:
+        return False
+
+    datasets = multiscales[0].get('datasets', [])
+    if len(datasets) == 0:
+        return False
+
+    for dataset in datasets:
+        dataset_path = dataset.get('path')
+        if not dataset_path:
+            return False
+        if not (tile_path / dataset_path).exists():
+            return False
+
+    return True
+
+
 def write_corrected_tile(src_path: Path, out_path: Path, corrected_data: np.ndarray, overwrite: bool):
     from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
 
@@ -581,6 +610,11 @@ def process_basicpy_group(
 
     for tile in sorted(tile_records):
         record = tile_records[tile]
+        out_tile_path = output_collection / record['name']
+        if not overwrite and tile_output_has_multiscales(out_tile_path):
+            print(f'\tskipping completed tile {tile} {record["name"]}')
+            continue
+
         temp_output = group_temp_dir / f'{record["name"]}.npy'
         if temp_output.exists():
             temp_output.unlink()
@@ -604,7 +638,7 @@ def process_basicpy_group(
         try:
             write_corrected_tile(
                 record['path'],
-                output_collection / record['name'],
+                out_tile_path,
                 corrected_uint16,
                 overwrite,
             )
