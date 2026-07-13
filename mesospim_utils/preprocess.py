@@ -575,10 +575,13 @@ def process_basicpy_group(
     prepare_output_collection(input_collection, output_collection)
     temp_dir = output_collection / '.basicpy_tmp'
     temp_dir.mkdir(parents=True, exist_ok=True)
+    group_temp_dir_name = re.sub(r'[^A-Za-z0-9._-]+', '_', f'{channel}_{filter_name}')
+    group_temp_dir = temp_dir / group_temp_dir_name
+    group_temp_dir.mkdir(parents=True, exist_ok=True)
 
     for tile in sorted(tile_records):
         record = tile_records[tile]
-        temp_output = temp_dir / f'{record["name"]}.npy'
+        temp_output = group_temp_dir / f'{record["name"]}.npy'
         if temp_output.exists():
             temp_output.unlink()
 
@@ -608,6 +611,9 @@ def process_basicpy_group(
         finally:
             if temp_output.exists():
                 temp_output.unlink()
+
+    if group_temp_dir.exists() and not any(group_temp_dir.iterdir()):
+        group_temp_dir.rmdir()
 
     if temp_dir.exists() and not any(temp_dir.iterdir()):
         temp_dir.rmdir()

@@ -123,8 +123,8 @@ def automated_method_slurm(dir_loc: Path,
                            iterations: Annotated[int,typer.Option(help="Deconvolution iterations")]=20,
                            frames_per_chunk: Annotated[int,typer.Option(help="How many z-planes are deconvolved at once. Best to let this be automatically determined")]=None,
                            num_parallel: Annotated[int,typer.Option(help="How many MesoSPIM tiles will be deconvolved in parallel on SLURM")]=None,
-                           basicpy: Annotated[bool,typer.Option(help="Run BaSiCPy flat-field correction before gain correction and deconvolution")]=False,
-                           gain_correction: Annotated[bool,typer.Option(help="Run gain correction after BaSiCPy and before deconvolution")]=False,
+                           basicpy: Annotated[bool,typer.Option(help="Run BaSiCPy flat-field correction after deconvolution and before gain correction")]=False,
+                           gain_correction: Annotated[bool,typer.Option(help="Run gain correction after deconvolution and BaSiCPy")]=False,
                            supernice: Annotated[bool,typer.Option(help="Submit all downstream slurm jobs will elevated nice value")]=False
                            ):
     '''
@@ -136,12 +136,13 @@ def automated_method_slurm(dir_loc: Path,
     The SLURM jobs will also run on the cluster and have access to the same data directory.
 
     Currently, supports data acquired from MesoSPIM in both omezarr and btf formats.
-    This method will first perform deconvolution if RI information is not found in the metadata.
+    BTF inputs are converted to tile OME-Zarr before any downstream processing.
+    This method will perform deconvolution if RI information is found in the metadata.
     RI can be manually supplied to trigger deconvolution if it is not found in the metadata, or if the user wants to override the metadata information.
     Deconvolution can be skipped entirely by setting decon=False.
 
-    If BTF files are discovered, decon will produce deconvolved BTF files, which will then be converted to multiscale omezarr format and stitched using bigstitcher.
-    If OME-Zarr files are discovered, decon will be produced in multiscale omezarr format, and then stitched using bigstitcher.
+    After input normalization to tile OME-Zarr, the optional stage order is:
+    deconvolution -> BaSiCPy -> gain correction.
 
     ** NOTE**
     This script is designed to run quickly, Everything is queued in SLURM.
@@ -172,8 +173,6 @@ def automated_method_slurm(dir_loc: Path,
     if not refractive_index and decon:
         refractive_index = first_metadata_entry.get('refractive_index')
 
-    preprocess_enabled = basicpy or gain_correction
-
     # Determine file formats relevant for downstream processes based on desired output
     _, final_file_type = get_intermediate_file_type_for_bigstitcher_alignment(final_file_type)
 
@@ -193,13 +192,11 @@ def automated_method_slurm(dir_loc: Path,
     out_dir = dir_loc
     decon_ram_estimate_dir = out_dir
 
-    if file_type == '.ome.zarr':
-        decon_ram_estimate_dir = out_dir
-
-    if file_type == '.btf' and preprocess_enabled:
-        print('Setting up script to convert BTF tiles to OME-Zarr before preprocessing')
+    if file_type == '.btf':
+        print('Setting up script to convert BTF tiles to OME-Zarr before downstream processing')
         from constants import SLURM_PARAMETERS_OMEZARR
 
+        decon_ram_estimate_dir = dir_loc
         out_dir = get_omezarr_output_directory_for_btf_conversion(dir_loc, file_type=file_type)
         cmd = ''
         cmd += f'{mesospim_root_application}/automated.py convert-btf-tiles-to-omezarr-slurm-array'
@@ -214,6 +211,29 @@ def automated_method_slurm(dir_loc: Path,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_{file_type[1:]}_to_omezarr')
         print(f'Dependency process number: {job_number}')
         file_type = '.ome.zarr'
+    else:
+        decon_ram_estimate_dir = out_dir
+
+    if refractive_index and decon:
+        print('Queueing BigStitcher XML generation before DECON so decon workers can clone collection metadata')
+        job_number = queue_bigstitcher_xml(dir_loc, out_dir, after_job_number=job_number, supernice=supernice)
+        print(f'Queued pre-DECON BigStitcher XML build process number: {job_number}')
+
+        print('Queueing DECON of MesoSPIM tiles on SLURM')
+        job_number, out_dir = decon_dir(
+            out_dir,
+            refractive_index,
+            objective=objective,
+            file_type=file_type,
+            out_file_type='.ome.zarr',
+            iterations=iterations,
+            frames_per_chunk=frames_per_chunk,
+            num_parallel=num_parallel,
+            after_slurm_jobs=[job_number] if job_number else None,
+            ram_estimate_dir=decon_ram_estimate_dir,
+        )
+        print((job_number, out_dir))
+        file_type = '.ome.zarr'
 
     if basicpy:
         print('Queueing BaSiCPy preprocessing on SLURM')
@@ -227,50 +247,7 @@ def automated_method_slurm(dir_loc: Path,
         print((job_number, out_dir))
         file_type = '.ome.zarr'
 
-    if refractive_index and decon:
-        if file_type == '.ome.zarr':
-            print('Queueing BigStitcher XML generation before DECON so decon workers can clone collection metadata')
-            job_number = queue_bigstitcher_xml(dir_loc, out_dir, after_job_number=job_number, supernice=supernice)
-            print(f'Queued pre-DECON BigStitcher XML build process number: {job_number}')
-
-        ## Decon:
-        print('Queueing DECON of MesoSPIM tiles on SLURM')
-        out_file_type = '.ome.zarr' if file_type == '.ome.zarr' else '.btf'
-        # decon_dir should inherit supernice value if set, so that all downstream processes will run with elevated nice value
-        job_number, out_dir = decon_dir(
-            out_dir,
-            refractive_index,
-            objective=objective,
-            file_type=file_type,
-            out_file_type=out_file_type,
-            iterations=iterations,
-            frames_per_chunk=frames_per_chunk,
-            num_parallel=num_parallel,
-            after_slurm_jobs=[job_number] if job_number else None,
-            ram_estimate_dir=decon_ram_estimate_dir,
-        )
-        print((job_number, out_dir))
-        file_type = out_file_type
-
-    if file_type in ('.btf','.tif'):
-        # IMS Convert
-        # Dependency process that kicks off IMS build following DECON
-        print('Setting up script to manage IMS conversions after DECON')
-        from constants import SLURM_PARAMETERS_OMEZARR
-        cmd = ''
-        cmd += f'{mesospim_root_application}/automated.py convert-btf-tiles-to-omezarr-slurm-array'
-        cmd += f' {out_dir}'
-        cmd += f' --file-type={file_type}'
-        cmd += f' --queue-alignment'
-        cmd += f' --final-file-type {final_file_type}'
-        if supernice:
-            cmd += f' --supernice'
-
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_OMEZARR, slurm_log_dir,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_{file_type[1:]}_to_omezarr')
-        print(f'Dependency process number: {job_number}')
-
-    elif file_type == '.ome.zarr':
+    if file_type == '.ome.zarr':
         print('Setting up script to manage BigStitcher conversions after OME-Zarr preprocessing/deconvolution')
         job_number = queue_bigstitcher_xml(dir_loc, out_dir, after_job_number=job_number, supernice=supernice)
         print(f'Queued BigStitcher XML build process number: {job_number}')

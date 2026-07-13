@@ -50,11 +50,12 @@
 - `oversample_factor` now uses the `psf.py` default and is no longer configured per objective.
 - If `objective_immersion_ri_design` or `objective_immersion_ri_actual` is set to `'auto'`, `rl.py` now substitutes the actual sample RI used for deconvolution.
 
-## Recent Change: Pre-Deconvolution OME-Zarr Preprocessing
+## Recent Change: OME-Zarr Preprocessing And Workflow Order
 
 - Added optional `--basicpy` and `--gain-correction` to `automated-method-slurm` in `mesospim_utils/automated.py`.
-- Preprocessing order is now fixed as: `basicpy -> gain correction -> decon`.
-- When preprocessing is enabled for `.btf` input, the workflow now converts tiles to OME-Zarr before deconvolution so the preprocessing stages can run on tile OME-Zarr data.
+- Processing order is now fixed as: `decon -> basicpy -> gain correction` when those stages are enabled.
+- `.btf` input is now normalized to tile OME-Zarr before any downstream processing, even when preprocessing is not requested.
+- For `.ome.zarr` deconvolution, pre-DECON BigStitcher XML generation remains required so `rl.py` can clone collection metadata into the decon output.
 - Added `mesospim_utils/preprocess.py` with low-level commands:
   - `basicpy-apply`
   - `gain-correction-apply`
@@ -110,6 +111,13 @@
 - `preprocess.py` immediately reads that per-tile `.npy`, writes the final OME-Zarr tile, and deletes the temporary file.
 - This was changed to avoid failures where `/tmp` filled up even though the final destination filesystem had enough free space.
 - Tradeoff: the current implementation re-fits BaSiCPy for each target tile, so it should use less temporary disk but may be slower than the prior batch-worker design.
+
+## Recent Change: BaSiCPy Multi-Channel Temp Dir Race
+
+- Fixed a multi-channel BaSiCPy race in `mesospim_utils/preprocess.py` where separate SLURM channel/filter jobs shared one `.basicpy_tmp/` directory under the output collection.
+- Each channel/filter group now writes temporary `.npy` files into its own sanitized subdirectory inside `.basicpy_tmp/`.
+- This prevents one group from deleting an empty temp directory used by another in-flight group, which had caused intermittent `FileNotFoundError` failures at `np.save(...)` while the second channel was finishing.
+- `mesospim_utils/basicpy_worker.py` is still owned by another user on this machine and was not edited in this session; the race was fixed from the orchestrating preprocess side instead.
 
 ## Recent Change: BaSiCPy Fit Tile Uses Weighted Center And Low-Res Size Score
 
@@ -183,8 +191,11 @@
 - Validation on `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr` still reports the expected modern groups `[('488', 'GFP'), ('561', 'RFP')]`.
 - Validation on `/CBI_FastStore/test_data/mesospim/omezarr/012926_omezarr_exosomes_2/exosomes_test2_Mag16x_Ch488_Ch561.ome.zarr` now reports preprocess groups `[('488', '525/50 (GFP)'), ('561', '595/44 (RFP)')]` and correctly recognizes tile names containing `Flt525_50_(GFP)` / `Flt595_44_(RFP)`.
 - `python -m py_compile mesospim_utils/preprocess.py mesospim_utils/basicpy_worker.py` succeeded after the BaSiCPy fit-tile selection change.
+- `python -m py_compile mesospim_utils/preprocess.py` succeeded after the per-group `.basicpy_tmp` change for concurrent multi-channel BaSiCPy runs.
 - `python mesospim_utils/preprocess.py --help` succeeded after the BaSiCPy fit-tile selection change.
 - `python mesospim_utils/automated.py automated-method-slurm --help` could not be re-run in this environment during this session because `typer` is not installed in the current local Python.
+- `python -m py_compile mesospim_utils/automated.py mesospim_utils/slurm.py mesospim_utils/preprocess.py` succeeded after reordering the workflow to `.btf -> .ome.zarr`, then `decon -> basicpy -> gain correction`.
+- `python -m py_compile mesospim_utils/rl.py` succeeded after the workflow reorder, confirming the decon worker still compiles against the updated orchestration path.
 
 ## Open Questions
 

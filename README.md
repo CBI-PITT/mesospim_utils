@@ -149,24 +149,25 @@ python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automate
 # Kick off a fully automated processing of a dataset
 python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory>
 
-# Run BaSiCPy and gain correction before deconvolution
+# Run deconvolution followed by optional BaSiCPy and gain correction
 python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --basicpy --gain-correction
 
 # Processing workflow:
 # 1) Metadata collection: mesospim metadata json files are generated or refreshed in the acquisition directory.
-# 2) Optional preprocessing: if `--basicpy` is enabled, tiles are converted to OME-Zarr first when needed and BaSiCPy runs on OME-Zarr level 0 before rebuilding multiscales.
-# 3) Optional preprocessing: if `--gain-correction` is enabled, it runs after BaSiCPy on OME-Zarr level 0 and then rebuilds multiscales.
-# 4) Optional deconvolution: runs when `--decon` is enabled and a refractive index is available from metadata or `--refractive-index`.
-# 5) If the input is `.btf` and no earlier OME-Zarr conversion was needed, tiles are converted to OME-Zarr and a BigStitcher XML is generated.
-# 6) BigStitcher alignment and fusion run on SLURM using Fiji/BigStitcher.
-# 7) Final output is produced as OME-Zarr, HDF5, or IMS depending on `--final-file-type`.
+# 2) If the input is `.btf`, tiles are first converted to OME-Zarr before any downstream processing.
+# 3) Optional deconvolution: runs when `--decon` is enabled and a refractive index is available from metadata or `--refractive-index`.
+# 4) Optional preprocessing: if `--basicpy` is enabled, it runs on the current OME-Zarr tiles and rebuilds multiscales.
+# 5) Optional preprocessing: if `--gain-correction` is enabled, it runs after BaSiCPy on the current OME-Zarr tiles and then rebuilds multiscales.
+# 6) A BigStitcher XML is generated for the final OME-Zarr tile collection.
+# 7) BigStitcher alignment and fusion run on SLURM using Fiji/BigStitcher.
+# 8) Final output is produced as OME-Zarr, HDF5, or IMS depending on `--final-file-type`.
 ```
 
-If both preprocessing flags are enabled, execution order is always:
+If `--decon`, `--basicpy`, and `--gain-correction` are all enabled, execution order is always:
 
-1. `--basicpy`
-2. `--gain-correction`
-3. `--decon`
+1. `--decon`
+2. `--basicpy`
+3. `--gain-correction`
 
 Cluster resource defaults for the preprocessing stages are configured in `mesospim_utils/config/example.yaml`:
 
