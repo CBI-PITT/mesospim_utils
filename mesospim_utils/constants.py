@@ -34,6 +34,7 @@ slurm = config.get('slurm')
 
 LOCATION_OF_MESOSPIM_UTILS_INSTALL = general.get('location_module')
 ENV_PYTHON_LOC = general.get('location_environment')
+LOCATION_BASICPY_ENV = general.get('location_basicpy_environment', ENV_PYTHON_LOC)
 METADATA_FILENAME = general.get('metadata_filename')
 METADATA_ANNOTATED_FILENAME = general.get('metadata_annotated_filename')
 MONTAGE_NAME = general.get('montage_name')
@@ -96,6 +97,26 @@ DECON_DEFAULT_OBJECTIVE = decon.get('default_objective')
 DECON_OBJECTIVES = decon.get('objectives', {})
 
 SLURM_PARAMETERS_DECON = slurm.get('decon')
+SLURM_PARAMETERS_BASICPY = slurm.get('basicpy', {
+    'PARTITION': 'ai',
+    'CPUS': 1,
+    'JOB_LABEL': 'ms_basicpy',
+    'RAM_GB': 512,
+    'GRES': 'gpu:1',
+    'PARALLEL_JOBS': 8,
+    'NICE': 0,
+    'TIME_LIMIT': None,
+})
+SLURM_PARAMETERS_GAIN_CORRECTION = slurm.get('gain_correction', {
+    'PARTITION': 'gpu',
+    'CPUS': 1,
+    'JOB_LABEL': 'ms_gaincorr',
+    'RAM_GB': 512,
+    'GRES': None,
+    'PARALLEL_JOBS': 8,
+    'NICE': 0,
+    'TIME_LIMIT': None,
+})
 
 #######################################################################################################################
 ####  OME-Zarr file converter constants ###
@@ -140,6 +161,7 @@ IMS_STITCHER_COMPRESSION_LEVEL = imaris_stitcher.get('compression_level')
 ### Format constants ###  DO NOT CHANGE
 LOCATION_OF_MESOSPIM_UTILS_INSTALL = Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL)
 ENV_PYTHON_LOC = Path(ENV_PYTHON_LOC)
+LOCATION_BASICPY_ENV = Path(LOCATION_BASICPY_ENV)
 WINE_INSTALL_LOC = Path(WINE_INSTALL_LOC)
 IMARIS_CONVERTER_LOC = Path(IMARIS_CONVERTER_LOC)
 

@@ -3,11 +3,12 @@ from pathlib import Path
 import subprocess
 import os
 import math
+import json
 
 
 from imaris import convert_ims, nested_list_tile_files_sorted_by_color
 from utils import ensure_path, get_user, get_file_size_gb
-from metadata import find_metadata_dir
+from metadata import find_metadata_dir, collect_all_metadata, get_first_entry
 from constants import DEV_SLURM_TOP_PRIORITY
 
 app = typer.Typer()
@@ -23,7 +24,7 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
               out_file_type: str='.tif', file_type: str='.btf',
               denoise_sigma: float=None, sharpen: bool=False,
               half_precision: bool=False, psf_shape: tuple[int,int,int]=(7,7,7), iterations: int=40, frames_per_chunk: int=None,
-              num_parallel: int=None
+              num_parallel: int=None, after_slurm_jobs: list[int]=None, ram_estimate_dir: Path=None
               ):
     '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
     import subprocess
@@ -32,6 +33,7 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
     from constants import DECON_SCRIPT, MAX_VRAM
 
     path = ensure_path(dir_loc)
+    ram_estimate_dir = ensure_path(ram_estimate_dir) if ram_estimate_dir else None
     # scripts_and_psf_dir = out_dir
     if out_dir:
         pass
@@ -52,14 +54,39 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
 
     # log_dir = out_dir / 'logs'
     log_dir = get_slurm_log_location(path)
-    file_list = list(path.glob('*' + file_type))
+    file_list = sorted(path.glob('*' + file_type))
+
+    reference_file_list = file_list
+    if not reference_file_list and ram_estimate_dir:
+        reference_file_list = sorted(ram_estimate_dir.glob('*' + file_type))
+
+        if not reference_file_list and file_type == '.ome.zarr':
+            reference_file_list = sorted(ram_estimate_dir.glob('*.btf'))
+
+    if not reference_file_list:
+        searched = [f"{path} (*{file_type})"]
+        if ram_estimate_dir:
+            searched.append(f"{ram_estimate_dir} (*{file_type})")
+            if file_type == '.ome.zarr':
+                searched.append(f"{ram_estimate_dir} (*.btf)")
+        raise FileNotFoundError(f'No files found for deconvolution input or RAM estimation. Searched: {", ".join(searched)}')
+
+    if not file_list:
+        if file_type == '.ome.zarr':
+            file_list = [
+                path / (ref.name if str(ref).endswith('.ome.zarr') else f'{ref.name}.ome.zarr')
+                for ref in reference_file_list
+            ]
+        else:
+            file_list = [path / ref.name for ref in reference_file_list]
 
     # Dynamically determine how much RAM to allocate for SLURM to support decon, assumes all files are the same size.
-    if Path(file_list[0]).is_file():
-        file_size_to_decon = get_file_size_gb(file_list[0])
-    elif str(file_list[0]).endswith('.ome.zarr'):
+    size_reference = reference_file_list[0]
+    if Path(size_reference).is_file():
+        file_size_to_decon = get_file_size_gb(size_reference)
+    elif str(size_reference).endswith('.ome.zarr'):
         from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
-        file_size_to_decon = OmeZarrArray(file_list[0]).nbytes / (1024 ** 3)  # ensure it's a valid zarr
+        file_size_to_decon = OmeZarrArray(size_reference).nbytes / (1024 ** 3)  # ensure it's a valid zarr
 
     # Arbitrary multiplier by 2
     file_size_to_decon *= 2
@@ -151,7 +178,8 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
         with open(file_to_run, 'w') as f:
             f.write(commands)
 
-        output = subprocess.run(f'sbatch {file_to_run}', shell=True, capture_output=True)
+        sbatch_cmd = sbatch_depends(f'sbatch {file_to_run}', after_slurm_jobs)
+        output = subprocess.run(sbatch_cmd, shell=True, capture_output=True)
         prefix_len = len(b'Submitted batch job ')
         job_number = int(output.stdout[prefix_len:-1])
         print(f'SBATCH Job #: {job_number}')
@@ -194,6 +222,188 @@ def make_sbatch_params(PARAMS, array_len=None):
     # Join non-empty elements with a space
     sbatch_cmd = f"{' '.join(filter(None, sbatch_options))}"
     return sbatch_cmd
+
+
+def get_channel_filter_output_collection(input_collection: Path, stage_dir_name: str, suffix: str):
+    input_collection = ensure_path(input_collection)
+    stage_root = input_collection.parent / stage_dir_name
+    collection_name = input_collection.name.removesuffix('.ome.zarr')
+    return stage_root / f'{collection_name}{suffix}.ome.zarr'
+
+
+def tile_output_has_multiscales(tile_path: Path) -> bool:
+    zattrs_path = ensure_path(tile_path) / '.zattrs'
+    if not zattrs_path.is_file():
+        return False
+
+    try:
+        zattrs = json.loads(zattrs_path.read_text())
+    except (OSError, IOError, json.JSONDecodeError):
+        return False
+
+    multiscales = zattrs.get('multiscales')
+    if not multiscales:
+        return False
+
+    datasets = multiscales[0].get('datasets', [])
+    if len(datasets) == 0:
+        return False
+
+    for dataset in datasets:
+        dataset_path = dataset.get('path')
+        if not dataset_path:
+            return False
+        if not (tile_path / dataset_path).exists():
+            return False
+
+    return True
+
+
+def is_preprocess_group_complete(
+    input_collection: Path,
+    output_collection: Path,
+    channel: str,
+    filt: str,
+) -> bool:
+    from preprocess import discover_tiles, resolve_grid_and_overlap, validate_tile_set
+
+    input_collection = ensure_path(input_collection)
+    output_collection = ensure_path(output_collection)
+
+    if not output_collection.is_dir():
+        return False
+
+    rows, cols, _ = resolve_grid_and_overlap(input_collection)
+
+    try:
+        input_records_by_combo = discover_tiles(input_collection)
+        output_records_by_combo = discover_tiles(output_collection)
+    except RuntimeError:
+        return False
+
+    combo = (channel, filt)
+    if combo not in input_records_by_combo or combo not in output_records_by_combo:
+        return False
+
+    input_tile_records = input_records_by_combo[combo]
+    output_tile_records = output_records_by_combo[combo]
+
+    try:
+        validate_tile_set(input_tile_records, rows, cols, channel, filt)
+        validate_tile_set(output_tile_records, rows, cols, channel, filt)
+    except RuntimeError:
+        return False
+
+    for tile, record in input_tile_records.items():
+        out_record = output_tile_records.get(tile)
+        if out_record is None or out_record['name'] != record['name']:
+            return False
+
+        if not tile_output_has_multiscales(out_record['path']):
+            return False
+
+    return True
+
+
+def queue_preprocess_groups(
+    input_collection: Path,
+    output_collection: Path,
+    slurm_parameters_dictionary,
+    command_name: str,
+    extra_args: list[str] = None,
+    after_slurm_jobs: list[int] = None,
+    overwrite: bool = False,
+):
+    from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL
+    from preprocess import discover_channel_filter_combinations_from_metadata, prepare_output_collection
+
+    input_collection = ensure_path(input_collection)
+    output_collection = ensure_path(output_collection)
+    extra_args = extra_args or []
+
+    prepare_output_collection(input_collection, output_collection)
+
+    metadata_by_channel = collect_all_metadata(input_collection)
+    first_metadata_entry = get_first_entry(metadata_by_channel)
+    username = first_metadata_entry.get('username', "")
+    log_dir = get_slurm_log_location(input_collection)
+
+    channel_filter_combinations = discover_channel_filter_combinations_from_metadata(metadata_by_channel)
+
+    commands = []
+    for channel, filt in channel_filter_combinations:
+        if not overwrite and is_preprocess_group_complete(input_collection, output_collection, channel, filt):
+            print(f'Skipping completed {command_name} group: {channel} / {filt}')
+            continue
+
+        cmd = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/preprocess.py {command_name}'
+        cmd += f' --input "{input_collection}"'
+        cmd += f' --output "{output_collection}"'
+        cmd += f' --channel "{channel}"'
+        cmd += f' --filter "{filt}"'
+        for arg in extra_args:
+            cmd += f' {arg}'
+        commands.append(cmd)
+
+    if not commands:
+        print(f'All {command_name} groups already complete in {output_collection}')
+        return None, output_collection
+
+    job_number = submit_array(
+        commands,
+        output_collection.parent,
+        slurm_parameters_dictionary,
+        log_dir,
+        after_slurm_jobs=after_slurm_jobs,
+        username=username,
+        log_suffix=command_name.replace('-', '_'),
+    )
+
+    return job_number, output_collection
+
+
+@app.command()
+def basicpy_dir(input_collection: Path, overwrite: bool = False, after_slurm_jobs: list[int] = None):
+    from constants import SLURM_PARAMETERS_BASICPY
+
+    output_collection = get_channel_filter_output_collection(
+        input_collection,
+        stage_dir_name='basicpy',
+        suffix='_BASICPY',
+    )
+
+    extra_args = ['--overwrite'] if overwrite else []
+    return queue_preprocess_groups(
+        input_collection,
+        output_collection,
+        SLURM_PARAMETERS_BASICPY,
+        'basicpy-apply',
+        extra_args=extra_args,
+        after_slurm_jobs=after_slurm_jobs,
+        overwrite=overwrite,
+    )
+
+
+@app.command()
+def gain_correction_dir(input_collection: Path, overwrite: bool = False, after_slurm_jobs: list[int] = None):
+    from constants import SLURM_PARAMETERS_GAIN_CORRECTION
+
+    output_collection = get_channel_filter_output_collection(
+        input_collection,
+        stage_dir_name='gain_correction',
+        suffix='_GCORR',
+    )
+
+    extra_args = ['--overwrite'] if overwrite else []
+    return queue_preprocess_groups(
+        input_collection,
+        output_collection,
+        SLURM_PARAMETERS_GAIN_CORRECTION,
+        'gain-correction-apply',
+        extra_args=extra_args,
+        after_slurm_jobs=after_slurm_jobs,
+        overwrite=overwrite,
+    )
 
 ######################################################################################################################
 ####  IMARIS CONVERTER FUNCTIONS TO HANDLE SLURM SUBMISSION  ##################
@@ -282,18 +492,22 @@ def set_super_nice():
     '''
 
     from constants import (
+        SLURM_PARAMETERS_BASICPY,
         SLURM_PARAMETERS_OMEZARR,
         SLURM_PARAMETERS_DECON,
         SLURM_PARAMETERS_FOR_BIGSTITCHER,
         SLURM_PARAMETERS_FOR_DEPENDENCIES,
+        SLURM_PARAMETERS_GAIN_CORRECTION,
         SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN,
         SLURM_PARAMETERS_IMARIS_CONVERTER,
     )
 
+    SLURM_PARAMETERS_BASICPY['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_OMEZARR['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_DECON['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_FOR_BIGSTITCHER['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_FOR_DEPENDENCIES['NICE'] = SUPERNICE_VALUE
+    SLURM_PARAMETERS_GAIN_CORRECTION['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_FOR_MESOSPIM_ALIGN['NICE'] = SUPERNICE_VALUE
     SLURM_PARAMETERS_IMARIS_CONVERTER['NICE'] = SUPERNICE_VALUE
 

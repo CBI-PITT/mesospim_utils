@@ -15,7 +15,9 @@ from metadata import (
     get_entry_for_file_name
 )
 from slurm import (
+    basicpy_dir,
     decon_dir,
+    gain_correction_dir,
     wrap_slurm,
     submit_array,
     get_slurm_log_location,
@@ -42,6 +44,79 @@ mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_IN
 
 app = typer.Typer()
 
+
+def get_omezarr_output_directory_for_btf_conversion(dir_loc: Path, file_type: str = '.btf') -> Path:
+    dir_loc = ensure_path(dir_loc)
+    btf_file_list = list(dir_loc.glob(f'*{file_type}'))
+
+    if len(btf_file_list) == 0:
+        raise FileNotFoundError(f'No files found in {dir_loc} with file type {file_type}')
+
+    prefix = common_prefix([f.name for f in btf_file_list])
+
+    if prefix:
+        prefix = strip_after(prefix, '_max')
+    else:
+        prefix = btf_file_list[0].name
+
+    return dir_loc / 'ome_zarr' / f'{prefix}.ome.zarr'
+
+
+def queue_bigstitcher_xml(dir_loc: Path, collection_dir: Path, after_job_number: int = None, supernice: bool = False):
+    from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
+
+    dir_loc = ensure_path(dir_loc)
+    collection_dir = ensure_path(collection_dir)
+    metadata_by_channel = collect_all_metadata(collection_dir)
+    first_metadata_entry = get_first_entry(metadata_by_channel)
+    username = first_metadata_entry.get('username', "")
+    slurm_log_dir = get_slurm_log_location(dir_loc)
+
+    xml_file_name = Path(collection_dir.as_posix() + '.xml')
+    cmd = f'{mesospim_root_application}/bigstitcher.py mesospim-metadata-to-bigstitcher-xml'
+    cmd += f' "{xml_file_name}"'
+    cmd += f' --different-relative-zarr-path "{collection_dir.name}"'
+    cmd += f' --modify-filename-in-xml .ome.zarr'
+
+    return wrap_slurm(
+        cmd,
+        SLURM_PARAMETERS_FOR_DEPENDENCIES,
+        slurm_log_dir,
+        after_slurm_jobs=[after_job_number] if after_job_number else None,
+        username=username,
+        log_suffix='make_bigstitcher_xml',
+    )
+
+
+def queue_bigstitcher_alignment(dir_loc: Path, collection_dir: Path, final_file_type: str, ims_resolution_level: int = 0, after_job_number: int = None, supernice: bool = False):
+    from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
+
+    if final_file_type.lower() == 'ims':
+        fused_file_type = 'omezarr'
+    else:
+        fused_file_type = final_file_type
+
+    metadata_by_channel = collect_all_metadata(collection_dir)
+    first_metadata_entry = get_first_entry(metadata_by_channel)
+    username = first_metadata_entry.get('username', "")
+    slurm_log_dir = get_slurm_log_location(dir_loc)
+
+    cmd = f'{mesospim_root_application}/automated.py big-stitcher-align'
+    cmd += f' {collection_dir.parent}'
+    cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
+    cmd += f' --ims-resolution-level {ims_resolution_level}'
+    if supernice:
+        cmd += ' --supernice'
+
+    return wrap_slurm(
+        cmd,
+        SLURM_PARAMETERS_FOR_BIGSTITCHER,
+        slurm_log_dir,
+        after_slurm_jobs=[after_job_number] if after_job_number else None,
+        username=username,
+        log_suffix='queue_bigstitcher',
+    )
+
 @app.command()
 def automated_method_slurm(dir_loc: Path,
                            # Input options: None, .ome.zarr, .btf. If None, will auto-detect based on contents of dir_loc
@@ -57,6 +132,8 @@ def automated_method_slurm(dir_loc: Path,
                            iterations: Annotated[int,typer.Option(help="Deconvolution iterations")]=20,
                            frames_per_chunk: Annotated[int,typer.Option(help="How many z-planes are deconvolved at once. Best to let this be automatically determined")]=None,
                            num_parallel: Annotated[int,typer.Option(help="How many MesoSPIM tiles will be deconvolved in parallel on SLURM")]=None,
+                           basicpy: Annotated[bool,typer.Option(help="Run BaSiCPy flat-field correction after deconvolution and before gain correction")]=False,
+                           gain_correction: Annotated[bool,typer.Option(help="Run gain correction after deconvolution and BaSiCPy")]=False,
                            ims_resolution_level: Annotated[int,typer.Option(help="OME-Zarr multiscale resolution level to convert when --final-file-type ims")]=0,
                            supernice: Annotated[bool,typer.Option(help="Submit all downstream slurm jobs will elevated nice value")]=False
                            ):
@@ -69,12 +146,13 @@ def automated_method_slurm(dir_loc: Path,
     The SLURM jobs will also run on the cluster and have access to the same data directory.
 
     Currently, supports data acquired from MesoSPIM in both omezarr and btf formats.
-    This method will first perform deconvolution if RI information is not found in the metadata.
+    BTF inputs are converted to tile OME-Zarr before any downstream processing.
+    This method will perform deconvolution if RI information is found in the metadata.
     RI can be manually supplied to trigger deconvolution if it is not found in the metadata, or if the user wants to override the metadata information.
     Deconvolution can be skipped entirely by setting decon=False.
 
-    If BTF files are discovered, decon will produce deconvolved BTF files, which will then be converted to multiscale omezarr format and stitched using bigstitcher.
-    If OME-Zarr files are discovered, decon will be produced in multiscale omezarr format, and then stitched using bigstitcher.
+    After input normalization to tile OME-Zarr, the optional stage order is:
+    deconvolution -> BaSiCPy -> gain correction.
 
     ** NOTE**
     This script is designed to run quickly, Everything is queued in SLURM.
@@ -89,6 +167,7 @@ def automated_method_slurm(dir_loc: Path,
     if supernice:
         set_super_nice()
 
+    from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER, SLURM_PARAMETERS_FOR_DEPENDENCIES, SLURM_PARAMETERS_OMEZARR
 
     dir_loc = ensure_path(dir_loc)
 
@@ -106,7 +185,7 @@ def automated_method_slurm(dir_loc: Path,
         refractive_index = first_metadata_entry.get('refractive_index')
 
     # Determine file formats relevant for downstream processes based on desired output
-    fused_file_type, final_file_type = get_intermediate_file_type_for_bigstitcher_alignment(final_file_type)
+    _, final_file_type = get_intermediate_file_type_for_bigstitcher_alignment(final_file_type)
 
     omezarr_xml = does_dir_contain_bigstitcher_metadata(dir_loc)  # returns path to omezarr xml if found, else None
     omezarr_path = get_ome_zarr_directory_from_xml(omezarr_xml) # returns path to omezarr_data relative to xml, else None
@@ -122,25 +201,20 @@ def automated_method_slurm(dir_loc: Path,
     job_number = None
     slurm_log_dir = get_slurm_log_location(dir_loc)
     out_dir = dir_loc
-    if refractive_index and decon: # for now skip decon if omezarr
-        ## Decon:
-        print('Queueing DECON of MesoSPIM tiles on SLURM')
-        out_file_type = '.ome.zarr' if omezarr_path else '.btf'
-        # decon_dir should inherit supernice value if set, so that all downstream processes will run with elevated nice value
-        job_number, out_dir = decon_dir(dir_loc, refractive_index, objective=objective, file_type=file_type, out_file_type=out_file_type, iterations=iterations, frames_per_chunk=frames_per_chunk, num_parallel=num_parallel)
-        print((job_number, out_dir))
-        file_type = out_file_type
+    decon_ram_estimate_dir = out_dir
 
-    if file_type in ('.btf','.tif'):
-        # IMS Convert
-        # Dependency process that kicks off IMS build following DECON
-        print('Setting up script to manage IMS conversions after DECON')
+    if file_type == '.btf':
+        print('Setting up script to convert BTF tiles to OME-Zarr before downstream processing')
         from constants import SLURM_PARAMETERS_OMEZARR
+
+        decon_ram_estimate_dir = dir_loc
+        out_dir = get_omezarr_output_directory_for_btf_conversion(dir_loc, file_type=file_type)
         cmd = ''
         cmd += f'{mesospim_root_application}/automated.py convert-btf-tiles-to-omezarr-slurm-array'
-        cmd += f' {out_dir}'
+        cmd += f' {dir_loc}'
         cmd += f' --file-type={file_type}'
-        cmd += f' --queue-alignment'
+        cmd += f' --no-queue-alignment'
+        cmd += f' --no-make-xml'
         cmd += f' --final-file-type {final_file_type}'
         cmd += f' --ims-resolution-level {ims_resolution_level}'
         if supernice:
@@ -149,35 +223,54 @@ def automated_method_slurm(dir_loc: Path,
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_OMEZARR, slurm_log_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_{file_type[1:]}_to_omezarr')
         print(f'Dependency process number: {job_number}')
+        file_type = '.ome.zarr'
+    else:
+        decon_ram_estimate_dir = out_dir
 
-    elif file_type == '.ome.zarr':
-        # Dependency process that kicks off Bigstitcher alignment following DECON
-        # This process also creates a fused final montage image.
-        # final_file_type can be omezarr or hdf5 or ims
-        # if ims, a hdf5 file is built and then a ims conversion is initiated from the hdf5 file.
-        print('Setting up script to manage Bigstitcher conversions after DECON')
-        from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
+    if refractive_index and decon:
+        print('Queueing BigStitcher XML generation before DECON so decon workers can clone collection metadata')
+        job_number = queue_bigstitcher_xml(dir_loc, out_dir, after_job_number=job_number, supernice=supernice)
+        print(f'Queued pre-DECON BigStitcher XML build process number: {job_number}')
 
-        if final_file_type.lower() == 'ims':
-            fused_file_type = 'omezarr'
-        else:
-            fused_file_type = final_file_type
+        print('Queueing DECON of MesoSPIM tiles on SLURM')
+        job_number, out_dir = decon_dir(
+            out_dir,
+            refractive_index,
+            objective=objective,
+            file_type=file_type,
+            out_file_type='.ome.zarr',
+            iterations=iterations,
+            frames_per_chunk=frames_per_chunk,
+            num_parallel=num_parallel,
+            after_slurm_jobs=[job_number] if job_number else None,
+            ram_estimate_dir=decon_ram_estimate_dir,
+        )
+        print((job_number, out_dir))
+        file_type = '.ome.zarr'
 
-        cmd = ''
-        cmd += f'{mesospim_root_application}/automated.py big-stitcher-align'
-        cmd += f' {Path(out_dir).parent}'
-        cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
-        cmd += f' --ims-resolution-level {ims_resolution_level}'
-        if supernice:
-            cmd += f' --supernice'
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_bigstitcher')
+    if basicpy:
+        print('Queueing BaSiCPy preprocessing on SLURM')
+        job_number, out_dir = basicpy_dir(out_dir, after_slurm_jobs=[job_number] if job_number else None)
+        print((job_number, out_dir))
+        file_type = '.ome.zarr'
+
+    if gain_correction:
+        print('Queueing gain correction preprocessing on SLURM')
+        job_number, out_dir = gain_correction_dir(out_dir, after_slurm_jobs=[job_number] if job_number else None)
+        print((job_number, out_dir))
+        file_type = '.ome.zarr'
+
+    if file_type == '.ome.zarr':
+        print('Setting up script to manage BigStitcher conversions after OME-Zarr preprocessing/deconvolution')
+        job_number = queue_bigstitcher_xml(dir_loc, out_dir, after_job_number=job_number, supernice=supernice)
+        print(f'Queued BigStitcher XML build process number: {job_number}')
+        job_number = queue_bigstitcher_alignment(dir_loc, out_dir, final_file_type, ims_resolution_level=ims_resolution_level, after_job_number=job_number, supernice=supernice)
         print(f'Dependency process number: {job_number}')
 
 
 @app.command()
 def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf', queue_alignment: bool=True, final_file_type: str='omezarr',
-                                after_slurm_jobs: list[int]=None, supernice: bool=False, ims_resolution_level: int=0):
+                                after_slurm_jobs: list[int]=None, supernice: bool=False, make_xml: bool=True, ims_resolution_level: int=0):
 
     if supernice:
         set_super_nice()
@@ -190,17 +283,7 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
     if len(btf_file_list) == 0:
         raise FileNotFoundError(f'No files found in {dir_loc} with file type {file_type}')
 
-    prefix = common_prefix([f.name for f in btf_file_list])
-
-    if prefix:
-        # Remove trailing underscores or hyphens from prefix
-        prefix = strip_after(prefix, '_max')
-    else:
-        # Use first file name as prefix
-        prefix = btf_file_list[0].name
-
-    # Create output directory for omezarr collection ./ome_zarr/{first_btf_file_name}/
-    output_directory_for_omezarr_collection = dir_loc / 'ome_zarr' / f'{prefix}.ome.zarr'
+    output_directory_for_omezarr_collection = get_omezarr_output_directory_for_btf_conversion(dir_loc, file_type=file_type)
     output_directory_for_omezarr_collection.mkdir(parents=True, exist_ok=True)
 
     # Create ome.zarr group to store all converted btf files in the collection
@@ -244,17 +327,9 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
     print(f'OME-Zarr Conversion Array Job Number: {job_number}')
 
 
-    # Make bigstitcher xml for alignment and stitching of the converted omezarr files
-    xml_file_name = Path(output_directory_for_omezarr_collection.as_posix() + '.xml')
-    cmd = f'{mesospim_root_application}/bigstitcher.py mesospim-metadata-to-bigstitcher-xml'
-    cmd += f' "{xml_file_name}"'
-    cmd += f' --different-relative-zarr-path "{output_directory_for_omezarr_collection.name}"'
-    cmd += f' --modify-filename-in-xml .ome.zarr'
-
-    job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
-                            after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'make_bigstitcher_xml')
-
-    print(f'Queued BigStitcher XML build process number: {job_number}')
+    if make_xml or queue_alignment:
+        job_number = queue_bigstitcher_xml(dir_loc, output_directory_for_omezarr_collection, after_job_number=job_number, supernice=supernice)
+        print(f'Queued BigStitcher XML build process number: {job_number}')
 
     if queue_alignment:
         # Determine file formats relevant for downstream processes based on desired output

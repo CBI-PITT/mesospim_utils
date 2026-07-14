@@ -648,7 +648,7 @@ def modify_file_names_in_annotated_metadata(meta_dict, modify_function: callable
     '''
     if modify_function == '.ome.zarr':
         "Add .ome.zarr to file names by default"
-        modify_function = lambda x: x + '.ome.zarr'
+        modify_function = lambda x: x if str(x).endswith('.ome.zarr') else f'{x}.ome.zarr'
     for ch in meta_dict:
         for entry in meta_dict[ch]:
             original_file_name = entry.get('file_name')
@@ -673,4 +673,3 @@ if __name__ == "__main__":
     app = typer.Typer()
     collect_all_metadata = app.command()(collect_all_metadata)
     app()
-
