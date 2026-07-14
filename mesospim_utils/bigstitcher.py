@@ -467,7 +467,7 @@ def is_bigstitcher_tiff_series_complete(tiff_series_dir: Path, reference_tile_om
     return seen_pairs == expected_pairs
 
 
-def should_skip_bigstitcher_run(dir_loc: Path, fused_file_type: str, final_file_type: str, log_dir: Path, metadata_by_channel: dict) -> tuple[bool, str]:
+def should_skip_bigstitcher_run(dir_loc: Path, fused_file_type: str, final_file_type: str, log_dir: Path, metadata_by_channel: dict, resolution_level: int = 0) -> tuple[bool, str]:
     if fused_file_type.lower() != 'omezarr':
         return False, ''
 

@@ -88,7 +88,7 @@ def queue_bigstitcher_xml(dir_loc: Path, collection_dir: Path, after_job_number:
     )
 
 
-def queue_bigstitcher_alignment(dir_loc: Path, collection_dir: Path, final_file_type: str, after_job_number: int = None, supernice: bool = False):
+def queue_bigstitcher_alignment(dir_loc: Path, collection_dir: Path, final_file_type: str, ims_resolution_level: int = 0, after_job_number: int = None, supernice: bool = False):
     from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
 
     if final_file_type.lower() == 'ims':
@@ -104,6 +104,7 @@ def queue_bigstitcher_alignment(dir_loc: Path, collection_dir: Path, final_file_
     cmd = f'{mesospim_root_application}/automated.py big-stitcher-align'
     cmd += f' {collection_dir.parent}'
     cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
+    cmd += f' --ims-resolution-level {ims_resolution_level}'
     if supernice:
         cmd += ' --supernice'
 
@@ -166,6 +167,7 @@ def automated_method_slurm(dir_loc: Path,
     if supernice:
         set_super_nice()
 
+    from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER, SLURM_PARAMETERS_FOR_DEPENDENCIES, SLURM_PARAMETERS_OMEZARR
 
     dir_loc = ensure_path(dir_loc)
 
@@ -262,16 +264,7 @@ def automated_method_slurm(dir_loc: Path,
         print('Setting up script to manage BigStitcher conversions after OME-Zarr preprocessing/deconvolution')
         job_number = queue_bigstitcher_xml(dir_loc, out_dir, after_job_number=job_number, supernice=supernice)
         print(f'Queued BigStitcher XML build process number: {job_number}')
-        job_number = queue_bigstitcher_alignment(dir_loc, out_dir, final_file_type, after_job_number=job_number, supernice=supernice)
-        cmd = ''
-        cmd += f'{mesospim_root_application}/automated.py big-stitcher-align'
-        cmd += f' {Path(out_dir).parent}'
-        cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
-        cmd += f' --ims-resolution-level {ims_resolution_level}'
-        if supernice:
-            cmd += f' --supernice'
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_bigstitcher')
+        job_number = queue_bigstitcher_alignment(dir_loc, out_dir, final_file_type, ims_resolution_level=ims_resolution_level, after_job_number=job_number, supernice=supernice)
         print(f'Dependency process number: {job_number}')
 
 
