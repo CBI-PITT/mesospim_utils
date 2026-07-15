@@ -483,9 +483,9 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         ome_zarr = OmeZarrV2Multiscale(reference_tile_omezarr)
         level_info = ome_zarr.get_level_zyx_info(ims_resolution_level)
         scale_zyx = level_info['scale_zyx']
-        res_z = res_z * scale_zyx[0]
-        res_y = res_y * scale_zyx[1]
-        res_x = res_x * scale_zyx[2]
+        res_z = scale_zyx[0]
+        res_y = scale_zyx[1]
+        res_x = scale_zyx[2]
 
 
         cmd = f'{mesospim_root_application}/imaris.py make-ims-from-tiff-series'
