@@ -11,6 +11,7 @@ import typer
 
 # STD library imports
 from pathlib import Path
+import os
 import shutil
 import json
 import re
@@ -244,14 +245,28 @@ def is_bigstitcher_log_successful(log_dir: Path, fused_output_path: Path=None) -
     if not log_dir.exists():
         return False
 
-    fused_output_name = ensure_path(fused_output_path).name if fused_output_path else None
+    fused_output_path = ensure_path(fused_output_path) if fused_output_path else None
+    fused_output_name = fused_output_path.name if fused_output_path else None
     explicit_marker = 'BIGSTITCHER_SUCCESS:'
-    failure_pattern = re.compile(r'(outofmemory|killed|cancelled|terminated|traceback|failed)', re.IGNORECASE)
+    failure_pattern = re.compile(
+        r'(outofmemory|killed|cancelled|terminated|traceback|failed|nullpointer)',
+        re.IGNORECASE,
+    )
 
     for log_file in sorted(log_dir.glob('*_align_fuse_bigstitcher.log')):
         try:
             content = log_file.read_text(errors='ignore')
         except (OSError, IOError):
+            continue
+
+        if explicit_marker in content:
+            if fused_output_name is None or fused_output_name in content:
+                if fused_output_path is None:
+                    return True
+                if fused_output_path.exists():
+                    return True
+
+        if fused_output_path is not None and not fused_output_path.exists():
             continue
 
         if explicit_marker in content:
@@ -501,7 +516,17 @@ def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr'):
     bigstitcher_dir = path / 'bigstitcher'
     bigstitcher_dir.mkdir(parents=True, exist_ok=True)
     backup_xml = bigstitcher_dir / (omezarr_xml.name + '.backup')
-    shutil.copy(omezarr_xml, backup_xml)
+
+    if backup_xml.exists() and not os.access(backup_xml, os.W_OK):
+        backup_index = 1
+        while True:
+            candidate_backup = bigstitcher_dir / f'{omezarr_xml.name}.backup.{backup_index}'
+            if not candidate_backup.exists():
+                backup_xml = candidate_backup
+                break
+            backup_index += 1
+
+    shutil.copyfile(omezarr_xml, backup_xml)
 
     macro_file = bigstitcher_dir / 'macro.ijm'
     fused_out_dir_or_file = get_bigstitcher_fused_output_path(path, format=format)

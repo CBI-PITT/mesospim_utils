@@ -637,6 +637,19 @@ def get_rotations(meta_dict):
             rotations.add(rotation)
     return rotations
 
+def normalize_ome_zarr_suffix(file_name):
+    file_name = str(file_name)
+    suffix = '.ome.zarr'
+
+    while file_name.endswith(f'{suffix}{suffix}'):
+        file_name = file_name[:-len(suffix)]
+
+    if not file_name.endswith(suffix):
+        file_name = f'{file_name}{suffix}'
+
+    return file_name
+
+
 def modify_file_names_in_annotated_metadata(meta_dict, modify_function: callable='.ome.zarr'):
     '''
     Given the meta_dict created by fn collect_all_metadata()
@@ -648,7 +661,7 @@ def modify_file_names_in_annotated_metadata(meta_dict, modify_function: callable
     '''
     if modify_function == '.ome.zarr':
         "Add .ome.zarr to file names by default"
-        modify_function = lambda x: x if str(x).endswith('.ome.zarr') else f'{x}.ome.zarr'
+        modify_function = normalize_ome_zarr_suffix
     for ch in meta_dict:
         for entry in meta_dict[ch]:
             original_file_name = entry.get('file_name')

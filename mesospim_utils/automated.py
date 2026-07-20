@@ -411,6 +411,7 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     else:
         bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type)
         cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
+        cmd += f' && [ -e "{fused_out_dir_or_file}" ]'
         cmd += f' && printf "BIGSTITCHER_SUCCESS: {Path(fused_out_dir_or_file).name}\\n"'
 
         job_number = None
