@@ -165,6 +165,8 @@ python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automate
 
 When `--final-file-type tiff`, BigStitcher still fuses to a montage OME-Zarr first, then the fused dataset is extracted as a TIFF series and processing stops there.
 
+When `--final-file-type ims`, BigStitcher now fuses to a montage OME-Zarr first and then builds the final IMS directly from that fused OME-Zarr using the configured `general.location_pyimariswriter_environment` Python interpreter. TIFF extraction is only used for the `tiff` final-output path.
+
 If `--decon`, `--basicpy`, and `--gain-correction` are all enabled, execution order is always:
 
 1. `--decon`
@@ -227,6 +229,7 @@ If using only the metadata module, edit the general parameters: location_module,
 general:
   location_module: '<location_of_install>/mesospim_utils/mesospim_utils'
   location_environment: '<python_install_location>/envs/mesospim_utils/bin/python'
+  location_pyimariswriter_environment: '<python_install_location>/envs/pyimariswriter/bin/python'
   metadata_filename: 'mesospim_metadata.json'
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'

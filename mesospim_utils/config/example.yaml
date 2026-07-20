@@ -2,6 +2,7 @@ general:
   location_module: '/h20/home/lab/src/mesospim_utils/mesospim_utils'
   location_environment: '/h20/home/lab/miniconda3/envs/mesospim_utils/bin/python'
   location_basicpy_environment: '/h20/home/lab/miniconda3/envs/basicpy-cuda/bin/python'
+  location_pyimariswriter_environment: '/h20/home/iana/.conda/envs/pyimariswriter/bin/python'
   metadata_filename: 'mesospim_metadata.json'
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'

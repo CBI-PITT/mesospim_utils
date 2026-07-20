@@ -40,6 +40,9 @@
 
 ## Recent Change: IMS Export From Fused OME-Zarr
 
+- The `--final-file-type ims` path now builds IMS directly from the fused montage OME-Zarr via `mesospim_utils/omezarr_to_ims.py` and no longer depends on intermediate TIFF extraction.
+- Added `general.location_pyimariswriter_environment` in config so the direct IMS conversion can run under `/h20/home/iana/.conda/envs/pyimariswriter/bin/python` instead of the standard mesospim_utils environment.
+- The existing `--ims-resolution-level` option still controls the exported OME-Zarr multiscale level for both direct `ims` output and `tiff` output, with a default of `0`.
 - The `--final-file-type ims` path in `mesospim_utils/automated.py` no longer uses one bulk `extract-tiff-series` job.
 - Added `--ims-resolution-level` to `automated-method-slurm` and `big-stitcher-align`; default is `0`.
 - The fused OME-Zarr to IMS path now submits one SLURM array per channel, with one task per z-plane TIFF.
@@ -247,6 +250,7 @@
 - The SLURM dependency/log-format follow-up was syntax-checked here with `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/slurm.py`.
 - `python3 -m py_compile mesospim_utils/metadata.py mesospim_utils/bigstitcher.py mesospim_utils/automated.py` succeeded after the `.ome.zarr` normalization, BigStitcher success-marker guard, and backup-copy follow-up.
 - `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py mesospim_utils/omezarr.py mesospim_utils/bigstitcher.py` succeeded after adding `--final-file-type tiff` support to the automated BigStitcher workflow.
+- `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py mesospim_utils/constants.py mesospim_utils/omezarr_to_ims.py` should pass for the new direct IMS path, and `"/h20/home/iana/.conda/envs/pyimariswriter/bin/python" mesospim_utils/omezarr_to_ims.py --help` is the narrowest environment check for the dedicated converter.
 
 ## Open Questions
 

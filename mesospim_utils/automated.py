@@ -6,7 +6,7 @@ import shutil
 
 from numpy.f2py.auxfuncs import throw_error
 
-from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY
+from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY, LOCATION_PYIMARISWRITER_ENV
 from metadata import (
     collect_all_metadata,
     get_first_entry,
@@ -41,8 +41,27 @@ from omezarr import OmeZarrV2Multiscale
 
 
 mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
+pyimariswriter_root_application = f'{LOCATION_PYIMARISWRITER_ENV} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL / "omezarr_to_ims.py"}'
 
 app = typer.Typer()
+
+
+def get_ims_channel_names_and_colors(metadata_by_channel: dict) -> tuple[list[str], list[tuple[float, float, float]]]:
+    channel_names = []
+    channel_colors = []
+
+    for channel_key, channel_data in metadata_by_channel.items():
+        first_tile = channel_data[0]
+        channel_value = first_tile.get('channel', channel_key)
+        if isinstance(channel_value, int):
+            channel_name = f'Ch{channel_value}'
+        else:
+            channel_name = str(channel_value)
+
+        channel_names.append(channel_name)
+        channel_colors.append(tuple(first_tile.get('rgb_representation', (0.5, 0.5, 0.5))))
+
+    return channel_names, channel_colors
 
 
 def get_omezarr_output_directory_for_btf_conversion(dir_loc: Path, file_type: str = '.btf') -> Path:
@@ -447,64 +466,66 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
 
     elif fused_file_type.lower() == 'omezarr' and final_file_type.lower() in {'ims', 'tiff'}:
         fused_out_dir_or_file = ensure_path(fused_out_dir_or_file)
-        tiff_series_dir_name = str(fused_out_dir_or_file.name[:-9]) + '_tiffstack'
-        tiff_series_out_dir = fused_out_dir_or_file.parent / tiff_series_dir_name
-        missing_tiff_planes_by_channel = get_missing_tiff_planes_by_channel(
-            slurm_log_dir,
-            tiff_series_out_dir,
-            reference_tile_omezarr,
-            num_channels=len(metadata_by_channel),
-            resolution_level=ims_resolution_level,
-        )
-
-        if not missing_tiff_planes_by_channel:
-            extraction_job_numbers = []
-            print(f'Skipping OME-Zarr to TIFF extraction: complete TIFF stack with per-plane success markers already exists at {tiff_series_out_dir}')
-        else:
-            extraction_job_numbers = queue_omezarr_tiff_extraction_arrays(
-                fused_omezarr_directory=fused_out_dir_or_file,
-                reference_tile_omezarr_directory=reference_tile_omezarr,
-                num_channels=len(metadata_by_channel),
-                output_directory=tiff_series_out_dir,
-                resolution_level=ims_resolution_level,
-                slurm_log_dir=slurm_log_dir,
-                username=username,
-                after_slurm_jobs=[job_number] if job_number else None,
-                missing_z_by_channel=missing_tiff_planes_by_channel,
-                prefix='composite',
-            )
-            if extraction_job_numbers:
-                job_number = extraction_job_numbers[-1]
-            total_missing_tiff_planes = sum(len(z_values) for z_values in missing_tiff_planes_by_channel.values())
-            print(f'Convert OME-Zarr to Tiff Stack: {extraction_job_numbers} ({total_missing_tiff_planes} missing planes across {len(missing_tiff_planes_by_channel)} channels)')
-
         if final_file_type.lower() == 'tiff':
+            tiff_series_dir_name = str(fused_out_dir_or_file.name[:-9]) + '_tiffstack'
+            tiff_series_out_dir = fused_out_dir_or_file.parent / tiff_series_dir_name
+            missing_tiff_planes_by_channel = get_missing_tiff_planes_by_channel(
+                slurm_log_dir,
+                tiff_series_out_dir,
+                reference_tile_omezarr,
+                num_channels=len(metadata_by_channel),
+                resolution_level=ims_resolution_level,
+            )
+
+            if not missing_tiff_planes_by_channel:
+                extraction_job_numbers = []
+                print(f'Skipping OME-Zarr to TIFF extraction: complete TIFF stack with per-plane success markers already exists at {tiff_series_out_dir}')
+            else:
+                extraction_job_numbers = queue_omezarr_tiff_extraction_arrays(
+                    fused_omezarr_directory=fused_out_dir_or_file,
+                    reference_tile_omezarr_directory=reference_tile_omezarr,
+                    num_channels=len(metadata_by_channel),
+                    output_directory=tiff_series_out_dir,
+                    resolution_level=ims_resolution_level,
+                    slurm_log_dir=slurm_log_dir,
+                    username=username,
+                    after_slurm_jobs=[job_number] if job_number else None,
+                    missing_z_by_channel=missing_tiff_planes_by_channel,
+                    prefix='composite',
+                )
+                if extraction_job_numbers:
+                    job_number = extraction_job_numbers[-1]
+                total_missing_tiff_planes = sum(len(z_values) for z_values in missing_tiff_planes_by_channel.values())
+                print(f'Convert OME-Zarr to Tiff Stack: {extraction_job_numbers} ({total_missing_tiff_planes} missing planes across {len(missing_tiff_planes_by_channel)} channels)')
+
             return
 
-        # Make ims from tiffseries
         from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
-        metadata = collect_all_metadata(dir_loc)
-        first_entry = get_first_entry(metadata)
-        res = determine_xyz_resolution(first_entry)  # zyx
-        res_z, res_y, res_x = res.z, res.y, res.x
 
         ome_zarr = OmeZarrV2Multiscale(reference_tile_omezarr)
         level_info = ome_zarr.get_level_zyx_info(ims_resolution_level)
         scale_zyx = level_info['scale_zyx']
-        res_z = scale_zyx[0]
-        res_y = scale_zyx[1]
-        res_x = scale_zyx[2]
+        res_z, res_y, res_x = scale_zyx
+        channel_names, channel_colors = get_ims_channel_names_and_colors(metadata_by_channel)
 
+        ims_out_file = fused_out_dir_or_file.parent / f'{fused_out_dir_or_file.name[:-9]}.ims'
+        cmd = f'{pyimariswriter_root_application} "{fused_out_dir_or_file}" "{ims_out_file}"'
+        cmd += f' --voxel-size-zyx-um {res_z} {res_y} {res_x}'
+        cmd += ' --channel-names ' + ' '.join(f'"{name}"' for name in channel_names)
+        cmd += ' --channel-colors ' + ' '.join(
+            f'"{rgb[0]},{rgb[1]},{rgb[2]}"' for rgb in channel_colors
+        )
+        cmd += f' --level {ims_resolution_level}'
 
-        cmd = f'{mesospim_root_application}/imaris.py make-ims-from-tiff-series'
-        cmd += f' "{tiff_series_out_dir}" --res {res_z} {res_y} {res_x} --run-conversion'
-        cmd += f' --out-dir {tiff_series_out_dir.parent}'
-
-        job_number = wrap_slurm(cmd,
-                                SLURM_PARAMETERS_IMARIS_CONVERTER, slurm_log_dir,
-                                after_slurm_jobs=extraction_job_numbers if extraction_job_numbers else ([job_number] if job_number else None), username=username,
-                                log_suffix=f'tiff_stack_to_ims')
-        print(f'Convert Tiff Stack to IMS File: {job_number}')
+        job_number = wrap_slurm(
+            cmd,
+            SLURM_PARAMETERS_IMARIS_CONVERTER,
+            slurm_log_dir,
+            after_slurm_jobs=[job_number] if job_number else None,
+            username=username,
+            log_suffix='omezarr_to_ims',
+        )
+        print(f'Convert OME-Zarr to IMS File: {job_number}')
 
 
 def queue_omezarr_tiff_extraction_arrays(
