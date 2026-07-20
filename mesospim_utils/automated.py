@@ -91,7 +91,7 @@ def queue_bigstitcher_xml(dir_loc: Path, collection_dir: Path, after_job_number:
 def queue_bigstitcher_alignment(dir_loc: Path, collection_dir: Path, final_file_type: str, ims_resolution_level: int = 0, after_job_number: int = None, supernice: bool = False):
     from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
 
-    if final_file_type.lower() == 'ims':
+    if final_file_type.lower() in {'ims', 'tiff'}:
         fused_file_type = 'omezarr'
     else:
         fused_file_type = final_file_type
@@ -122,8 +122,8 @@ def automated_method_slurm(dir_loc: Path,
                            # Input options: None, .ome.zarr, .btf. If None, will auto-detect based on contents of dir_loc
                            file_type: Annotated[str,typer.Option(help="Input file type: .ome.zarr, .btf. Default is automatically detected")]=None,
 
-                           # Final output options: omezarr, hdf5, ims
-                           final_file_type: Annotated[str,typer.Option(help="Bigstitcher compatible output file format: omezarr, hdf5, ims")]='omezarr',
+                           # Final output options: omezarr, hdf5, ims, tiff
+                           final_file_type: Annotated[str,typer.Option(help="Bigstitcher compatible output file format: omezarr, hdf5, ims, tiff")]='omezarr',
 
                            # Deconvolution Options: if decon==True, refractive_index is found in metadata or must be provided. No RI means no decon
                            decon: Annotated[bool,typer.Option(help="Deconvolution will proceed if refractive index is discovered in the metadata or provided manually")]=True,
@@ -134,7 +134,7 @@ def automated_method_slurm(dir_loc: Path,
                            num_parallel: Annotated[int,typer.Option(help="How many MesoSPIM tiles will be deconvolved in parallel on SLURM")]=None,
                            basicpy: Annotated[bool,typer.Option(help="Run BaSiCPy flat-field correction after deconvolution and before gain correction")]=False,
                            gain_correction: Annotated[bool,typer.Option(help="Run gain correction after deconvolution and BaSiCPy")]=False,
-                           ims_resolution_level: Annotated[int,typer.Option(help="OME-Zarr multiscale resolution level to convert when --final-file-type ims")]=0,
+                           ims_resolution_level: Annotated[int,typer.Option(help="OME-Zarr multiscale resolution level to convert when --final-file-type ims or tiff")]=0,
                            supernice: Annotated[bool,typer.Option(help="Submit all downstream slurm jobs will elevated nice value")]=False
                            ):
     '''
@@ -353,7 +353,7 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
 
 def get_intermediate_file_type_for_bigstitcher_alignment(final_file_type: str):
     '''
-    Given the desired final file type (omezarr, hdf5, ims) return the fused_file_type and final_file_type.
+    Given the desired final file type (omezarr, hdf5, ims, tiff) return the fused_file_type and final_file_type.
      fused_file_type is used for bigstitcher fusion.
      final_file_type is the final output format after bigstitcher alignment and fusion.
      '''
@@ -364,6 +364,10 @@ def get_intermediate_file_type_for_bigstitcher_alignment(final_file_type: str):
         return 'hdf5', 'hdf5'
     elif final_file_type.lower() == 'ims':
         return 'omezarr', 'ims'
+    elif final_file_type.lower() == 'tiff':
+        return 'omezarr', 'tiff'
+
+    raise ValueError(f'Unsupported final file type for BigStitcher alignment: {final_file_type}')
 
 
 
@@ -387,7 +391,7 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     source_omezarr_xml = does_dir_contain_bigstitcher_metadata(dir_loc)
     source_omezarr_dir = get_ome_zarr_directory_from_xml(source_omezarr_xml) if source_omezarr_xml else None
     reference_tile_omezarr = None
-    if fused_file_type.lower() == 'omezarr' and final_file_type.lower() == 'ims' and source_omezarr_dir is None:
+    if fused_file_type.lower() == 'omezarr' and final_file_type.lower() in {'ims', 'tiff'} and source_omezarr_dir is None:
         raise FileNotFoundError(f'Could not locate source OME-Zarr directory from BigStitcher metadata in {dir_loc}')
     if source_omezarr_dir is not None:
         reference_tile_omezarr = get_reference_multiscale_tile_path(source_omezarr_dir)
@@ -402,7 +406,7 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
 
     fused_out_dir_or_file = get_bigstitcher_fused_output_path(dir_loc, format=fused_file_type)
     tiff_series_out_dir = None
-    if fused_file_type.lower() == 'omezarr' and final_file_type.lower() == 'ims':
+    if fused_file_type.lower() == 'omezarr' and final_file_type.lower() in {'ims', 'tiff'}:
         tiff_series_out_dir = get_bigstitcher_tiff_series_output_path(fused_out_dir_or_file)
 
     if skip_bigstitcher:
@@ -441,8 +445,7 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         print(f'BigStitcher HDF5 Convert to IMS: {job_number}')
 
 
-    elif fused_file_type.lower() == 'omezarr' and final_file_type.lower() == 'ims':
-        from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
+    elif fused_file_type.lower() == 'omezarr' and final_file_type.lower() in {'ims', 'tiff'}:
         fused_out_dir_or_file = ensure_path(fused_out_dir_or_file)
         tiff_series_dir_name = str(fused_out_dir_or_file.name[:-9]) + '_tiffstack'
         tiff_series_out_dir = fused_out_dir_or_file.parent / tiff_series_dir_name
@@ -475,7 +478,11 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
             total_missing_tiff_planes = sum(len(z_values) for z_values in missing_tiff_planes_by_channel.values())
             print(f'Convert OME-Zarr to Tiff Stack: {extraction_job_numbers} ({total_missing_tiff_planes} missing planes across {len(missing_tiff_planes_by_channel)} channels)')
 
+        if final_file_type.lower() == 'tiff':
+            return
+
         # Make ims from tiffseries
+        from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
         metadata = collect_all_metadata(dir_loc)
         first_entry = get_first_entry(metadata)
         res = determine_xyz_resolution(first_entry)  # zyx

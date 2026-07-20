@@ -160,8 +160,10 @@ python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automate
 # 5) Optional preprocessing: if `--gain-correction` is enabled, it runs after BaSiCPy on the current OME-Zarr tiles and then rebuilds multiscales.
 # 6) A BigStitcher XML is generated for the final OME-Zarr tile collection.
 # 7) BigStitcher alignment and fusion run on SLURM using Fiji/BigStitcher.
-# 8) Final output is produced as OME-Zarr, HDF5, or IMS depending on `--final-file-type`.
+# 8) Final output is produced as OME-Zarr, HDF5, TIFF series, or IMS depending on `--final-file-type`.
 ```
+
+When `--final-file-type tiff`, BigStitcher still fuses to a montage OME-Zarr first, then the fused dataset is extracted as a TIFF series and processing stops there.
 
 If `--decon`, `--basicpy`, and `--gain-correction` are all enabled, execution order is always:
 
