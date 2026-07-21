@@ -1,4 +1,4 @@
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from collections import defaultdict
 from pprint import pprint as print
 import re
@@ -29,6 +29,22 @@ def collect_all_metadata(location: Path, prepare=True, alternate_json_save_path=
 
         if VERBOSE: print("Reading metadata json")
         metadata_by_channel = json_file_to_dict(save_json_path)
+
+        if should_refresh_cached_metadata(location, metadata_by_channel):
+            if VERBOSE:
+                print("Cached metadata entry count does not match raw metadata files; rebuilding metadata json")
+            meta_list = save_dir_of_meta_to_json(location, save_json_path)
+            metadata_by_channel = meta_list
+            if prepare:
+                metadata_by_channel = convert_paths(metadata_by_channel)
+                metadata_by_channel = convert_str_to_nums(metadata_by_channel)
+                metadata_by_channel = annotate_metadata(sort_meta_list(metadata_by_channel), location=location)
+
+                print("Saving annotated metadata json")
+                annotated_name = save_json_path.with_name(METADATA_ANNOTATED_FILENAME)
+                dict_to_json_file(metadata_by_channel, annotated_name)
+
+            return metadata_by_channel
 
         if prepare:
             metadata_by_channel = annotate_metadata(sort_meta_list(metadata_by_channel), location=location)
@@ -61,6 +77,25 @@ def collect_all_metadata(location: Path, prepare=True, alternate_json_save_path=
 def remove_max_projections(list_of_paths: list[Path]) -> list[Path]:
     list_of_paths = [ensure_path(x) for x in list_of_paths]
     return [entry for entry in list_of_paths if 'MAX_' not in entry.name]
+
+
+def count_metadata_entries(metadata):
+    if isinstance(metadata, list):
+        return len(metadata)
+
+    if isinstance(metadata, dict):
+        return sum(len(entries) for entries in metadata.values())
+
+    return 0
+
+
+def should_refresh_cached_metadata(location: Path, metadata) -> bool:
+    location = ensure_path(location)
+    meta_files = list(location.glob('*_meta.txt'))
+    if not meta_files:
+        return False
+
+    return count_metadata_entries(metadata) != len(meta_files)
 
 
 def determine_acquisition_format(location):
@@ -175,7 +210,7 @@ def annotate_metadata(metadata_by_channel, location=None):
             entry['resolution'] = determine_xyz_resolution(entry)
             entry['tile_shape'] = determine_tile_shape(entry)
             entry['tile_size_um'] = determine_tile_size_um(entry)
-            entry['file_name'] = entry.get('Metadata for file').name
+            entry['file_name'] = get_metadata_file_basename(entry.get('Metadata for file'))
             entry['file_name_no_extension'] = get_filename_without_extension(entry['file_name'])
             entry['refractive_index'] = determine_refractive_index_from_ETL_file_name(entry)
             entry['sheet'] = determine_sheet_direction(entry)
@@ -201,6 +236,18 @@ def get_filename_without_extension(file_name):
         if file_name.lower().endswith(ext):
             return file_name[:-len(ext)]
     return file_name
+
+
+def get_metadata_file_basename(file_name):
+    file_name = str(file_name)
+
+    # MesoSPIM metadata can store file names as Linux paths, Windows drive paths,
+    # or UNC paths. pathlib.Path on Linux does not split backslash-separated
+    # Windows paths correctly, so prefer a Windows-aware basename when needed.
+    if '\\' in file_name:
+        return PureWindowsPath(file_name).name
+
+    return Path(file_name).name
 
 def get_stage_direction(channel_data, grid_size):
     # Outputs tuple (y,x) where y and x are 1 or -1,
@@ -368,8 +415,22 @@ def determine_emission_wavelength(metadata_entry):
         return emission_wavelength
 
     if isinstance(emission_wavelength, str):
-        assert emission_wavelength.lower() in EMISSION_MAP, f"No emission wavelength found for channel: {color}"
-        emission_wavelength = EMISSION_MAP.get(emission_wavelength.lower())
+        mapped_emission_wavelength = EMISSION_MAP.get(emission_wavelength.lower())
+        if mapped_emission_wavelength is not None:
+            return mapped_emission_wavelength
+
+        for fallback_value in (
+            metadata_entry.get('channel'),
+            metadata_entry.get('CFG', {}).get('Laser'),
+        ):
+            if fallback_value is None:
+                continue
+
+            fallback_wavelength = extract_wavelength_from_filter(str(fallback_value))
+            if isinstance(fallback_wavelength, int):
+                return fallback_wavelength
+
+        raise ValueError(f"No emission wavelength found for filter: {emission_wavelength}")
 
     return emission_wavelength
 
