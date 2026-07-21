@@ -40,6 +40,10 @@
 
 ## Recent Change: IMS Export From Fused OME-Zarr
 
+- Follow-up robustness fix for direct IMS export: the SLURM-launched `omezarr_to_ims.py` command in `mesospim_utils/automated.py` now derives the target env root and `PyImarisWriter` package location from `general.location_pyimariswriter_environment` itself, then exports `LD_LIBRARY_PATH` before starting the dedicated interpreter. This avoids relying on conda activation hooks, the submitter's `CONDA_PREFIX`, or the submitter's Python environment when IMS jobs are submitted from a different env.
+- The `--final-file-type ims` path now builds IMS directly from the fused montage OME-Zarr via `mesospim_utils/omezarr_to_ims.py` and no longer depends on intermediate TIFF extraction.
+- Added `general.location_pyimariswriter_environment` in config so the direct IMS conversion can run under `/h20/home/iana/.conda/envs/pyimariswriter/bin/python` instead of the standard mesospim_utils environment.
+- The existing `--ims-resolution-level` option still controls the exported OME-Zarr multiscale level for both direct `ims` output and `tiff` output, with a default of `0`.
 - The `--final-file-type ims` path in `mesospim_utils/automated.py` no longer uses one bulk `extract-tiff-series` job.
 - Added `--ims-resolution-level` to `automated-method-slurm` and `big-stitcher-align`; default is `0`.
 - The fused OME-Zarr to IMS path now submits one SLURM array per channel, with one task per z-plane TIFF.
@@ -55,6 +59,13 @@
 - Follow-up follow-up follow-up follow-up follow-up follow-up: IMS TIFF extraction from fused OME-Zarr now batches work in 10-plane chunks per SLURM task. Array jobs are submitted at batch starts `0, 10, 20, ...` per channel, each task reads up to 10 full z-planes into memory in one OME-Zarr slice, and then skips rewriting any TIFFs that already exist with nonzero size while still emitting per-plane success markers for completion tracking.
 - Follow-up follow-up follow-up follow-up follow-up follow-up follow-up: the new per-channel batched TIFF extraction exposed a pre-existing `submit_array()` script-path collision. Separate channel arrays submitted into the same directory were both wrapping `sbatch.sh`, so the second submission could overwrite the first before execution and make channel-0 jobs run channel-1 commands. `mesospim_utils/slurm.py::submit_array()` now names the wrapped script from `log_prefix`/`log_suffix` (for example `sbatch_omezarr_to_tiff_stack_c00.sh`) so concurrent arrays in one directory do not clobber each other.
 - Follow-up follow-up follow-up follow-up follow-up: the downstream TIFF-to-IMS dependency path exposed a pre-existing bug in `slurm.py::sbatch_depends()` where multiple `afterok` job IDs were formatted as `--depend=afterok:job1 --kill-on-invalid-dep=yes :job2`, which `sbatch` rejects. This is now fixed to emit one valid colon-joined dependency list. While validating that fix, two additional pre-existing Python 3.12 parser issues in `slurm.py` were also normalized: command escaping in `submit_array()` and log filename formatting in `format_sbatch_wrap()`.
+
+## Recent Change: TIFF Series As A Final Automated Output
+
+- `mesospim_utils/automated.py automated-method-slurm` now accepts `--final-file-type tiff` in addition to `omezarr`, `hdf5`, and `ims`.
+- The new `tiff` final-output path reuses the existing fused OME-Zarr to TIFF-series extraction flow that was previously only used as the intermediate step for `ims`.
+- Behavior is intentionally minimal: BigStitcher still fuses to montage OME-Zarr first, TIFF extraction still supports partial resume via per-plane success markers, and the workflow now stops after TIFF extraction instead of queueing Imaris conversion.
+- The existing option name `--ims-resolution-level` was retained and now also controls the exported multiscale level for `--final-file-type tiff`.
 
 ## Recent Change: BigStitcher Rerun Skip Logic
 
@@ -103,6 +114,14 @@
 - Before this fix, metadata entries that already ended in `.ome.zarr` were rewritten to `.ome.zarr.ome.zarr`, which produced invalid `<zgroup path="...">` entries in generated BigStitcher XML.
 - The failure was reproduced on `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr.xml` and matched the user-reported BigStitcher `AllenOMEZarrProperties.getDataType(...)` NPE.
 - Regenerated that XML after the patch and confirmed the tile paths now end in a single `.ome.zarr` suffix.
+
+## Recent Change: BigStitcher XML Rewrite Plumbing And Success Marker Guard
+
+- Fixed `mesospim_utils/bigstitcher.py::mesospim_metadata_to_bigstitcher_xml()` so it now passes the caller-provided `modify_filename_in_xml` argument into `modify_file_names_in_annotated_metadata(...)` instead of silently ignoring it.
+- Added `normalize_ome_zarr_suffix()` in `mesospim_utils/metadata.py` to collapse repeated `.ome.zarr` suffixes and ensure the final tile name ends in exactly one `.ome.zarr`.
+- Tightened `mesospim_utils/automated.py::queue_bigstitcher_alignment()` so the `BIGSTITCHER_SUCCESS:` marker is printed only if the expected fused output path actually exists after Fiji exits.
+- Tightened `mesospim_utils/bigstitcher.py::is_bigstitcher_log_successful()` so explicit success markers only count when the fused output exists, and fallback log parsing now treats `exception` / `nullpointer` as failure markers.
+- Follow-up robustness fix: `mesospim_utils/bigstitcher.py::make_bigstitcher_slurm_dir_and_macro()` now avoids rerun failures when an existing `*.xml.backup` file in `bigstitcher/` is protected by another owner. If the default backup path is not writable it chooses a numbered backup filename, and it now uses `shutil.copyfile(...)` instead of `shutil.copy(...)` so shared filesystems that reject `chmod` on the destination do not abort setup.
 
 ## Recent Change: Decon Queueing After Preprocess
 
@@ -211,22 +230,10 @@
 - The repo still has no checked-in automated test suite in regular use.
 - Validation has been mostly smoke tests and code inspection.
 - BigStitcher/Fiji behavior, SLURM resource behavior, and config-driven workflows still need real environment verification after changes.
-- CLI `--help` smoke tests could not run in this environment because required runtime packages such as `psutil` and `tifffile` are not installed here.
 - Edited Python files were checked with `python -m py_compile` successfully.
 - `automated.py automated-method-slurm --help` succeeded in the configured `mesospim_utils` environment.
-- `preprocess.py --help` succeeded in `/h20/home/lab/miniconda3/envs/basicpy-cuda/bin/python` after removing the Typer dependency from that script.
-- After the `/tmp`-staging removal, `mesospim_utils/preprocess.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` and `mesospim_utils/basicpy_worker.py` compiled successfully in `/h20/home/lab/miniconda3/envs/basicpy-cuda/bin/python`.
 - `basicpy_worker.py --help` in the `basicpy-cuda` environment still hung past the local timeout during this session, so runtime validation of the new per-tile `.basicpy_tmp` path is still needed on a real dataset.
 - `mesospim_utils/automated.py`, `mesospim_utils/slurm.py`, and `mesospim_utils/preprocess.py` compiled successfully after restoring BigStitcher queueing and adding preprocess completion checks.
-- Direct validation against `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic` confirmed `is_preprocess_group_complete(...) == True` for both existing BasicPy channel/filter groups and both gain-correction channel/filter groups once the check was corrected to validate tile-level multiscales rather than the collection root.
-- `mesospim_utils/metadata.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after making the `.ome.zarr` filename rewrite idempotent.
-- Regenerated `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr.xml` and verified there were no remaining `.ome.zarr.ome.zarr` paths.
-- `mesospim_utils/automated.py` and `mesospim_utils/slurm.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after adding decon dependency chaining and RAM-estimation fallback behavior for preprocess workflows.
-- `mesospim_utils/automated.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after adding pre-decon OME-Zarr XML generation for the decon worker XML-cloning step.
-- `mesospim_utils/preprocess.py` and `mesospim_utils/basicpy_worker.py` compiled successfully in `/h20/home/lab/miniconda3/envs/mesospim_utils_v0.1/bin/python` after switching preprocess grouping to metadata-first discovery.
-- Validation on `/CBI_FastStore/test_data/mesospim/omezarr/eye/Mag4x_Ch488_Ch405.ome.zarr` now reports preprocess groups `[('405', 'Dapi'), ('488', '525/50 (GFP)')]` even though the tile directory names do not include filter tokens.
-- Validation on `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr` still reports the expected modern groups `[('488', 'GFP'), ('561', 'RFP')]`.
-- Validation on `/CBI_FastStore/test_data/mesospim/omezarr/012926_omezarr_exosomes_2/exosomes_test2_Mag16x_Ch488_Ch561.ome.zarr` now reports preprocess groups `[('488', '525/50 (GFP)'), ('561', '595/44 (RFP)')]` and correctly recognizes tile names containing `Flt525_50_(GFP)` / `Flt595_44_(RFP)`.
 - `python -m py_compile mesospim_utils/preprocess.py mesospim_utils/basicpy_worker.py` succeeded after the BaSiCPy fit-tile selection change.
 - `python -m py_compile mesospim_utils/preprocess.py` succeeded after the per-group `.basicpy_tmp` change for concurrent multi-channel BaSiCPy runs.
 - `python -m py_compile mesospim_utils/preprocess.py` succeeded after adding tile-level BaSiCPy resume checks.
@@ -236,11 +243,16 @@
 - `python -m py_compile mesospim_utils/rl.py` succeeded after the workflow reorder, confirming the decon worker still compiles against the updated orchestration path.
 - For the IMS export change, `python3.12 -m py_compile mesospim_utils/automated.py mesospim_utils/omezarr.py mesospim_utils/imaris.py` succeeded in this environment.
 - CLI help still could not be exercised here because runtime packages such as `typer` are not installed in the available Python 3.12 environment.
+- `python3 mesospim_utils/automated.py automated-method-slurm --help` still fails in this shell with `ModuleNotFoundError: No module named 'typer'`, so the new `tiff` CLI option was syntax-checked but not help-validated here.
 - The new BigStitcher skip logic was syntax-checked here with `python3 -m py_compile`, but still needs runtime verification against real SLURM logs and a real `_tiffstack` directory.
 - The partial IMS TIFF-resume change was syntax-checked here with `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py mesospim_utils/bigstitcher.py`, but still needs runtime verification against a partially populated `_tiffstack` plus real SLURM logs.
 - The 10-plane batched IMS TIFF extraction change was syntax-checked here with `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py mesospim_utils/omezarr.py`, but still needs runtime verification against real fused OME-Zarr chunking, partial `_tiffstack` reuse, and SLURM logs.
 - The `submit_array()` script-collision fix was syntax-checked here with `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/slurm.py`, but still needs runtime verification by re-running a two-channel IMS TIFF extraction and confirming channel-specific arrays execute the intended commands.
 - The SLURM dependency/log-format follow-up was syntax-checked here with `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/slurm.py`.
+- `python3 -m py_compile mesospim_utils/metadata.py mesospim_utils/bigstitcher.py mesospim_utils/automated.py` succeeded after the `.ome.zarr` normalization, BigStitcher success-marker guard, and backup-copy follow-up.
+- `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py mesospim_utils/omezarr.py mesospim_utils/bigstitcher.py` succeeded after adding `--final-file-type tiff` support to the automated BigStitcher workflow.
+- `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py mesospim_utils/constants.py mesospim_utils/omezarr_to_ims.py` should pass for the new direct IMS path, and `"/h20/home/iana/.conda/envs/pyimariswriter/bin/python" mesospim_utils/omezarr_to_ims.py --help` is the narrowest environment check for the dedicated converter.
+- `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py` succeeded after the direct IMS launcher was updated to export `LD_LIBRARY_PATH` from `location_pyimariswriter_environment`, and a shell-level check confirmed the derived paths resolve to `/h20/home/lab/miniconda3/envs/pyiw/lib` and `/h20/home/lab/miniconda3/envs/pyiw/lib/python3.10/site-packages/PyImarisWriter` without relying on the submitter environment.
 
 ## Open Questions
 
