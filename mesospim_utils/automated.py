@@ -41,9 +41,25 @@ from omezarr import OmeZarrV2Multiscale
 
 
 mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
-pyimariswriter_root_application = f'{LOCATION_PYIMARISWRITER_ENV} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL / "omezarr_to_ims.py"}'
 
 app = typer.Typer()
+
+
+def shell_double_quote(value: str | Path) -> str:
+    value = str(value)
+    return '"' + value.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def get_pyimariswriter_root_application() -> str:
+    pyimaris_python = LOCATION_PYIMARISWRITER_ENV
+    converter_script = LOCATION_OF_MESOSPIM_UTILS_INSTALL / 'omezarr_to_ims.py'
+
+    cmd = f'PYIW_PYTHON={shell_double_quote(pyimaris_python)}; '
+    cmd += 'PYIW_ENV_ROOT="$(dirname \"$(dirname \"$PYIW_PYTHON\")\")"; '
+    cmd += 'PYIW_SITE_PACKAGES="$($PYIW_PYTHON -c "import sysconfig; print(sysconfig.get_paths()[\\"purelib\\"])")"; '
+    cmd += 'export LD_LIBRARY_PATH="$PYIW_SITE_PACKAGES/PyImarisWriter:$PYIW_ENV_ROOT/lib:${LD_LIBRARY_PATH:-}"; '
+    cmd += f'$PYIW_PYTHON -u {shell_double_quote(converter_script)}'
+    return cmd
 
 
 def get_ims_channel_names_and_colors(metadata_by_channel: dict) -> tuple[list[str], list[tuple[float, float, float]]]:
@@ -509,7 +525,7 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         channel_names, channel_colors = get_ims_channel_names_and_colors(metadata_by_channel)
 
         ims_out_file = fused_out_dir_or_file.parent / f'{fused_out_dir_or_file.name[:-9]}.ims'
-        cmd = f'{pyimariswriter_root_application} "{fused_out_dir_or_file}" "{ims_out_file}"'
+        cmd = f'{get_pyimariswriter_root_application()} "{fused_out_dir_or_file}" "{ims_out_file}"'
         cmd += f' --voxel-size-zyx-um {res_z} {res_y} {res_x}'
         cmd += ' --channel-names ' + ' '.join(f'"{name}"' for name in channel_names)
         cmd += ' --channel-colors ' + ' '.join(
