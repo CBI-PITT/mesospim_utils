@@ -240,24 +240,19 @@ def automated_method_slurm(dir_loc: Path,
 
     if file_type == '.btf':
         print('Setting up script to convert BTF tiles to OME-Zarr before downstream processing')
-        from constants import SLURM_PARAMETERS_OMEZARR
-
         decon_ram_estimate_dir = dir_loc
         out_dir = get_omezarr_output_directory_for_btf_conversion(dir_loc, file_type=file_type)
-        cmd = ''
-        cmd += f'{mesospim_root_application}/automated.py convert-btf-tiles-to-omezarr-slurm-array'
-        cmd += f' {dir_loc}'
-        cmd += f' --file-type={file_type}'
-        cmd += f' --no-queue-alignment'
-        cmd += f' --no-make-xml'
-        cmd += f' --final-file-type {final_file_type}'
-        cmd += f' --ims-resolution-level {ims_resolution_level}'
-        if supernice:
-            cmd += f' --supernice'
-
-        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_OMEZARR, slurm_log_dir,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_{file_type[1:]}_to_omezarr')
-        print(f'Dependency process number: {job_number}')
+        job_number = convert_btf_tiles_to_omezarr_slurm_array(
+            dir_loc,
+            file_type=file_type,
+            queue_alignment=False,
+            final_file_type=final_file_type,
+            after_slurm_jobs=[job_number] if job_number else None,
+            supernice=supernice,
+            make_xml=False,
+            ims_resolution_level=ims_resolution_level,
+        )
+        print(f'OME-Zarr conversion process number: {job_number}')
         file_type = '.ome.zarr'
     else:
         decon_ram_estimate_dir = out_dir
@@ -305,7 +300,7 @@ def automated_method_slurm(dir_loc: Path,
 
 @app.command()
 def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf', queue_alignment: bool=True, final_file_type: str='omezarr',
-                                after_slurm_jobs: list[int]=None, supernice: bool=False, make_xml: bool=True, ims_resolution_level: int=0):
+                                 after_slurm_jobs: list[int]=None, supernice: bool=False, make_xml: bool=True, ims_resolution_level: int=0):
 
     if supernice:
         set_super_nice()
@@ -356,8 +351,8 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
     job_number = submit_array(cmd_list,
                      output_directory_for_omezarr_collection, SLURM_PARAMETERS_OMEZARR,
                      slurm_log_dir,
-                     after_slurm_jobs=None, username=username, log_suffix=f'convert_btf_to_omezarr'
-                              )
+                     after_slurm_jobs=after_slurm_jobs, username=username, log_suffix=f'convert_btf_to_omezarr'
+                               )
 
     print(f'OME-Zarr Conversion Array Job Number: {job_number}')
 
@@ -380,6 +375,8 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'queue_bigstitcher')
 
         print(f'Queued BigStitcher alignment process number: {job_number}')
+
+    return job_number
 
 
 
