@@ -104,17 +104,18 @@ def get_metadata_objective_name(metadata_entry):
 
 
 def resolve_decon_objective_parameters(objective=None, metadata_entry=None):
+    # For look first for objective if explicitly passed to the function
     if objective:
         if objective not in DECON_OBJECTIVES:
             available = ', '.join(sorted(DECON_OBJECTIVES)) if DECON_OBJECTIVES else 'none'
             raise KeyError(f"Decon objective '{objective}' not found in config. Available objectives: {available}")
 
-        return objective, dict(DECON_OBJECTIVES.get(objective, {}))
+        return objective, dict(DECON_OBJECTIVES.get(objective, {})), 'config'
 
     metadata_objective_parameters = validate_metadata_objective_parameters(metadata_entry)
     if metadata_objective_parameters:
-        objective_name = metadata_objective_parameters.get('name') or 'metadata_objective'
-        return objective_name, metadata_objective_parameters
+        objective_name = metadata_objective_parameters.get('name') or 'metadata_objective_no_name_supplied'
+        return objective_name, metadata_objective_parameters, 'mesospim_metadata'
 
     objective_name = get_metadata_objective_name(metadata_entry) or DECON_DEFAULT_OBJECTIVE
 
@@ -125,7 +126,7 @@ def resolve_decon_objective_parameters(objective=None, metadata_entry=None):
         available = ', '.join(sorted(DECON_OBJECTIVES)) if DECON_OBJECTIVES else 'none'
         raise KeyError(f"Decon objective '{objective_name}' not found in config. Available objectives: {available}")
 
-    return objective_name, dict(DECON_OBJECTIVES.get(objective_name, {}))
+    return objective_name, dict(DECON_OBJECTIVES.get(objective_name, {})), 'config'
 
 
 def resolve_multi_immersion_ri(value, sample_ri):
@@ -483,7 +484,7 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         emission_wavelength = meta_entry.get('emission_wavelength')
 
 
-    objective_name, objective_parameters = resolve_decon_objective_parameters(objective=objective, metadata_entry=meta_entry)
+    objective_name, objective_parameters, objective_parameters_derived_from = resolve_decon_objective_parameters(objective=objective, metadata_entry=meta_entry)
     if na is not None:
         objective_parameters['numerical_aperture'] = na
 
@@ -597,6 +598,7 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         print(f'--- OUT_LOCATION_TMP: {out_location}')
         print(f'--- OUT_LOCATION_FINAL: {final_out_location}')
         print(f'--- Objective: {objective_name}')
+        print(f'--- Objective Parameters Derived from: {objective_parameters_derived_from}')
         print(f'--- Depth of frames per run: {FRAMES_PER_DECON}')
         print(f'--- Iterations: {ITERATIONS}')
         print(f'--- NA: {na}')
