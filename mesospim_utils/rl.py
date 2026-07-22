@@ -56,7 +56,7 @@ def get_metadata_objective_section(metadata_entry):
     if not metadata_entry:
         return None
 
-    objective_parameters = metadata_entry.get('OBJECTIVE PARAMETERS')
+    objective_parameters = metadata_entry.get('OBJECTIVE PARAMETERS') or metadata_entry.get('OBJECTIVE_PARAMETERS')
     if isinstance(objective_parameters, dict) and objective_parameters:
         return objective_parameters
 
