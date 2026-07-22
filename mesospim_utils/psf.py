@@ -77,7 +77,7 @@ def get_psf(
         Whether to normalize the max value to 1. By default, True.
     model : str
         PSF model to use.  Must be one of 'vectorial', 'scalar', 'gaussian'.
-        By default 'vectorial'.
+        By default 'gaussian'.
 
     Returns
     -------
