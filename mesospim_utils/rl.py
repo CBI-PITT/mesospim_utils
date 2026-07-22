@@ -104,7 +104,7 @@ def get_metadata_objective_name(metadata_entry):
 
 
 def resolve_decon_objective_parameters(objective=None, metadata_entry=None):
-    # For look first for objective if explicitly passed to the function
+    # First look for objective if explicitly passed to the function
     if objective:
         if objective not in DECON_OBJECTIVES:
             available = ', '.join(sorted(DECON_OBJECTIVES)) if DECON_OBJECTIVES else 'none'
