@@ -23,7 +23,7 @@ def get_psf(
     ti0: float = 100000,
     oversample_factor: int = 3,
     normalize: bool = True,
-    model: str = "vectorial",
+    model: str = "gaussian",
 ):
     """Compute microscope PSF.
 
@@ -83,8 +83,6 @@ def get_psf(
     -------
     psf : np.ndarray
         The PSF array with dtype np.float64 and shape (len(zv), nx, nx)
-
-    **DEFAULTS are optimized for CBI MesoSPIM
 
     Library from:
     https://github.com/tlambert03/PSFmodels

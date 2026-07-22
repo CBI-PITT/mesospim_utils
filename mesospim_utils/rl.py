@@ -42,16 +42,15 @@ app = typer.Typer()
 
 REQUIRED_METADATA_OBJECTIVE_KEYS = (
     'name',
-    'na',
+    'numerical_aperture',
     'objective_immersion_ri_design',
     'objective_immersion_ri_actual',
-    'objective_working_distance_um',
+    'objective_working_distance_mm',
     'coverslip_ri_design',
     'coverslip_ri_actual',
-    'coverslip_thickness_actual_um',
-    'coverslip_thickness_design_um',
+    'coverslip_thickness_actual_mm',
+    'coverslip_thickness_design_mm',
 )
-
 
 def get_metadata_objective_section(metadata_entry):
     if not metadata_entry:
@@ -486,10 +485,10 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
 
     objective_name, objective_parameters = resolve_decon_objective_parameters(objective=objective, metadata_entry=meta_entry)
     if na is not None:
-        objective_parameters['na'] = na
+        objective_parameters['numerical_aperture'] = na
 
     sample_ri = refractive_index
-    na = objective_parameters.get('na')
+    na = objective_parameters.get('numerical_aperture')
 
     # If 'auto' is specified for immersion RI, use the sample RI as the actual immersion RI.
     # This is a common assumption when the objective is designed for immersion in the same medium as the sample.
@@ -501,11 +500,11 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         objective_parameters.get('objective_immersion_ri_actual'),
         sample_ri,
     )
-    objective_working_distance = objective_parameters.get('objective_working_distance_um')
+    objective_working_distance = objective_parameters.get('objective_working_distance_mm') * 1000 # millimeters to microns
     coverslip_ri_design = objective_parameters.get('coverslip_ri_design')
     coverslip_ri_actual = objective_parameters.get('coverslip_ri_actual')
-    coverslip_thickness_actual = objective_parameters.get('coverslip_thickness_actual_um')
-    coverslip_thickness_design = objective_parameters.get('coverslip_thickness_design_um')
+    coverslip_thickness_actual = objective_parameters.get('coverslip_thickness_actual_mm') * 1000 # millimeters to microns
+    coverslip_thickness_design = objective_parameters.get('coverslip_thickness_design_mm') * 1000 # millimeters to microns
     psf_model = 'gaussian'
 
     assert all([x is not None for x in (na, sample_ri, emission_wavelength, z_res, y_res, x_res,
@@ -554,10 +553,10 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         dz = z_res,
         NA = na,
         ns = sample_ri,
-        ni = objective_immersion_ri_actual, # Immersion in air
-        ni0 = objective_immersion_ri_design, # Air Obj
-        wvl = emission_wavelength/1000,
-        ti0 = objective_working_distance,
+        ni = objective_immersion_ri_actual,
+        ni0 = objective_immersion_ri_design,
+        wvl = emission_wavelength/1000, # nanometers to microns
+        ti0 = objective_working_distance, # (microns)
         tg = coverslip_thickness_actual, # coverslip thickness, experimental value (microns)
         tg0 = coverslip_thickness_design, # coverslip thickness, design value (microns)
         ng = coverslip_ri_actual, # coverslip refractive index, experimental value
