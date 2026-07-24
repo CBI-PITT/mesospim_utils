@@ -13,6 +13,9 @@ from utils import map_wavelength_to_RGB
 
 from constants import EMISSION_MAP, METADATA_FILENAME, METADATA_ANNOTATED_FILENAME, VERBOSE
 
+
+CHANNEL_ONLY_FILTER = '__channel_only__'
+
 def collect_all_metadata(location: Path, prepare=True, alternate_json_save_path=None) -> dict:
     """
     Collect all relevant metadata from mesospim Tile metadata files, sort by channel
@@ -112,11 +115,48 @@ def determine_acquisition_format(location):
         return '.tiff'
 
 
+def normalize_filter_name(filter_name):
+    if filter_name is None:
+        return CHANNEL_ONLY_FILTER
+
+    filter_name = str(filter_name).strip()
+    if not filter_name:
+        return CHANNEL_ONLY_FILTER
+
+    return filter_name
+
+
+def sanitize_channel_label_component(value):
+    value = str(value).strip()
+    value = value.replace(' ', '')
+    value = value.replace('/', '_')
+    value = value.replace('|', '_')
+    value = value.replace('(', '')
+    value = value.replace(')', '')
+    return value
+
+
+def build_channel_group_key(channel_value, filter_name):
+    channel_label = f'Ch{sanitize_channel_label_component(channel_value)}'
+    normalized_filter = normalize_filter_name(filter_name)
+    if normalized_filter == CHANNEL_ONLY_FILTER:
+        return channel_label
+
+    filter_label = sanitize_channel_label_component(normalized_filter)
+    return f'{channel_label}_Flt{filter_label}'
+
+
 def sort_meta_list(meta_list):
     '''
     take a list of dictionaries where each dictionary represents a metadata file from the mesospim.
     The meta_list is the output of function: save_dir_of_meta_to_json and read by function: json_file_to_dict(save_json_path)
     '''
+
+    if isinstance(meta_list, dict):
+        flattened_meta_list = []
+        for entries in meta_list.values():
+            flattened_meta_list.extend(entries)
+        meta_list = flattened_meta_list
 
     # Dictionary to store sorted data dynamically
     sorted_data = {}
@@ -149,11 +189,13 @@ def sort_meta_list(meta_list):
         # channel_number = int(channel_number)
 
         if tile_number is not None and channel_number is not None:
-            if channel_number not in sorted_data:
-                sorted_data[channel_number] = []  # Initialize list for new channel
+            filter_name = normalize_filter_name(entry.get('CFG', {}).get('Filter'))
+            channel_group_key = build_channel_group_key(channel_number, filter_name)
+            if channel_group_key not in sorted_data:
+                sorted_data[channel_group_key] = []  # Initialize list for new logical channel
 
             entry["tile_number"] = tile_number  # Add tile number to dictionary
-            sorted_data[channel_number].append(entry)
+            sorted_data[channel_group_key].append(entry)
 
     # Sort lists by tile number
     for channel in sorted_data:
@@ -168,11 +210,18 @@ def sort_meta_list(meta_list):
 
 
 def sort_key(key):
-    match = re.match(r"(\d+)([a-zA-Z]*)", str(key))
+    key = str(key)
+
+    if '_Flt' in key:
+        channel_part, filter_part = key.split('_Flt', 1)
+    else:
+        channel_part, filter_part = key, ''
+
+    match = re.match(r"(?:Ch)?(\d+)([a-zA-Z]*)", channel_part)
     if match:
         num_part = int(match.group(1))
         letter_part = match.group(2)
-        return (num_part, letter_part)
+        return (num_part, letter_part, filter_part)
     else:
         return (float('inf'), str(key))  # fallback for unexpected format
 
@@ -185,6 +234,12 @@ def annotate_metadata(metadata_by_channel, location=None):
     for color, data in metadata_by_channel.items():
         ch += 1
 
+        channel_match = re.match(r"Ch(?P<channel>[^_]+)", str(color))
+        if channel_match:
+            excitation_channel = channel_match.group('channel')
+        else:
+            excitation_channel = str(color)
+
         # Collect grid size information to be appended to each metadata parameter
         grid_size = determine_grid_size(data)
 
@@ -196,11 +251,15 @@ def annotate_metadata(metadata_by_channel, location=None):
 
         # Add 'emission_wavelength' to each metadata parameter
         for entry in data:
+            filter_name = normalize_filter_name(entry.get('CFG', {}).get('Filter'))
+            channel_label = build_channel_group_key(excitation_channel, filter_name)
 
             emission_wavelength = determine_emission_wavelength(entry)
 
             # Append info
-            entry['channel'] = color
+            entry['channel'] = str(excitation_channel)
+            entry['channel_identity'] = str(color)
+            entry['channel_label'] = channel_label
             entry['emission_wavelength'] = emission_wavelength
             entry['rgb_representation'] = map_wavelength_to_RGB(emission_wavelength)
             entry['grid_size'] = grid_size
