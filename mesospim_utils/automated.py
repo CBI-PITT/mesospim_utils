@@ -68,11 +68,7 @@ def get_ims_channel_names_and_colors(metadata_by_channel: dict) -> tuple[list[st
 
     for channel_key, channel_data in metadata_by_channel.items():
         first_tile = channel_data[0]
-        channel_value = first_tile.get('channel', channel_key)
-        if isinstance(channel_value, int):
-            channel_name = f'Ch{channel_value}'
-        else:
-            channel_name = str(channel_value)
+        channel_name = str(first_tile.get('channel_label', channel_key))
 
         channel_names.append(channel_name)
         channel_colors.append(tuple(first_tile.get('rgb_representation', (0.5, 0.5, 0.5))))

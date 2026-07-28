@@ -749,6 +749,18 @@ def replace_xml_zarr_relative_group_name(
 
     tree.write(output_path, encoding="utf-8", xml_declaration=True)
 
+
+def backup_original_xml_if_needed(xml_path: Path):
+    xml_path = ensure_path(xml_path)
+    if not xml_path.exists():
+        return
+
+    backup_path = xml_path.with_suffix(xml_path.suffix + '.original')
+    if backup_path.exists():
+        return
+
+    shutil.copyfile(xml_path, backup_path)
+
 ###############################################################################
 ##  Functions to facilitate making bigstitcher xml files from mesospim data  ##
 ###############################################################################
@@ -773,11 +785,12 @@ def mesospim_metadata_to_bigstitcher_xml(
     '''
 
     import xml.etree.ElementTree as ET
+    output_xml_path = ensure_path(output_xml_path)
     metadata_by_channel = collect_all_metadata(output_xml_path)
 
     if modify_filename_in_xml:
         print(f'Modifying file names in bigstitcher xml to be {modify_filename_in_xml} for all tiles')
-        metadata_by_channel = modify_file_names_in_annotated_metadata(metadata_by_channel)
+        metadata_by_channel = modify_file_names_in_annotated_metadata(metadata_by_channel, modify_filename_in_xml)
 
     first_metadata_entry = get_first_entry(metadata_by_channel)
 
@@ -924,10 +937,11 @@ def mesospim_metadata_to_bigstitcher_xml(
         id.text = str(idx)
 
         name = ET.SubElement(channel, 'name')
-        name.text = f'{tuple(metadata_by_channel.keys())[idx]} nm'
+        first_tile = metadata_by_channel[channel_wavelength][0]
+        name.text = str(first_tile.get('channel_label', channel_wavelength))
 
         color = ET.SubElement(channel, 'color')
-        rgb = metadata_by_channel[channel_wavelength][0].get('rgb_representation', [1,1,1]) # default white
+        rgb = first_tile.get('rgb_representation', [1,1,1]) # default white
         rgb = [int(x*255) for x in rgb] # convert 0-1 to 0-255 range
         color.text = f'{rgb[0]} {rgb[1]} {rgb[2]} {180}' # RGBA format A:180 slightly transparent to help with visual overlays
 
@@ -1015,6 +1029,7 @@ def mesospim_metadata_to_bigstitcher_xml(
 
     # Write xml to file with indentation
     print(f'Writing bigstitcher xml to {output_xml_path}')
+    backup_original_xml_if_needed(output_xml_path)
     tree = ET.ElementTree(spimdata)
     ET.indent(tree, space="  ")
 
