@@ -625,7 +625,10 @@ def verify_metadata_file_for_each_image(location: Path, file_ext: str):
 
     if VERBOSE: print('Verified a metadata file is present for each image file')
 
-
+def get_each_tile(metadata_by_channel):
+    '''Generator that yields each tile entry in metadata_by_channel'''
+    for channel in metadata_by_channel:
+        yield from metadata_by_channel.get(channel)
 #####################################################################################################################
 #####################################################################################################################
 
