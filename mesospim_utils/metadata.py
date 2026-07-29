@@ -8,7 +8,7 @@ import json
 from collections import namedtuple
 
 from utils import ensure_path, dict_to_json_file, json_file_to_dict, convert_paths_to_posix, convert_paths, \
-    convert_str_to_nums, get_user
+    convert_str_to_nums, get_user, get_inverse_path_parts
 from utils import map_wavelength_to_RGB
 
 from constants import EMISSION_MAP, METADATA_FILENAME, METADATA_ANNOTATED_FILENAME, VERBOSE
@@ -282,12 +282,33 @@ def annotate_metadata(metadata_by_channel, location=None):
             # entry['tile_number'] is added by the sort_meta_list() function
 
             if location:
-                entry['file_path'] = location / entry['file_name']
+                current_file_path = find_existing_file_by_working_backward_from_current_location(location, entry.get('Metadata for file'))
+                entry['file_path'] = current_file_path
+                # entry['file_path'] = location / entry['file_name']
 
             entry['username'] = get_user(entry.get('file_path',"")) # Default "" if no entry['file_path']
 
     metadata_by_channel = get_affine_transform(metadata_by_channel)
     return metadata_by_channel
+
+def find_existing_file_by_working_backward_from_current_location(metadata_location:Path, original_location:Path):
+    '''
+    Given metadata_location and original_location
+    Working backward from original_location
+    Append original_location suffixes to metadata_location until actual file is found
+    original_location can be extracted from metadata entry: "Metadata for file"
+
+    This is useful for finding ome.zarr tile directories when data has been
+    moved to a new location from where it was acquired
+    '''
+
+    metadata_location = ensure_path(metadata_location)
+    original_location = ensure_path(original_location)
+    for suffix in get_inverse_path_parts(original_location):
+        test_location = metadata_location / suffix
+        if test_location.exists():
+            return test_location
+    return None
 
 def get_filename_without_extension(file_name):
     extensions = ('.ome.zarr', '.btf', '.tif', '.tiff', '.h5', '.xml', '.txt')

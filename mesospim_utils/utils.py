@@ -100,6 +100,27 @@ def json_file_to_dict(file_name:Path):
     data = recursive_convert_to_useable_objects(data)
     return data
 
+def get_inverse_path_parts(path):
+    '''
+    for path = Path("/this/is/a/path/to/file")
+    [
+    Path("file"),
+    Path("to/file"),
+    Path("path/to/file"),
+    Path("a/path/to/file"),
+    Path("is/a/path/to/file"),
+    Path("this/is/a/path/to/file"),
+    ]
+    '''
+    path = ensure_path(path)
+    parts = path.parts[1:]  # remove "/" from an absolute POSIX path
+
+    suffixes = [
+        Path(*parts[i:])
+        for i in range(len(parts) - 1, -1, -1)
+    ]
+    return suffixes
+
 ############################################################################
 ###### Recursive functions to convert strings to useful objects ############
 ############################################################################
