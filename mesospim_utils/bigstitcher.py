@@ -46,6 +46,48 @@ from bigstitcher_macro_templates import (
 app = typer.Typer()
 
 
+def _validate_flip_direction(value: int, axis_name: str) -> int:
+    value = int(value)
+    if value not in (-1, 1):
+        raise ValueError(f'{axis_name} must be either 1 or -1, got {value}')
+    return value
+
+
+def _get_bigstitcher_grid_affine(tile_entry: dict[str, Any], flip_y: int = 1, flip_x: int = 1) -> str:
+    """
+    Build the BigStitcher XYZ affine string for a tile's metadata placement.
+
+    Mirror the tile within its own pixel space when requested while keeping the
+    tile footprint anchored to the same grid location by adding the
+    corresponding tile-size translation.
+    """
+
+    flip_y = _validate_flip_direction(flip_y, 'flip_y')
+    flip_x = _validate_flip_direction(flip_x, 'flip_x')
+
+    affine_voxel = tile_entry.get('affine_voxel')  # affine matrix in voxel coordinates (zyx)
+    z_shift = affine_voxel[0][-1]
+    y_shift = affine_voxel[1][-1]
+    x_shift = affine_voxel[2][-1]
+
+    tile_shape = tile_entry.get('tile_shape')
+    _, tile_size_y, tile_size_x = tile_shape
+
+    do_flip_y = flip_y == -1
+    do_flip_x = flip_x == -1
+
+    scale_x = -1.0 if do_flip_x else 1.0
+    scale_y = -1.0 if do_flip_y else 1.0
+    shift_x = x_shift + (tile_size_x - 1 if do_flip_x else 0)
+    shift_y = y_shift + (tile_size_y - 1 if do_flip_y else 0)
+
+    return (
+        f'{scale_x} {0.0} {0.0} {shift_x} '
+        f'{0.0} {scale_y} {0.0} {shift_y} '
+        f'{0.0} {0.0} {1.0} {z_shift}'
+    )
+
+
 def get_bigstitcher_omezarr_alignment_marco(
     input_omezarr_xml_path: Path,
     output_omezarr_path: Path,
@@ -769,7 +811,9 @@ def backup_original_xml_if_needed(xml_path: Path):
 def mesospim_metadata_to_bigstitcher_xml(
     output_xml_path: Path,
     different_relative_zarr_path: str = None,
-    modify_filename_in_xml: str = None
+    modify_filename_in_xml: str = None,
+    flip_y: int = 1,
+    flip_x: int = 1,
 ):
 
     '''
@@ -786,6 +830,8 @@ def mesospim_metadata_to_bigstitcher_xml(
 
     import xml.etree.ElementTree as ET
     output_xml_path = ensure_path(output_xml_path)
+    flip_y = _validate_flip_direction(flip_y, 'flip_y')
+    flip_x = _validate_flip_direction(flip_x, 'flip_x')
     metadata_by_channel = collect_all_metadata(output_xml_path)
 
     if modify_filename_in_xml:
@@ -1001,13 +1047,7 @@ def mesospim_metadata_to_bigstitcher_xml(
 
             affine = ET.SubElement(viewtransform, 'affine')
 
-            affine_voxel = tile_entry.get("affine_voxel") # affine matrix in voxel coordinates (zyx)
-            z_shift = affine_voxel[0][-1]
-            y_shift = affine_voxel[1][-1]
-            x_shift = affine_voxel[2][-1]
-            affine_voxel_bigstitcher = f'{1.0} {0.0} {0.0} {x_shift} {0.0} {1.0} {0.0} {y_shift} {0.0} {0.0} {1.0} {z_shift}'
-
-            affine.text = affine_voxel_bigstitcher
+            affine.text = _get_bigstitcher_grid_affine(tile_entry, flip_y=flip_y, flip_x=flip_x)
 
             viewtransform = ET.SubElement(viewregistration, 'ViewTransform')
             viewtransform.set('type', 'affine')
