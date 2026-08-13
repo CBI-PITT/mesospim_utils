@@ -4,16 +4,19 @@ from dataclasses import dataclass
 from gettext import translation
 from typing import Any, Mapping, MutableMapping, Optional, Sequence, Tuple, Union
 from pathlib import Path
+import json
 
 import typer
 
 import zarr
-import dask.array as da
 import numpy as np
 import tifffile
+from zarr.codecs import BloscCodec, BloscShuffle
 
 from ome_zarr_multiscale_writer.write import write_ome_zarr_multiscale
 from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
+from ome_zarr_multiscale_writer.zarr_tools import _ensure_v2_compressor
+from ome_zarr_multiscale_writer.zarr_reader import ZarrToOmeZarrConverter
 from mesospim_btf import mesospim_btf_helper
 
 
@@ -94,6 +97,133 @@ def convert_mesospim_btf_to_omezarr(
         compressor=compressor,
         compression_level=compression_level,
         max_workers=max_workers
+    )
+
+
+def _get_btf_shape_and_dtype(path: Path) -> tuple[tuple[int, ...], np.dtype]:
+    with tifffile.TiffFile(path, mode='r') as tif:
+        sample_data = tif.series[0].asarray()
+        zdim = len(tif.series)
+        shape = (zdim,) + tuple(sample_data.shape[1:])
+        return shape, sample_data.dtype
+
+
+def _iter_btf_planes(path: Path):
+    with tifffile.TiffFile(path, mode='r') as tif:
+        for z_plane in range(len(tif.series)):
+            yield tif.series[z_plane].asarray().squeeze()
+
+
+def _write_single_level_timeseries_omezarr(
+    btf_paths: Sequence[Path],
+    output_omezarr_path: Path,
+    voxel_size: tuple[float, float, float],
+    start_chunks: tuple[int, int, int, int, int],
+    compressor: str,
+    compression_level: int,
+    ome_version: str,
+) -> None:
+    first_shape, first_dtype = _get_btf_shape_and_dtype(btf_paths[0])
+    t_size = len(btf_paths)
+    z_size, y_size, x_size = first_shape
+
+    if first_dtype != np.uint16:
+        raise TypeError(f'Time-series OME-Zarr export expects uint16 source data, got {first_dtype}')
+
+    output_omezarr_path.mkdir(parents=True, exist_ok=True)
+    root = zarr.open_group(str(output_omezarr_path), mode='a', zarr_format=2)
+
+    compressor_obj = None
+    if compressor:
+        compressor_obj = _ensure_v2_compressor(
+            BloscCodec(
+                cname=compressor,
+                clevel=compression_level,
+                shuffle=BloscShuffle.bitshuffle,
+            )
+        )
+
+    chunks = tuple(int(value) for value in start_chunks)
+    if len(chunks) != 5:
+        raise ValueError(f'Expected 5D chunk shape for time-series export, got {chunks}')
+
+    level0 = zarr.create(
+        shape=(t_size, 1, z_size, y_size, x_size),
+        chunks=chunks,
+        dtype='uint16',
+        compressor=compressor_obj,
+        overwrite=True,
+        store=root.store,
+        path='0',
+        zarr_format=2,
+        dimension_separator='/',
+    )
+    level0.attrs['_ARRAY_DIMENSIONS'] = ['t', 'c', 'z', 'y', 'x']
+
+    for time_index, btf_path in enumerate(btf_paths):
+        for z_index, plane in enumerate(_iter_btf_planes(btf_path)):
+            level0[time_index, 0, z_index, :, :] = plane
+
+    converter = ZarrToOmeZarrConverter(str(output_omezarr_path), array_path='0', mode='r+')
+    converter.convert(
+        axes=[
+            {'name': 't', 'type': 'time'},
+            {'name': 'c', 'type': 'channel'},
+            {'name': 'z', 'type': 'space', 'unit': 'micrometer'},
+            {'name': 'y', 'type': 'space', 'unit': 'micrometer'},
+            {'name': 'x', 'type': 'space', 'unit': 'micrometer'},
+        ],
+        voxel_size=voxel_size,
+        ome_version=ome_version,
+    )
+@app.command()
+def convert_mesospim_btf_timeseries_to_omezarr(
+    input_manifest_json: Path,
+    output_omezarr_path: Path,
+    voxel_size: Optional[Tuple[float, float, float]] = (1, 1, 1),
+    ome_version: str = '0.4',
+    generate_multiscales: bool = True,
+    start_chunks: Optional[Tuple[int, int, int, int, int]] = (1, 1, 64, 256, 256),
+    end_chunks: Optional[Tuple[int, int, int, int, int]] = (1, 1, 64, 256, 256),
+    compressor: str = 'zstd',
+    compression_level: int = 5,
+    max_workers: Optional[int] = 8,
+) -> None:
+    input_manifest_json = Path(input_manifest_json)
+    output_omezarr_path = Path(output_omezarr_path)
+
+    with input_manifest_json.open('r') as handle:
+        manifest = json.load(handle)
+
+    btf_paths = [Path(path) for path in manifest.get('btf_paths', [])]
+    if not btf_paths:
+        raise ValueError(f'No btf_paths were found in manifest {input_manifest_json}')
+
+    first_shape, first_dtype = _get_btf_shape_and_dtype(btf_paths[0])
+    if len(first_shape) != 3:
+        raise ValueError(f'Expected 3D BTF stack at {btf_paths[0]}, got shape {first_shape}')
+
+    for btf_path in btf_paths[1:]:
+        shape, dtype = _get_btf_shape_and_dtype(btf_path)
+        if shape != first_shape:
+            raise ValueError(
+                f'All timepoints must have the same shape. '
+                f'Expected {first_shape}, got {shape} for {btf_path}'
+            )
+        if dtype != first_dtype:
+            raise ValueError(
+                f'All timepoints must have the same dtype. '
+                f'Expected {first_dtype}, got {dtype} for {btf_path}'
+            )
+
+    _write_single_level_timeseries_omezarr(
+        btf_paths=btf_paths,
+        output_omezarr_path=output_omezarr_path,
+        voxel_size=tuple(float(value) for value in voxel_size),
+        start_chunks=tuple(int(value) for value in start_chunks),
+        compressor=compressor,
+        compression_level=compression_level,
+        ome_version=ome_version,
     )
 
 

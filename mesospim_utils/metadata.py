@@ -16,6 +16,33 @@ from constants import EMISSION_MAP, METADATA_FILENAME, METADATA_ANNOTATED_FILENA
 
 CHANNEL_ONLY_FILTER = '__channel_only__'
 
+
+def parse_mesospim_filename_info(file_name):
+    file_name = get_metadata_file_basename(file_name)
+    file_name_lower = file_name.lower()
+
+    tile_match = re.search(r'tile(\d+)', file_name_lower)
+    channel_match = re.search(r'_ch(\d+)([a-zA-Z]*)_', file_name_lower)
+    timepoint_match = re.search(r'_time(\d+)', file_name_lower)
+
+    tile_number = int(tile_match.group(1)) if tile_match else None
+    if channel_match:
+        channel_number = channel_match.group(1) + channel_match.group(2)
+    else:
+        channel_number = None
+
+    timepoint = int(timepoint_match.group(1)) if timepoint_match else None
+    time_series_key = re.sub(r'_time\d+(?=\.[^.]+$)', '', file_name, flags=re.IGNORECASE)
+    time_series_key = get_filename_without_extension(time_series_key)
+
+    return {
+        'file_name': file_name,
+        'tile_number': tile_number,
+        'channel_number': channel_number,
+        'timepoint': timepoint,
+        'time_series_key': time_series_key,
+    }
+
 def collect_all_metadata(location: Path, prepare=True, alternate_json_save_path=None) -> dict:
     """
     Collect all relevant metadata from mesospim Tile metadata files, sort by channel
@@ -161,32 +188,17 @@ def sort_meta_list(meta_list):
     # Dictionary to store sorted data dynamically
     sorted_data = {}
 
-    # Regex patterns to extract Tile number and Channel
-    tile_pattern = re.compile(r"tile(\d+)")
-    # channel_pattern = re.compile(r"_Ch(\d+)_")
-    channel_pattern = re.compile(r"_ch(\d+)([a-zA-Z]*)_")
-
     # Process each entry
     for entry in meta_list:
-        file_path = Path(entry["Metadata for file"])  # Convert to Path object
-        file_name = file_path.name.lower()
+        filename_info = parse_mesospim_filename_info(entry["Metadata for file"])
+        file_name = filename_info['file_name'].lower()
         if VERBOSE > 1: print(f'{file_name=}')
 
-        # Extract tile number
-        tile_match = tile_pattern.search(file_name)  # Extract tile number from filename
-        tile_number = int(tile_match.group(1)) if tile_match else None
+        tile_number = filename_info['tile_number']
         if VERBOSE > 1: print(f'{tile_number=}')
 
-        # Extract channel number
-        channel_match = channel_pattern.search(file_name)  # Extract channel wavelength from filename
-        if VERBOSE > 1: print(f'{channel_match=}')
-        if channel_match:
-            channel_number = channel_match.group(1) + channel_match.group(2)  # e.g., '561b'
-        else:
-            channel_number = None
+        channel_number = filename_info['channel_number']
         if VERBOSE > 1: print(f'{channel_number=}')
-        # channel_number = channel_match.group(1) if channel_match else None
-        # channel_number = int(channel_number)
 
         if tile_number is not None and channel_number is not None:
             filter_name = normalize_filter_name(entry.get('CFG', {}).get('Filter'))
@@ -195,11 +207,13 @@ def sort_meta_list(meta_list):
                 sorted_data[channel_group_key] = []  # Initialize list for new logical channel
 
             entry["tile_number"] = tile_number  # Add tile number to dictionary
+            entry['timepoint'] = filename_info['timepoint']
+            entry['time_series_key'] = filename_info['time_series_key']
             sorted_data[channel_group_key].append(entry)
 
-    # Sort lists by tile number
+    # Sort lists by tile number and then timepoint if present
     for channel in sorted_data:
-        sorted_data[channel].sort(key=lambda x: x["tile_number"])
+        sorted_data[channel].sort(key=lambda x: (x["tile_number"], x.get('timepoint', -1), x.get('file_name', '')))
 
     # Ensure keys of metadata dictionary are always sorted in order of channel excitation
     sorted_data = dict(sorted(sorted_data.items(), key=lambda item: sort_key(item[0])))
@@ -260,6 +274,9 @@ def annotate_metadata(metadata_by_channel, location=None):
             entry['channel'] = str(excitation_channel)
             entry['channel_identity'] = str(color)
             entry['channel_label'] = channel_label
+            entry['timepoint'] = entry.get('timepoint')
+            entry['time_series_key'] = entry.get('time_series_key', entry.get('file_name_no_extension'))
+            entry['is_timeseries'] = entry.get('timepoint') is not None
             entry['emission_wavelength'] = emission_wavelength
             entry['rgb_representation'] = map_wavelength_to_RGB(emission_wavelength)
             entry['grid_size'] = grid_size
@@ -678,6 +695,58 @@ def get_first_entry(meta_dict):
     for ch in meta_dict:
         for entry in meta_dict[ch]:
             return entry
+
+
+def summarize_time_series(metadata_by_channel):
+    summary = {
+        'is_timeseries': False,
+        'time_series_key': None,
+        'timepoints': [],
+        'num_timepoints': 0,
+        'num_channels': len(metadata_by_channel),
+        'num_tiles': 0,
+        'entries': [],
+    }
+
+    groups = defaultdict(list)
+    tile_numbers = set()
+
+    for channel_entries in metadata_by_channel.values():
+        for entry in channel_entries:
+            tile_number = entry.get('tile_number')
+            if tile_number is not None:
+                tile_numbers.add(int(tile_number))
+
+            timepoint = entry.get('timepoint')
+            if timepoint is None:
+                continue
+
+            time_series_key = entry.get('time_series_key') or entry.get('file_name_no_extension')
+            groups[time_series_key].append(entry)
+
+    summary['num_tiles'] = len(tile_numbers)
+    if not groups:
+        return summary
+
+    dominant_key, dominant_entries = max(groups.items(), key=lambda item: len(item[1]))
+    dominant_entries = sorted(dominant_entries, key=lambda entry: entry.get('timepoint', -1))
+    timepoints = sorted({int(entry['timepoint']) for entry in dominant_entries if entry.get('timepoint') is not None})
+
+    summary['time_series_key'] = dominant_key
+    summary['timepoints'] = timepoints
+    summary['num_timepoints'] = len(timepoints)
+    summary['entries'] = dominant_entries
+    summary['is_timeseries'] = len(timepoints) > 1
+    return summary
+
+
+def is_single_tile_single_channel_timeseries(metadata_by_channel):
+    summary = summarize_time_series(metadata_by_channel)
+    return (
+        summary['is_timeseries']
+        and summary['num_channels'] == 1
+        and summary['num_tiles'] == 1
+    )
 
 
 def get_ch_entry_for_file_name(meta_dict, file_name, ignore_extension=True):

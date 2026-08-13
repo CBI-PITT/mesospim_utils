@@ -99,7 +99,7 @@ def read_zarr_block(
         x0:x1,
     ]
 
-    return (output_channel_index, bx, by, bz), np.ascontiguousarray(block), time.perf_counter() - start
+    return (time_index, output_channel_index, bx, by, bz), np.ascontiguousarray(block), time.perf_counter() - start
 
 
 def omezarr_to_ims_multichannel_parallel(
@@ -108,7 +108,6 @@ def omezarr_to_ims_multichannel_parallel(
     voxel_size_zyx_um: tuple[float, float, float],
     channel_names: list[str],
     channel_colors: list[tuple[float, float, float]] | None = None,
-    time_index: int = 0,
     level: int = 0,
     reader_threads: int = 16,
     writer_threads: int = 16,
@@ -134,9 +133,6 @@ def omezarr_to_ims_multichannel_parallel(
         raise ValueError(f'Expected TCZYX data with 5 dimensions, got {source.shape}')
 
     size_t, size_c, depth, height, width = source.shape
-    if not 0 <= time_index < size_t:
-        raise IndexError(f'time_index={time_index}, but source has T={size_t}')
-
     channel_names = list(channel_names)
     if not channel_names:
         raise ValueError('At least one channel name must be supplied')
@@ -171,7 +167,7 @@ def omezarr_to_ims_multichannel_parallel(
     blocks_y = math.ceil(height / block_y)
     blocks_z = math.ceil(depth / block_z)
     blocks_per_channel = blocks_x * blocks_y * blocks_z
-    expected_blocks = len(channel_names) * blocks_per_channel
+    expected_blocks = size_t * len(channel_names) * blocks_per_channel
 
     log(f'Source shape: {source.shape}')
     log(f'Source chunks: {source.chunks}')
@@ -179,7 +175,7 @@ def omezarr_to_ims_multichannel_parallel(
     log(f'Output channel names: {channel_names}')
     log(f'Writer block: Z={block_z}, Y={block_y}, X={block_x}')
 
-    image_size = PW.ImageSize(x=width, y=height, z=depth, c=len(channel_names), t=1)
+    image_size = PW.ImageSize(x=width, y=height, z=depth, c=len(channel_names), t=size_t)
     sample_size = PW.ImageSize(x=1, y=1, z=1, c=1, t=1)
     block_size = PW.ImageSize(x=block_x, y=block_y, z=block_z, c=1, t=1)
     dimension_sequence = PW.DimensionSequence('x', 'y', 'z', 'c', 't')
@@ -209,7 +205,8 @@ def omezarr_to_ims_multichannel_parallel(
         )
 
         block_coordinates = [
-            (source_channel_index, output_channel_index, bx, by, bz)
+            (time_index, source_channel_index, output_channel_index, bx, by, bz)
+            for time_index in range(size_t)
             for output_channel_index, source_channel_index in enumerate(range(len(channel_names)))
             for bz in range(blocks_z)
             for by in range(blocks_y)
@@ -227,7 +224,7 @@ def omezarr_to_ims_multichannel_parallel(
 
             def submit_one() -> bool:
                 try:
-                    source_channel_index, output_channel_index, bx, by, bz = next(coordinate_iterator)
+                    time_index, source_channel_index, output_channel_index, bx, by, bz = next(coordinate_iterator)
                 except StopIteration:
                     return False
 
@@ -247,7 +244,7 @@ def omezarr_to_ims_multichannel_parallel(
                     height,
                     depth,
                 )
-                pending[future] = (source_channel_index, output_channel_index, bx, by, bz)
+                pending[future] = (time_index, source_channel_index, output_channel_index, bx, by, bz)
                 return True
 
             for _ in range(max_prefetched_blocks):
@@ -259,17 +256,18 @@ def omezarr_to_ims_multichannel_parallel(
                 for future in completed:
                     submitted = pending.pop(future)
                     try:
-                        (output_channel_index, bx, by, bz), block, read_elapsed = future.result()
+                        (time_index, output_channel_index, bx, by, bz), block, read_elapsed = future.result()
                     except Exception as error:
-                        source_channel_index, output_channel_index, bx, by, bz = submitted
+                        time_index, source_channel_index, output_channel_index, bx, by, bz = submitted
                         raise RuntimeError(
                             'Failed reading block '
+                            f'time_index={time_index}, '
                             f'source_channel={source_channel_index}, output_channel={output_channel_index}, '
                             f'bx={bx}, by={by}, bz={bz}'
                         ) from error
 
                     total_worker_read_time += read_elapsed
-                    block_index = PW.ImageSize(x=bx, y=by, z=bz, c=output_channel_index, t=0)
+                    block_index = PW.ImageSize(x=bx, y=by, z=bz, c=output_channel_index, t=time_index)
                     if not converter.NeedCopyBlock(block_index):
                         raise RuntimeError(
                             f'Writer rejected block channel={output_channel_index}, bx={bx}, by={by}, bz={bz}'
@@ -313,7 +311,7 @@ def omezarr_to_ims_multichannel_parallel(
             color_infos.append(color_info)
 
         log('Calling Finish()')
-        converter.Finish(image_extents, parameters, [datetime.now()], color_infos, True)
+        converter.Finish(image_extents, parameters, [datetime.now() for _ in range(size_t)], color_infos, True)
     finally:
         if converter is not None:
             log('Destroying converter')
@@ -360,7 +358,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         metavar='R,G,B',
         help='Optional channel colors in source-channel order, one r,g,b triple per channel.',
     )
-    parser.add_argument('--time-index', type=int, default=0, help='OME-Zarr time index to export.')
     parser.add_argument('--level', type=int, default=0, help='OME-Zarr multiscale level to read.')
     parser.add_argument('--reader-threads', type=int, default=16, help='Number of parallel Zarr reader threads.')
     parser.add_argument('--writer-threads', type=int, default=16, help='Number of PyImarisWriter threads.')
@@ -385,7 +382,6 @@ def main() -> None:
         voxel_size_zyx_um=tuple(args.voxel_size_zyx_um),
         channel_names=args.channel_names,
         channel_colors=args.channel_colors,
-        time_index=args.time_index,
         level=args.level,
         reader_threads=args.reader_threads,
         writer_threads=args.writer_threads,

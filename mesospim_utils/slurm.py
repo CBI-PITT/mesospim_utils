@@ -602,11 +602,9 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
     commands = 'commands=(' 
     for ii in cmd:
         escaped_command = ii.replace('\n\n', ';').replace('\n', ';').replace('"', '\\"')
-        commands = f'{commands}\n\t"{escaped_command}' # Strip new lines and make single line commands
-        commands = commands.replace('then;','then').replace('else;','else') # Ensure no ; after then or else
+        commands = f'{commands}\n\t"{escaped_command}'
+        commands = commands.replace('then;','then').replace('else;','else')
         commands += '"'
-        # commands = commands.replace('"', '\\"')
-        # commands = f'{commands}\n\t{ii}'
     commands = f'{commands}\n\n)\n'
     # commands += '\n\necho "Running command: ${commands[$SLURM_ARRAY_TASK_ID]}"'
     commands += 'cmd="${commands[$SLURM_ARRAY_TASK_ID]}"\n'
@@ -614,7 +612,6 @@ def submit_array(cmd: list[str], location_for_sbatch_script, slurm_parameters_di
     # commands += r'cmd="${cmd//)/\\)}"' + "\n"
     commands += 'echo "Running command: $cmd"\n'
     commands += 'eval "$cmd"'
-    # commands += 'bash -lc "$cmd"'
 
     location_for_sbatch_script = ensure_path(location_for_sbatch_script)
     script_name_parts = ['sbatch']

@@ -12,7 +12,9 @@ from metadata import (
     get_first_entry,
     determine_xyz_resolution,
     affine_microns_to_translation_zyx,
-    get_entry_for_file_name
+    get_entry_for_file_name,
+    summarize_time_series,
+    is_single_tile_single_channel_timeseries,
 )
 from slurm import (
     basicpy_dir,
@@ -91,6 +93,106 @@ def get_omezarr_output_directory_for_btf_conversion(dir_loc: Path, file_type: st
         prefix = btf_file_list[0].name
 
     return dir_loc / 'ome_zarr' / f'{prefix}.ome.zarr'
+
+
+def get_timeseries_omezarr_output_path(dir_loc: Path, metadata_by_channel: dict, file_type: str = '.btf') -> Path:
+    dir_loc = ensure_path(dir_loc)
+    summary = summarize_time_series(metadata_by_channel)
+    base_name = summary.get('time_series_key') or get_omezarr_output_directory_for_btf_conversion(dir_loc, file_type=file_type).stem
+    return dir_loc / 'ome_zarr' / f'{base_name}.ome.zarr'
+
+
+def queue_direct_omezarr_to_ims(dir_loc: Path, omezarr_path: Path, metadata_by_channel: dict, after_job_number: int = None,
+                                ims_resolution_level: int = 0, voxel_size_zyx: tuple[float, float, float] | None = None) -> int:
+    from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
+
+    dir_loc = ensure_path(dir_loc)
+    omezarr_path = ensure_path(omezarr_path)
+    first_entry = get_first_entry(metadata_by_channel)
+    username = first_entry.get('username', '')
+    slurm_log_dir = get_slurm_log_location(dir_loc)
+
+    if voxel_size_zyx is None:
+        ome_zarr = OmeZarrV2Multiscale(omezarr_path)
+        level_info = ome_zarr.get_level_zyx_info(ims_resolution_level)
+        scale_zyx = level_info['scale_zyx']
+        res_z, res_y, res_x = scale_zyx
+    else:
+        res_z, res_y, res_x = voxel_size_zyx
+    channel_names, channel_colors = get_ims_channel_names_and_colors(metadata_by_channel)
+
+    ims_out_file = omezarr_path.parent / f'{omezarr_path.name[:-9]}.ims'
+    cmd = f'{get_pyimariswriter_root_application()} "{omezarr_path}" "{ims_out_file}"'
+    cmd += f' --voxel-size-zyx-um {res_z} {res_y} {res_x}'
+    cmd += ' --channel-names ' + ' '.join(f'"{name}"' for name in channel_names)
+    cmd += ' --channel-colors ' + ' '.join(
+        f'"{rgb[0]},{rgb[1]},{rgb[2]}"' for rgb in channel_colors
+    )
+    cmd += f' --level {ims_resolution_level}'
+
+    return wrap_slurm(
+        cmd,
+        SLURM_PARAMETERS_IMARIS_CONVERTER,
+        slurm_log_dir,
+        after_slurm_jobs=[after_job_number] if after_job_number else None,
+        username=username,
+        log_suffix='omezarr_to_ims_timeseries',
+    )
+
+
+def convert_btf_timeseries_to_omezarr(dir_loc: Path, metadata_by_channel: dict, file_type: str = '.btf',
+                                      after_slurm_jobs: list[int] = None, ims_resolution_level: int = 0,
+                                      final_file_type: str = 'omezarr'):
+    from constants import SLURM_PARAMETERS_OMEZARR
+    import json
+
+    dir_loc = ensure_path(dir_loc)
+    summary = summarize_time_series(metadata_by_channel)
+    if not is_single_tile_single_channel_timeseries(metadata_by_channel):
+        raise ValueError('Time-series conversion currently supports only one tile and one channel')
+
+    first_entry = get_first_entry(metadata_by_channel)
+    username = first_entry.get('username', '')
+    voxel_size = first_entry.get('resolution')
+    slurm_log_dir = get_slurm_log_location(dir_loc)
+    output_omezarr_path = get_timeseries_omezarr_output_path(dir_loc, metadata_by_channel, file_type=file_type)
+    output_omezarr_path.parent.mkdir(parents=True, exist_ok=True)
+
+    manifest_path = output_omezarr_path.parent / f'{output_omezarr_path.stem}_timeseries_manifest.json'
+    manifest = {
+        'btf_paths': [str(entry.get('file_path')) for entry in summary['entries']],
+        'timepoints': summary['timepoints'],
+    }
+    with manifest_path.open('w') as handle:
+        json.dump(manifest, handle, indent=2)
+
+    cmd = f'{mesospim_root_application}/omezarr.py convert-mesospim-btf-timeseries-to-omezarr'
+    cmd += f' "{manifest_path}" "{output_omezarr_path}"'
+    cmd += f' --voxel-size {voxel_size.z} {voxel_size.y} {voxel_size.x}'
+    cmd += ' --ome-version 0.4'
+    cmd += ' --generate-multiscales'
+
+    job_number = wrap_slurm(
+        cmd,
+        SLURM_PARAMETERS_OMEZARR,
+        slurm_log_dir,
+        after_slurm_jobs=after_slurm_jobs,
+        username=username,
+        log_suffix='convert_btf_timeseries_to_omezarr',
+    )
+
+    if final_file_type.lower() == 'ims':
+        job_number = queue_direct_omezarr_to_ims(
+            dir_loc=dir_loc,
+            omezarr_path=output_omezarr_path,
+            metadata_by_channel=metadata_by_channel,
+            after_job_number=job_number,
+            ims_resolution_level=ims_resolution_level,
+            voxel_size_zyx=(voxel_size.z, voxel_size.y, voxel_size.x),
+        )
+        print(f'Convert OME-Zarr time series to IMS File: {job_number}')
+
+    return job_number, output_omezarr_path
 
 
 def queue_bigstitcher_xml(dir_loc: Path, collection_dir: Path, after_job_number: int = None, supernice: bool = False):
@@ -237,19 +339,34 @@ def automated_method_slurm(dir_loc: Path,
     if file_type == '.btf':
         print('Setting up script to convert BTF tiles to OME-Zarr before downstream processing')
         decon_ram_estimate_dir = dir_loc
-        out_dir = get_omezarr_output_directory_for_btf_conversion(dir_loc, file_type=file_type)
-        job_number = convert_btf_tiles_to_omezarr_slurm_array(
-            dir_loc,
-            file_type=file_type,
-            queue_alignment=False,
-            final_file_type=final_file_type,
-            after_slurm_jobs=[job_number] if job_number else None,
-            supernice=supernice,
-            make_xml=False,
-            ims_resolution_level=ims_resolution_level,
-        )
-        print(f'OME-Zarr conversion process number: {job_number}')
-        file_type = '.ome.zarr'
+        if is_single_tile_single_channel_timeseries(metadata_by_channel):
+            print('Detected one-tile one-channel time-series BTF dataset; bypassing BigStitcher')
+            job_number, out_dir = convert_btf_timeseries_to_omezarr(
+                dir_loc,
+                metadata_by_channel,
+                file_type=file_type,
+                after_slurm_jobs=[job_number] if job_number else None,
+                ims_resolution_level=ims_resolution_level,
+                final_file_type=final_file_type,
+            )
+            print(f'OME-Zarr time-series conversion process number: {job_number}')
+            if final_file_type.lower() in {'omezarr', 'ims'}:
+                return
+            file_type = '.ome.zarr'
+        else:
+            out_dir = get_omezarr_output_directory_for_btf_conversion(dir_loc, file_type=file_type)
+            job_number = convert_btf_tiles_to_omezarr_slurm_array(
+                dir_loc,
+                file_type=file_type,
+                queue_alignment=False,
+                final_file_type=final_file_type,
+                after_slurm_jobs=[job_number] if job_number else None,
+                supernice=supernice,
+                make_xml=False,
+                ims_resolution_level=ims_resolution_level,
+            )
+            print(f'OME-Zarr conversion process number: {job_number}')
+            file_type = '.ome.zarr'
     else:
         decon_ram_estimate_dir = out_dir
 
