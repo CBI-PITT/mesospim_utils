@@ -114,6 +114,18 @@ def _iter_btf_planes(path: Path):
             yield tif.series[z_plane].asarray().squeeze()
 
 
+def _iter_btf_volume_blocks(path: Path, z_block_size: int):
+    with tifffile.TiffFile(path, mode='r') as tif:
+        zdim = len(tif.series)
+        if z_block_size <= 0:
+            raise ValueError(f'z_block_size must be positive, got {z_block_size}')
+
+        for z_start in range(0, zdim, z_block_size):
+            z_stop = min(z_start + z_block_size, zdim)
+            block_planes = [tif.series[z_index].asarray().squeeze() for z_index in range(z_start, z_stop)]
+            yield z_start, np.stack(block_planes, axis=0)
+
+
 def _write_single_level_timeseries_omezarr(
     btf_paths: Sequence[Path],
     output_omezarr_path: Path,
@@ -146,6 +158,9 @@ def _write_single_level_timeseries_omezarr(
     chunks = tuple(int(value) for value in start_chunks)
     if len(chunks) != 5:
         raise ValueError(f'Expected 5D chunk shape for time-series export, got {chunks}')
+    chunk_t, chunk_c, chunk_z, chunk_y, chunk_x = chunks
+    if chunk_t != 1 or chunk_c != 1:
+        raise ValueError(f'Time-series export expects chunks of 1 in t and c, got {chunks}')
 
     level0 = zarr.create(
         shape=(t_size, 1, z_size, y_size, x_size),
@@ -160,9 +175,23 @@ def _write_single_level_timeseries_omezarr(
     )
     level0.attrs['_ARRAY_DIMENSIONS'] = ['t', 'c', 'z', 'y', 'x']
 
+    # Write chunk-aligned 3D blocks so the on-disk layout exactly matches the
+    # chunks the direct IMS exporter will later read from the OME-Zarr.
     for time_index, btf_path in enumerate(btf_paths):
-        for z_index, plane in enumerate(_iter_btf_planes(btf_path)):
-            level0[time_index, 0, z_index, :, :] = plane
+        for z_start, volume_block in _iter_btf_volume_blocks(btf_path, chunk_z):
+            z_stop = z_start + volume_block.shape[0]
+
+            for y_start in range(0, y_size, chunk_y):
+                y_stop = min(y_start + chunk_y, y_size)
+                for x_start in range(0, x_size, chunk_x):
+                    x_stop = min(x_start + chunk_x, x_size)
+                    level0[
+                        time_index,
+                        0,
+                        z_start:z_stop,
+                        y_start:y_stop,
+                        x_start:x_stop,
+                    ] = volume_block[:, y_start:y_stop, x_start:x_stop]
 
     converter = ZarrToOmeZarrConverter(str(output_omezarr_path), array_path='0', mode='r+')
     converter.convert(
