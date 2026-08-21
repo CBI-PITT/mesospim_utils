@@ -439,7 +439,7 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
 
     if skip_bigstitcher:
         print(f'Skipping BigStitcher rerun: {skip_reason}')
-        job_number = None
+        return
     else:
         bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type)
         cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
@@ -451,16 +451,14 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'align_fuse_bigstitcher')
         print(f'BigStitcher process number: {job_number}')
 
-    if final_file_type.lower() == 'omezarr' and not final_file_type.lower() == 'ims':
-        if skip_bigstitcher:
-            return
+    if fused_file_type.lower() == 'omezarr':
         cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
         cmd += f' "{dir_loc}" "{fused_out_dir_or_file}"'
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'fix_bigstitcher_omezarr_metadata')
         print(f'BigStitcher Fix OME-Zarr Metadata Scale: {job_number}')
 
-    elif fused_file_type.lower() == 'hdf5' and final_file_type.lower() == 'ims':
+    if fused_file_type.lower() == 'hdf5' and final_file_type.lower() == 'ims':
         from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
         metadata = collect_all_metadata(dir_loc)
         first_entry = get_first_entry(metadata)
