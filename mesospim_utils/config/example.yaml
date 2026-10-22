@@ -197,6 +197,25 @@ slurm:
     'PARALLEL_JOBS': 4
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  multiview_stitcher:
+    # Python-based stitching via multiview-stitcher, CPU only
+    # If absent, falls back to the bigstitcher SLURM parameters
+    'PARTITION': 'compute,gpu,ai' #multiple partitions can be specified with comma separation part1,par2'
+    'CPUS': 32
+    'JOB_LABEL': 'ms_mvs'
+    'RAM_GB': 512
+    'GRES':
+    'PARALLEL_JOBS': 4
+    'NICE': 0
+    'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+multiview_stitcher:
+  registration_res_level: 3 # Multiscale level used for pairwise tile registration. Lower is finer and slower, higher is coarser and faster
+  pre_registration_pruning_method: 'keep_axis_aligned' # None, 'alternating_pattern', 'keep_axis_aligned', 'otsu_threshold_on_overlap', 'shortest_paths_overlap_weighted'
+  output_chunksize: [256, 256, 256] # z,y,x chunk size of the fused output in voxels
+  blending_widths: 'automated' # 'automated' derives widths from voxel size, or [z,y,x] in microns
+  fusion_batch_size: 100 # Number of fused chunks scheduled at a time during fusion
+  fusion_cache_chunks: [256, 256, 256] # z,y,x chunk size of the rechunked fusion cache tiles. Fusion reads small crops per output chunk, and the omezarr writer's huge tile chunks (~1.4 GB) make every crop pull whole slabs, so tiles are rechunked into a cache before fusion
+  montage_compressor: {'id': 'blosc', 'cname': 'zstd', 'clevel': 5, 'shuffle': 2} # Compressor for the fused montage zarr. Without it zarr defaults to zstd level 0, i.e. uncompressed output
 bigstitcher:
   fiji_install_folder: "" # If empty "", will use Fiji installed with mesospim_utils
   downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher

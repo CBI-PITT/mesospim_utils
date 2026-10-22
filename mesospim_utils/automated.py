@@ -37,7 +37,12 @@ from bigstitcher import (does_dir_contain_bigstitcher_metadata,
                          is_bigstitcher_tiff_series_complete,
                          is_tiff_generation_log_successful,
                          should_skip_bigstitcher_run)
+from mv_stitcher import should_skip_multiview_stitcher_run
 from omezarr import OmeZarrV2Multiscale
+
+
+STITCHING_BACKEND_DEFAULT = 'multiview_stitcher'
+STITCHING_BACKEND_CHOICES = {'multiview_stitcher', 'bigstitcher'}
 
 
 mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
@@ -119,7 +124,7 @@ def queue_bigstitcher_xml(dir_loc: Path, collection_dir: Path, after_job_number:
     )
 
 
-def queue_bigstitcher_alignment(dir_loc: Path, collection_dir: Path, final_file_type: str, ims_resolution_level: int = 0, after_job_number: int = None, supernice: bool = False):
+def queue_bigstitcher_alignment(dir_loc: Path, collection_dir: Path, final_file_type: str, ims_resolution_level: int = 0, after_job_number: int = None, supernice: bool = False, stitching_backend: str = STITCHING_BACKEND_DEFAULT):
     from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
 
     if final_file_type.lower() in {'ims', 'tiff'}:
@@ -136,6 +141,7 @@ def queue_bigstitcher_alignment(dir_loc: Path, collection_dir: Path, final_file_
     cmd += f' {collection_dir.parent}'
     cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
     cmd += f' --ims-resolution-level {ims_resolution_level}'
+    cmd += f' --stitching-backend {stitching_backend}'
     if supernice:
         cmd += ' --supernice'
 
@@ -165,9 +171,10 @@ def automated_method_slurm(dir_loc: Path,
                            num_parallel: Annotated[int,typer.Option(help="How many MesoSPIM tiles will be deconvolved in parallel on SLURM")]=None,
                            basicpy: Annotated[bool,typer.Option(help="Run BaSiCPy flat-field correction after deconvolution and before gain correction")]=False,
                            gain_correction: Annotated[bool,typer.Option(help="Run gain correction after deconvolution and BaSiCPy")]=False,
-                           ims_resolution_level: Annotated[int,typer.Option(help="OME-Zarr multiscale resolution level to convert when --final-file-type ims or tiff")]=0,
-                           supernice: Annotated[bool,typer.Option(help="Submit all downstream slurm jobs will elevated nice value")]=False
-                           ):
+                            ims_resolution_level: Annotated[int,typer.Option(help="OME-Zarr multiscale resolution level to convert when --final-file-type ims or tiff")]=0,
+                            stitching_backend: Annotated[str,typer.Option(help="Stitching backend: multiview_stitcher (default) or bigstitcher")]=STITCHING_BACKEND_DEFAULT,
+                            supernice: Annotated[bool,typer.Option(help="Submit all downstream slurm jobs will elevated nice value")]=False
+                            ):
     '''
     Automate the processing of all data in a mesospim directory using SLURM
     The only required argument is the directory location of the mesospim data.
@@ -191,12 +198,20 @@ def automated_method_slurm(dir_loc: Path,
 
     Default:
     deconvolution if RI information is found in metadata
-    stitching via bigstitcher alignment of omezarr
+    stitching via multiview-stitcher alignment of omezarr (BigStitcher is used when --stitching-backend bigstitcher is set)
     fusion of data into a single omezarr file
     '''
 
     if supernice:
         set_super_nice()
+
+    if stitching_backend not in STITCHING_BACKEND_CHOICES:
+        raise ValueError(f'Unsupported stitching backend: {stitching_backend}. Supported backends: {sorted(STITCHING_BACKEND_CHOICES)}')
+    if final_file_type.lower() == 'hdf5' and stitching_backend == 'multiview_stitcher':
+        raise ValueError(
+            'multiview-stitcher does not support hdf5 output. '
+            'Use --final-file-type omezarr/ims/tiff or set --stitching-backend bigstitcher.'
+        )
 
     from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER, SLURM_PARAMETERS_FOR_DEPENDENCIES, SLURM_PARAMETERS_OMEZARR
 
@@ -247,6 +262,7 @@ def automated_method_slurm(dir_loc: Path,
             supernice=supernice,
             make_xml=False,
             ims_resolution_level=ims_resolution_level,
+            stitching_backend=stitching_backend,
         )
         print(f'OME-Zarr conversion process number: {job_number}')
         file_type = '.ome.zarr'
@@ -287,16 +303,16 @@ def automated_method_slurm(dir_loc: Path,
         file_type = '.ome.zarr'
 
     if file_type == '.ome.zarr':
-        print('Setting up script to manage BigStitcher conversions after OME-Zarr preprocessing/deconvolution')
+        print('Setting up script to manage stitching conversions after OME-Zarr preprocessing/deconvolution')
         job_number = queue_bigstitcher_xml(dir_loc, out_dir, after_job_number=job_number, supernice=supernice)
         print(f'Queued BigStitcher XML build process number: {job_number}')
-        job_number = queue_bigstitcher_alignment(dir_loc, out_dir, final_file_type, ims_resolution_level=ims_resolution_level, after_job_number=job_number, supernice=supernice)
+        job_number = queue_bigstitcher_alignment(dir_loc, out_dir, final_file_type, ims_resolution_level=ims_resolution_level, after_job_number=job_number, supernice=supernice, stitching_backend=stitching_backend)
         print(f'Dependency process number: {job_number}')
 
 
 @app.command()
 def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf', queue_alignment: bool=True, final_file_type: str='omezarr',
-                                 after_slurm_jobs: list[int]=None, supernice: bool=False, make_xml: bool=True, ims_resolution_level: int=0):
+                                 after_slurm_jobs: list[int]=None, supernice: bool=False, make_xml: bool=True, ims_resolution_level: int=0, stitching_backend: str=STITCHING_BACKEND_DEFAULT):
 
     if supernice:
         set_super_nice()
@@ -364,6 +380,7 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
         cmd += f' {output_directory_for_omezarr_collection.parent}'
         cmd += f' --fused-file-type {fused_file_type} --final-file-type {final_file_type}'
         cmd += f' --ims-resolution-level {ims_resolution_level}'
+        cmd += f' --stitching-backend {stitching_backend}'
         if supernice:
             cmd += f' --supernice'
 
@@ -400,15 +417,25 @@ def get_intermediate_file_type_for_bigstitcher_alignment(final_file_type: str):
 
 
 @app.command()
-def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file_type: str='omezarr', ims_resolution_level: int=0, supernice: bool=False):
+def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file_type: str='omezarr', ims_resolution_level: int=0, stitching_backend: str=STITCHING_BACKEND_DEFAULT, supernice: bool=False):
 
     if supernice:
         set_super_nice()
 
-    print('Setting up script to run omezarr alignment')
+    if stitching_backend not in STITCHING_BACKEND_CHOICES:
+        raise ValueError(f'Unsupported stitching backend: {stitching_backend}. Supported backends: {sorted(STITCHING_BACKEND_CHOICES)}')
+    if fused_file_type.lower() == 'hdf5' and stitching_backend == 'multiview_stitcher':
+        raise ValueError(
+            'multiview-stitcher does not support hdf5 output. '
+            'Use --final-file-type omezarr/ims/tiff or set --stitching-backend bigstitcher.'
+        )
+
+    print(f'Setting up script to run omezarr alignment using stitching backend: {stitching_backend}')
     from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
+    from constants import SLURM_PARAMETERS_FOR_MULTIVIEW_STITCHER
     from constants import SLURM_PARAMETERS_FOR_DEPENDENCIES
     from string_templates import BIGSTITCHER_ALIGN_TEMPLATE
+    from mv_stitcher import MULTIVIEW_STITCHER_SUCCESS_MARKER
 
     print(f'Extracting metadata from {dir_loc}')
     metadata_by_channel = collect_all_metadata(dir_loc)
@@ -424,22 +451,42 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     if source_omezarr_dir is not None:
         reference_tile_omezarr = get_reference_multiscale_tile_path(source_omezarr_dir)
 
-    skip_bigstitcher, skip_reason = should_skip_bigstitcher_run(
-        dir_loc,
-        fused_file_type,
-        final_file_type,
-        slurm_log_dir,
-        metadata_by_channel,
-    )
+    if stitching_backend == 'multiview_stitcher':
+        skip_backend_run, skip_reason = should_skip_multiview_stitcher_run(
+            dir_loc,
+            fused_file_type,
+            final_file_type,
+            slurm_log_dir,
+        )
+    else:
+        skip_backend_run, skip_reason = should_skip_bigstitcher_run(
+            dir_loc,
+            fused_file_type,
+            final_file_type,
+            slurm_log_dir,
+            metadata_by_channel,
+        )
 
     fused_out_dir_or_file = get_bigstitcher_fused_output_path(dir_loc, format=fused_file_type)
     tiff_series_out_dir = None
     if fused_file_type.lower() == 'omezarr' and final_file_type.lower() in {'ims', 'tiff'}:
         tiff_series_out_dir = get_bigstitcher_tiff_series_output_path(fused_out_dir_or_file)
 
-    if skip_bigstitcher:
-        print(f'Skipping BigStitcher rerun: {skip_reason}')
+    if skip_backend_run:
+        print(f'Skipping {stitching_backend} rerun: {skip_reason}')
         job_number = None
+    elif stitching_backend == 'multiview_stitcher':
+        cmd = f'{mesospim_root_application}/mv_stitcher.py stitch-and-fuse'
+        cmd += f' {dir_loc}'
+        cmd += f' --fused-file-type {fused_file_type}'
+        if supernice:
+            cmd += ' --supernice'
+        cmd += f' && [ -e "{fused_out_dir_or_file}" ]'
+        cmd += f' && printf "{MULTIVIEW_STITCHER_SUCCESS_MARKER} {Path(fused_out_dir_or_file).name}\\n"'
+
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_MULTIVIEW_STITCHER, slurm_log_dir,
+                                after_slurm_jobs=None, username=username, log_suffix=f'multiview_stitcher')
+        print(f'multiview-stitcher process number: {job_number}')
     else:
         bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type)
         cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
@@ -452,7 +499,11 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         print(f'BigStitcher process number: {job_number}')
 
     if final_file_type.lower() == 'omezarr' and not final_file_type.lower() == 'ims':
-        if skip_bigstitcher:
+        if stitching_backend == 'multiview_stitcher':
+            # multiview-stitcher embeds physical scale metadata in the fused output,
+            # so the BigStitcher scale-fix step is not needed
+            return
+        if skip_backend_run:
             return
         cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
         cmd += f' "{dir_loc}" "{fused_out_dir_or_file}"'

@@ -196,3 +196,19 @@ SLURM_PARAMETERS_FOR_BIGSTITCHER = slurm.get('bigstitcher')
 
 
 ########################################################################################################################
+####  Multiview Stitcher constants ###
+########################################################################################################################
+MULTIVIEW_STITCHER = config.get('multiview_stitcher', {})
+
+MVS_REGISTRATION_RES_LEVEL = MULTIVIEW_STITCHER.get('registration_res_level', 3)
+MVS_PRE_REGISTRATION_PRUNING_METHOD = MULTIVIEW_STITCHER.get('pre_registration_pruning_method', 'keep_axis_aligned')
+MVS_OUTPUT_CHUNKSIZE = MULTIVIEW_STITCHER.get('output_chunksize', [256, 256, 256])
+MVS_BLENDING_WIDTHS = MULTIVIEW_STITCHER.get('blending_widths', 'automated')
+MVS_FUSION_BATCH_SIZE = MULTIVIEW_STITCHER.get('fusion_batch_size', 100)
+MVS_FUSION_CACHE_CHUNKS = MULTIVIEW_STITCHER.get('fusion_cache_chunks', [256, 256, 256])
+MVS_MONTAGE_COMPRESSOR = MULTIVIEW_STITCHER.get('montage_compressor', {'id': 'blosc', 'cname': 'zstd', 'clevel': 5, 'shuffle': 2})
+
+SLURM_PARAMETERS_FOR_MULTIVIEW_STITCHER = slurm.get('multiview_stitcher', SLURM_PARAMETERS_FOR_BIGSTITCHER)
+
+
+########################################################################################################################
