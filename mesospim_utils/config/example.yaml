@@ -211,6 +211,7 @@ slurm:
 multiview_stitcher:
   registration_res_level: 3 # Multiscale level used for pairwise tile registration. Lower is finer and slower, higher is coarser and faster
   pre_registration_pruning_method: 'keep_axis_aligned' # None, 'alternating_pattern', 'keep_axis_aligned', 'otsu_threshold_on_overlap', 'shortest_paths_overlap_weighted'
+  overlap_tolerance_um: 500 # Microns (per side) by which overlap regions are extended for pairwise registration. Stage-position-based initial placements can be off by more than the true tile overlap; without the extension the overlap crop is narrower than the residual shift and phase correlation can lock onto the circular wrap-around peak. 500 fixed a 2-tile test dataset where stage positions were ~220um off; 1000 made registration return a zero shift
   output_chunksize: [256, 256, 256] # z,y,x chunk size of the fused output in voxels
   blending_widths: 'automated' # 'automated' derives widths from voxel size, or [z,y,x] in microns
   fusion_batch_size: 100 # Number of fused chunks scheduled at a time during fusion

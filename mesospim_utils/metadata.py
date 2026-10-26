@@ -519,14 +519,25 @@ def determine_overlap(single_channel_metadata):
     cam_pixelsy = single_channel_metadata[0]["CAMERA PARAMETERS"]["y_pixels"]
     cam_pixelsx = single_channel_metadata[0]["CAMERA PARAMETERS"]["x_pixels"]
 
-    # Attempt to calculate overlap in y direction, if fails calculate in x direction
-    # May happen if only 1 row or 1 column of tiles
-    try:
-        distance_moved = abs(loc1y - loc0y)
-        distance_fov = resolution * cam_pixelsy
-    except Exception:
-        distance_moved = abs(loc1x - loc0x)
-        distance_fov = resolution * cam_pixelsx
+    # Compute overlap along the axis where the stage actually moved between
+    # tiles. Tiles stepped only along x (single row of tiles) share y_pos, so
+    # a y-first calculation would return 1.0 (full overlap) and zero out the
+    # grid offsets. Compare the relative movement of both axes and use the
+    # larger one.
+    distance_moved_y = abs(loc1y - loc0y)
+    distance_moved_x = abs(loc1x - loc0x)
+    distance_fov_y = resolution * cam_pixelsy
+    distance_fov_x = resolution * cam_pixelsx
+
+    movement_y = distance_moved_y / distance_fov_y
+    movement_x = distance_moved_x / distance_fov_x
+
+    if movement_y >= movement_x:
+        distance_moved = distance_moved_y
+        distance_fov = distance_fov_y
+    else:
+        distance_moved = distance_moved_x
+        distance_fov = distance_fov_x
     overlap_percent = 1 - (distance_moved / distance_fov)
     overlap_percent = round(overlap_percent, 2)
     return overlap_percent

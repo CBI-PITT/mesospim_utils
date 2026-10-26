@@ -47,6 +47,7 @@ from utils import ensure_path
 from constants import (
     MVS_REGISTRATION_RES_LEVEL,
     MVS_PRE_REGISTRATION_PRUNING_METHOD,
+    MVS_OVERLAP_TOLERANCE_UM,
     MVS_OUTPUT_CHUNKSIZE,
     MVS_BLENDING_WIDTHS,
     MVS_FUSION_BATCH_SIZE,
@@ -189,11 +190,17 @@ def get_stage_xaffine_from_metadata(affine_microns, sim):
     metadata affine (microns, zyx, grid-relative to the anchor tile).
 
     multiview-stitcher places tiles by transforming each sim's intrinsic
-    coordinates with the affine stored under the transform key. Tile OME-Zarrs
-    already carry raw stage positions in their intrinsic multiscale coordinates,
-    so the metadata affine is composed with the inverse of the intrinsic
-    voxel->microns transform. This yields world positions matching the
-    BigStitcher XML regardless of what the tile zarr metadata contains.
+    coordinates with the affine stored under the transform key. Tile sims carry
+    raw stage positions in their intrinsic microns coordinates, so the metadata
+    grid offset replaces the raw stage translation:
+
+        world = grid_offset_um + (intrinsic_um - origin)
+
+    The metadata affine (affine_microns) is defined on voxel indices with a
+    microns translation, so its linear part is scaled by the voxel spacing
+    before composing with the inverse of the intrinsic voxel->microns affine.
+    This yields world positions matching the BigStitcher XML regardless of
+    what the tile zarr metadata contains.
     '''
     import numpy as np
     from multiview_stitcher import param_utils
@@ -201,13 +208,18 @@ def get_stage_xaffine_from_metadata(affine_microns, sim):
 
     spacing = si_utils.get_spacing_from_sim(sim, asarray=True)  # z,y,x microns per voxel
     origin = si_utils.get_origin_from_sim(sim, asarray=True)  # z,y,x microns
+    t_coords = sim.coords['t'].values if 't' in sim.dims else None
 
     # Intrinsic voxel -> microns affine in z,y,x order
     intrinsic_affine = param_utils.affine_from_linear_affine(
         np.concatenate([np.diag(spacing).flatten(), origin])
     )
-    t_coords = sim.coords['t'].values if 't' in sim.dims else None
-    metadata_affine = param_utils.affine_to_xaffine(np.array(affine_microns), t_coords=t_coords)
+
+    # Metadata affine maps voxel indices to world microns:
+    # world = spacing * voxel + grid_offset_um
+    metadata_affine_microns = np.array(affine_microns, dtype=float).copy()
+    metadata_affine_microns[:3, :3] = np.diag(spacing)
+    metadata_affine = param_utils.affine_to_xaffine(metadata_affine_microns, t_coords=t_coords)
 
     return param_utils.matmul_xparams(
         metadata_affine,
@@ -219,7 +231,9 @@ def metadata_positions_are_degenerate(metadata_by_channel: dict) -> bool:
     '''
     True when every tile's metadata affine is a pure identity, which indicates
     missing stage positions in the annotated metadata. In that case the raw
-    stage positions stored in the tile OME-Zarr metadata are used instead.
+    stage positions stored in the tile OME-Zarr metadata are used instead,
+    direction-corrected relative to the anchor tile (see
+    get_direction_corrected_stage_xaffine).
     '''
     for channel_metadata in metadata_by_channel.values():
         for entry in channel_metadata:
@@ -232,6 +246,54 @@ def metadata_positions_are_degenerate(metadata_by_channel: dict) -> bool:
                     if abs(float(affine[i][j]) - expected) > 1e-9:
                         return False
     return True
+
+
+def get_channel_anchor_entry(tile_entries: list) -> dict:
+    '''
+    Pick the anchor tile entry of one channel: the entry flagged anchor_tile,
+    else the grid_location (0, 0) tile, else the lowest tile number.
+    '''
+    for entry in tile_entries:
+        if entry.get('anchor_tile'):
+            return entry
+    for entry in tile_entries:
+        if tuple(entry.get('grid_location', ())) == (0, 0):
+            return entry
+    return tile_entries[0]
+
+
+def get_direction_corrected_stage_xaffine(tile_origin, anchor_origin, t_coords=None):
+    '''
+    Build the multiview-stitcher stage transform for one tile from raw stage
+    positions when the annotated metadata contains no stage positions.
+
+    On this microscope the camera x/y axes are inverted relative to the stage
+    x/y axes: stage positions decrease as the tile grid advances (stage_direction
+    -1, see metadata.get_stage_direction) while image content advances with tile
+    index. Using raw stage positions directly therefore places tiles mirrored in
+    x/y, which makes the pairwise overlap crops non-corresponding and registration
+    fail. The tile is instead placed at the anchor tile's stage position plus the
+    stage offset relative to the anchor with y/x negated (z offset kept as-is):
+
+        corrected_origin = anchor_origin + (dz, -dy, -dx)
+        world = corrected_origin + (intrinsic_um - tile_origin)
+
+    The anchor tile itself gets a zero translation and keeps its raw position.
+    '''
+    import numpy as np
+    from multiview_stitcher import param_utils
+
+    tile_origin = np.asarray(tile_origin, dtype=float)
+    anchor_origin = np.asarray(anchor_origin, dtype=float)
+    stage_offset = tile_origin - anchor_origin
+    corrected_origin = anchor_origin + np.array(
+        [stage_offset[0], -stage_offset[1], -stage_offset[2]]
+    )
+    translation = corrected_origin - tile_origin
+
+    xaffine_zyx = np.eye(4)
+    xaffine_zyx[:3, 3] = translation
+    return param_utils.affine_to_xaffine(xaffine_zyx, t_coords=t_coords)
 
 
 def set_channel_coord_on_msim(msim, channel_value):
@@ -356,9 +418,14 @@ def load_tile_msims_for_collection(collection_dir: Path, metadata_by_channel: di
     Load one multiview-stitcher msim per tile and channel from a MesoSPIM
     OME-Zarr collection. Returns a dict mapping channel key to a dict mapping
     tile number to msim. No pixel data is loaded; tiles stay zarr-backed.
+
+    When use_metadata_positions is False (degenerate metadata affines), tiles
+    are placed from their raw tile OME-Zarr stage positions, direction-corrected
+    relative to the channel's anchor tile.
     '''
     from multiview_stitcher import msi_utils
     from multiview_stitcher import ngff_utils
+    from multiview_stitcher import spatial_image_utils as si_utils
 
     collection_dir = ensure_path(collection_dir)
     msims_by_channel = {}
@@ -368,6 +435,9 @@ def load_tile_msims_for_collection(collection_dir: Path, metadata_by_channel: di
     for channel_key, channel_metadata in metadata_by_channel.items():
         channel_msims = {}
         tile_entries = sorted(channel_metadata, key=lambda entry: entry.get('tile_number', 0))
+        anchor_entry = get_channel_anchor_entry(tile_entries)
+        tile_origins = {}
+
         for tile_entry in tile_entries:
             tile_number = int(tile_entry.get('tile_number', 0))
             tile_path = collection_dir / tile_entry.get('file_name')
@@ -384,20 +454,47 @@ def load_tile_msims_for_collection(collection_dir: Path, metadata_by_channel: di
                     sim = msi_utils.get_sim_from_msim(msim, scale='scale0')
                     stage_xaffine = get_stage_xaffine_from_metadata(affine_microns, sim)
                     msi_utils.set_affine_transform(msim, stage_xaffine, transform_key=STAGE_TRANSFORM_KEY)
+            else:
+                sim = msi_utils.get_sim_from_msim(msim, scale='scale0')
+                tile_origins[tile_number] = si_utils.get_origin_from_sim(sim, asarray=True)
 
             msim = set_channel_coord_on_msim(msim, channel_key)
             channel_msims[tile_number] = msim
+
+        if not use_metadata_positions and tile_origins:
+            anchor_number = int(anchor_entry.get('tile_number', 0))
+            if anchor_number not in tile_origins:
+                raise ValueError(
+                    f'Anchor tile {anchor_number} missing from the loaded tiles '
+                    f'of channel {channel_key}'
+                )
+            anchor_origin = tile_origins[anchor_number]
+            for tile_number, msim in channel_msims.items():
+                sim = msi_utils.get_sim_from_msim(msim, scale='scale0')
+                t_coords = sim.coords['t'].values if 't' in sim.dims else None
+                stage_xaffine = get_direction_corrected_stage_xaffine(
+                    tile_origins[tile_number],
+                    anchor_origin,
+                    t_coords=t_coords,
+                )
+                msi_utils.set_affine_transform(msim, stage_xaffine, transform_key=STAGE_TRANSFORM_KEY)
 
         msims_by_channel[channel_key] = channel_msims
 
     return msims_by_channel
 
 
-def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res_level: int, pruning_method: str) -> str:
+def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res_level: int, pruning_method: str, overlap_tolerance: float = 0.0) -> str:
     '''
     Register the tiles of the first channel using phase correlation. The
     registered transforms are written onto the registered channel's msims under
     REGISTERED_TRANSFORM_KEY. Returns the channel key used for registration.
+
+    overlap_tolerance (microns, per side) extends the overlap regions considered
+    for pairwise registration. Stage-position-based initial placements can be
+    off by more than the true tile overlap; without the extension the overlap
+    crop is narrower than the residual shift and phase correlation locks onto
+    the circular wrap-around peak.
     '''
     from multiview_stitcher import registration
 
@@ -411,6 +508,7 @@ def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res
         transform_key=STAGE_TRANSFORM_KEY,
         new_transform_key=REGISTERED_TRANSFORM_KEY,
         reg_res_level=registration_res_level,
+        overlap_tolerance=float(overlap_tolerance),
         pre_registration_pruning_method=pruning_method,
         plot_summary=False,
     )
@@ -477,9 +575,16 @@ def concat_channels_per_tile(msims_by_channel: dict[str, dict[int, Any]]) -> lis
         if len(source_dtypes) == 1:
             source_dtype = next(iter(source_dtypes))
             if msim['scale0']['image'].data.dtype != source_dtype:
-                msim = msim.map_over_datasets(
-                    lambda ds: ds.fillna(0).astype(source_dtype)
-                )
+                # Cast back only the image data. Casting the whole dataset would
+                # also cast the transform xaffines to the source dtype, wrapping
+                # negative translations (e.g. -5403.6 -> 60133) and making the
+                # transforms singular in fusion.
+                def _cast_image_back(ds):
+                    if 'image' in ds.data_vars:
+                        ds = ds.assign(image=ds['image'].fillna(0).astype(source_dtype))
+                    return ds
+
+                msim = msim.map_over_datasets(_cast_image_back)
 
         msims.append(msim)
 
@@ -574,7 +679,7 @@ def stitch_and_fuse_collection(dir_loc: Path, fused_file_type: str = 'omezarr'):
 
     use_metadata_positions = not metadata_positions_are_degenerate(metadata_by_channel)
     if not use_metadata_positions:
-        print('Annotated metadata contains no stage positions; using tile OME-Zarr stage positions instead')
+        print('Annotated metadata contains no stage positions; using direction-corrected tile OME-Zarr stage positions instead')
 
     cache_dir = build_fusion_cache(source_omezarr_dir, dir_loc / FUSION_CACHE_DIR_NAME)
 
@@ -585,7 +690,12 @@ def stitch_and_fuse_collection(dir_loc: Path, fused_file_type: str = 'omezarr'):
     )
 
     registration_res_level = int(MVS_REGISTRATION_RES_LEVEL)
-    reg_channel_key = register_tiles(msims_by_channel, registration_res_level, MVS_PRE_REGISTRATION_PRUNING_METHOD)
+    reg_channel_key = register_tiles(
+        msims_by_channel,
+        registration_res_level,
+        MVS_PRE_REGISTRATION_PRUNING_METHOD,
+        overlap_tolerance=float(MVS_OVERLAP_TOLERANCE_UM),
+    )
     copy_registered_transforms(msims_by_channel, reg_channel_key)
 
     msims = concat_channels_per_tile(msims_by_channel)

@@ -202,6 +202,7 @@ MULTIVIEW_STITCHER = config.get('multiview_stitcher', {})
 
 MVS_REGISTRATION_RES_LEVEL = MULTIVIEW_STITCHER.get('registration_res_level', 3)
 MVS_PRE_REGISTRATION_PRUNING_METHOD = MULTIVIEW_STITCHER.get('pre_registration_pruning_method', 'keep_axis_aligned')
+MVS_OVERLAP_TOLERANCE_UM = MULTIVIEW_STITCHER.get('overlap_tolerance_um', 500)
 MVS_OUTPUT_CHUNKSIZE = MULTIVIEW_STITCHER.get('output_chunksize', [256, 256, 256])
 MVS_BLENDING_WIDTHS = MULTIVIEW_STITCHER.get('blending_widths', 'automated')
 MVS_FUSION_BATCH_SIZE = MULTIVIEW_STITCHER.get('fusion_batch_size', 100)
