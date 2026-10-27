@@ -646,6 +646,52 @@ def get_job_number_from_slurm_out(output):
     return int(output.stdout[20:-1])
 
 
+def wait_for_slurm_job(job_number: int, poll_interval_s: int = 60, timeout_s: int = None):
+    '''
+    Poll a SLURM job with sacct until it reaches a terminal state.
+    Returns the string 'COMPLETED' when the job completed, or 'INDETERMINATE' when the job
+    has left the queue and sacct reports nothing (e.g. accounting disabled or purged) - in
+    that case the outcome cannot be determined here.
+    Raises RuntimeError when the job finished in a failed state (FAILED, CANCELLED, TIMEOUT,
+    OUT_OF_MEMORY, BOOT_FAIL, NODE_FAIL, PREEMPTED, DEADLINE, SPECIAL_EXIT) and TimeoutError
+    when timeout_s is set and exceeded.
+    Callers must not rely on this function alone for correctness: per-task done markers are
+    the authoritative completion signal.
+    '''
+    import time
+
+    failed_states = {
+        'FAILED', 'CANCELLED', 'TIMEOUT', 'OUT_OF_MEMORY', 'BOOT_FAIL',
+        'NODE_FAIL', 'PREEMPTED', 'DEADLINE', 'SPECIAL_EXIT',
+    }
+
+    start = time.time()
+    squeue_empty_count = 0
+    while True:
+        result = subprocess.run(f'sacct -j {job_number} --format=State --noheader --parsable2', shell=True, capture_output=True, text=True)
+        states = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        if states:
+            # State-only format = one field per row; the first row is the array parent record's state
+            state = states[0].split()[0].split('.')[0]  # strips ' by ...' and .batch/.step suffixes
+            if state == 'COMPLETED':
+                return 'COMPLETED'
+            if state in failed_states:
+                raise RuntimeError(f'SLURM job {job_number} finished with state {state}')
+
+        # sacct reported nothing or a non-terminal state: check if the job is still in the queue
+        squeue_result = subprocess.run(f'squeue -h -j {job_number}', shell=True, capture_output=True, text=True)
+        if timeout_s is not None and time.time() - start > timeout_s:
+            raise TimeoutError(f'Timed out waiting for SLURM job {job_number}')
+        if squeue_result.stdout.strip():
+            squeue_empty_count = 0
+        else:
+            squeue_empty_count += 1
+            if squeue_empty_count >= 2:
+                # Job left the queue and sacct reports nothing: outcome cannot be determined here
+                return 'INDETERMINATE'
+        time.sleep(poll_interval_s)
+
+
 @app.command()
 def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, array_len=None, bash=False, username="",
                        log_prefix: str = "", log_suffix: str = ""
