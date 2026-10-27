@@ -742,11 +742,14 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
     import itertools
     import math
     import pickle
+    import time
 
     import dask.array as da
     from numcodecs import get_codec
 
-    from multiview_stitcher import fusion, misc_utils, ngff_utils, si_utils
+    from multiview_stitcher import fusion, misc_utils, ngff_utils
+    from multiview_stitcher import msi_utils
+    from multiview_stitcher import spatial_image_utils as si_utils
 
     from constants import (
         ENV_PYTHON_LOC,
@@ -757,11 +760,29 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
         MVS_MONTAGE_COMPRESSOR,
         MVS_FUSION_BATCH_SIZE,
     )
-    from slurm import submit_array, wait_for_slurm_job, get_slurm_log_location
+    from slurm import submit_array, get_slurm_log_location
     from utils import ensure_path, get_user
 
     dir_loc = ensure_path(dir_loc)
     fused_output_path = ensure_path(fused_output_path)
+
+    # Mirror the fork's fuse() msim branch: the chunked-zarr path operates on
+    # spatial images, so extract the scale-0 sims, compute the output stack
+    # properties from them, and choose the input level matching the output
+    # spacing.
+    scale0_sims = [msi_utils.get_sim_from_msim(msim, scale='scale0') for msim in msims]
+    scale0_osp = fusion.process_output_stack_properties(
+        sims=scale0_sims,
+        output_stack_mode='union',
+        transform_key=REGISTERED_TRANSFORM_KEY,
+    )
+    selected_level_sims = [
+        msi_utils.get_sim_from_msim(
+            msim,
+            scale='scale%s' % msi_utils.get_res_level_from_spacing(msim, scale0_osp['spacing']),
+        )
+        for msim in msims
+    ]
 
     # prepare_block_fusion's overwrite only replaces <montage>/0, so stale
     # pyramid levels from a previous run would survive here and be reused by
@@ -795,10 +816,11 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
     # Keys omitted here resolve to fusion.fuse's own defaults inside each
     # worker's fuse() call, identical to the local path.
     per_chunk_fuse_kwargs = {
-        'images': msims,
+        'images': selected_level_sims,
         'transform_key': REGISTERED_TRANSFORM_KEY,
         'output_chunksize': output_chunksize,
         'blending_widths': get_blending_widths(),
+        'output_stack_properties': scale0_osp,
     }
 
     block_fusion_info = fusion.prepare_block_fusion(
@@ -860,12 +882,24 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
     print(f'Fusion worker array job: {job_number}')
 
     print(f'Waiting for fusion worker array job {job_number} (logs: {log_dir})')
-    wait_for_slurm_job(job_number)
-
-    # Done markers are the authoritative, sacct-independent completion signal.
-    missing = [i for i in range(n_tasks) if not (staging_dir / 'done' / f'task_{i}').is_file()]
-    if missing:
-        raise RuntimeError(f'Fusion worker array job {job_number} did not complete tasks {missing}; check worker logs in {log_dir}')
+    # Scheduler CLIs (sacct/squeue) can be unreachable from nodes without a
+    # slurm config source, so poll the done markers themselves - they are the
+    # authoritative, sacct-independent completion signal. The array's own
+    # time limit bounds a stuck task; the wait timeout adds a margin to it.
+    time_limit = SLURM_PARAMETERS_FOR_MULTIVIEW_STITCHER_WORKERS.get('TIME_LIMIT')
+    try:
+        hours, minutes, seconds = (int(part) for part in str(time_limit).split(':'))
+        wait_timeout_s = hours * 3600 + minutes * 60 + seconds + 3600
+    except (ValueError, AttributeError):
+        wait_timeout_s = 12 * 3600
+    wait_started = time.time()
+    while True:
+        missing = [i for i in range(n_tasks) if not (staging_dir / 'done' / f'task_{i}').is_file()]
+        if not missing:
+            break
+        if time.time() - wait_started > wait_timeout_s:
+            raise RuntimeError(f'Fusion worker array job {job_number} did not complete tasks {missing} within {wait_timeout_s} seconds; check worker logs in {log_dir}')
+        time.sleep(30)
 
     print('All fusion worker tasks completed; writing pyramid and OME-Zarr metadata')
     # Post-loop block copied from the fork's fusion.fuse (fusion/_core.py),
@@ -873,16 +907,16 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
     fusion_transform_key = REGISTERED_TRANSFORM_KEY
     fused = si_utils.get_sim_from_array(
         array=da.from_zarr(store_url),
-        dims=list(msims[0].dims),
+        dims=list(selected_level_sims[0].dims),
         transform_key=fusion_transform_key,
         scale=osp['spacing'],
         translation=osp['origin'],
-        c_coords=msims[0].coords['c'].values,
-        t_coords=msims[0].coords['t'].values,
+        c_coords=selected_level_sims[0].coords['c'].values,
+        t_coords=selected_level_sims[0].coords['t'].values,
     )
 
     # Before the write below, which reads it off the sim.
-    ngff_utils.copy_ngff_time_transform(msims[0], fused)
+    ngff_utils.copy_ngff_time_transform(selected_level_sims[0], fused)
 
     ngff_utils.write_sim_to_ome_zarr(
         fused,
