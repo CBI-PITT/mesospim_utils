@@ -77,6 +77,8 @@ def _callback():
 
 MULTIVIEW_STITCHER_SUCCESS_MARKER = 'MULTIVIEW_STITCHER_SUCCESS:'
 
+FUSE_WORKER_TASK_DONE_MARKER = 'MV_FUSE_WORKER_TASK_DONE:'
+
 STAGE_TRANSFORM_KEY = 'stage_metadata'
 REGISTERED_TRANSFORM_KEY = 'translation_registered'
 
@@ -1020,6 +1022,49 @@ def stitch_and_fuse(dir_loc: Path, fused_file_type: str = 'omezarr', supernice: 
         set_super_nice()
 
     stitch_and_fuse_collection(dir_loc, fused_file_type=fused_file_type)
+
+
+@app.command()
+def fuse_worker(staging_dir: Path = typer.Option(...), task_index: int = None):
+    '''
+    Fuse one partition of the montage output chunks (executed as one task of
+    a SLURM array). Loads the pickled fuse_chunk partial and tasks.json written
+    by fuse_tiles_slurm, fuses every block id assigned to this task sequentially,
+    and writes a done marker. task_index defaults to $SLURM_ARRAY_TASK_ID.
+    '''
+    # typer.Option(...) makes --staging-dir a required OPTION: fuse_tiles_slurm
+    # invokes this command as 'fuse-worker --staging-dir <dir> --task-index <i>'.
+    import os, pickle
+
+    os.environ.setdefault('MALLOC_TRIM_THRESHOLD_', '0')
+    os.environ.setdefault('MALLOC_MMAP_THRESHOLD_', '131072')
+
+    if task_index is None:
+        task_index = int(os.environ['SLURM_ARRAY_TASK_ID'])
+
+    staging_dir = ensure_path(staging_dir)
+
+    with open(staging_dir / 'fuse_chunk.pkl', 'rb') as f:
+        fuse_chunk = pickle.load(f)
+    with open(staging_dir / 'tasks.json') as f:
+        tasks = json.load(f)['blocks']
+
+    done_marker = staging_dir / 'done' / f'task_{task_index}'
+    done_marker.parent.mkdir(parents=True, exist_ok=True)
+    if done_marker.is_file():
+        print(f'Task {task_index} done marker already present, skipping (idempotent requeue)')
+        return
+
+    block_ids = tasks[task_index]
+    n_blocks = len(block_ids)
+    print(f'Fusing {n_blocks} blocks for task {task_index}')
+
+    for i, block_id in enumerate(block_ids):
+        print(f'Fusing block {i + 1}/{n_blocks} (block_id={block_id})', flush=True)
+        fuse_chunk(tuple(block_id))
+
+    done_marker.write_text('ok')
+    print(f'{FUSE_WORKER_TASK_DONE_MARKER} {task_index}')
 
 
 if __name__ == '__main__':
