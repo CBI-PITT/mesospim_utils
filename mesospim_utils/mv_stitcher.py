@@ -52,6 +52,7 @@ from constants import (
     MVS_OUTPUT_CHUNKSIZE,
     MVS_BLENDING_WIDTHS,
     MVS_FUSION_BATCH_SIZE,
+    MVS_FUSION_EXECUTOR,
     MVS_FUSION_CACHE_CHUNKS,
     MVS_MONTAGE_COMPRESSOR,
 )
@@ -81,6 +82,7 @@ REGISTERED_TRANSFORM_KEY = 'translation_registered'
 
 FUSION_CACHE_DIR_NAME = 'mvstitcher_fusion_cache'
 FUSION_CACHE_MARKER = '.rechunk_complete'
+SLURM_FUSION_STAGING_DIR_NAME = 'mvstitcher_slurm_fusion'
 
 
 def build_fusion_cache(collection_dir: Path, cache_dir: Path) -> Path:
@@ -607,11 +609,15 @@ def get_blending_widths() -> dict | None:
     raise ValueError(f'Unsupported multiview_stitcher.blending_widths value: {MVS_BLENDING_WIDTHS}')
 
 
-def fuse_tiles(msims: list, fused_output_path: Path):
+def fuse_tiles(msims: list, fused_output_path: Path, dir_loc: Path = None):
     '''
     Fuse the registered multi-channel tiles into a 5D multiscale OME-Zarr at
     fused_output_path. Fusion is streamed chunk by chunk using dask so very
     large datasets do not need to fit into memory.
+
+    With multiview_stitcher.fusion_executor 'slurm' (the default), the scale-0
+    output blocks are instead fused by a SLURM array of fuse-worker tasks via
+    fuse_tiles_slurm, which requires dir_loc; the 'local' path below ignores it.
 
     When dask-distributed is installed, output blocks are fused on a local
     cluster of worker processes instead of threads, so per-block Python
@@ -621,6 +627,10 @@ def fuse_tiles(msims: list, fused_output_path: Path):
     a single-threaded scheduler. Without dask-distributed the threaded
     dask.compute path is kept unchanged.
     '''
+    if MVS_FUSION_EXECUTOR == 'slurm':
+        if dir_loc is None:
+            raise ValueError('fuse_tiles requires dir_loc when multiview_stitcher.fusion_executor is slurm')
+        return fuse_tiles_slurm(dir_loc, msims, fused_output_path)
     from contextlib import nullcontext
 
     from numcodecs import get_codec
@@ -709,6 +719,187 @@ def fuse_tiles(msims: list, fused_output_path: Path):
     return fused
 
 
+def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
+    '''
+    Fuse the montage's scale-0 output blocks with a SLURM array of fuse-worker
+    tasks instead of dask workers on the driver node.
+
+    The fork's block fusion is prepared once in this driver process
+    (fusion.prepare_block_fusion creates the level-0 output zarr store and
+    returns the picklable per-chunk fuse partial), partitioned into one
+    contiguous block range per array task, staged as fuse_chunk.pkl plus
+    tasks.json under <dir_loc>/mvstitcher_slurm_fusion, and submitted as ONE
+    SLURM array via slurm.submit_array. Each task applies the partial to its
+    block partition and writes a done marker. After the array completes, this
+    driver verifies all done markers (the sacct-independent correctness
+    signal), writes the downsampled pyramid levels and OME-Zarr metadata
+    in-process with threaded dask batches (matching fusion.fuse's post-loop
+    behavior), and removes the staging directory. dir_loc anchors the staging
+    directory, the SLURM logs, and the submission username.
+    '''
+    import itertools
+    import math
+    import pickle
+
+    import dask.array as da
+    from numcodecs import get_codec
+
+    from multiview_stitcher import fusion, misc_utils, ngff_utils, si_utils
+
+    from constants import (
+        ENV_PYTHON_LOC,
+        LOCATION_OF_MESOSPIM_UTILS_INSTALL,
+        MVS_FUSION_SLURM_TASKS,
+        SLURM_PARAMETERS_FOR_MULTIVIEW_STITCHER_WORKERS,
+        MVS_OUTPUT_CHUNKSIZE,
+        MVS_MONTAGE_COMPRESSOR,
+        MVS_FUSION_BATCH_SIZE,
+    )
+    from slurm import submit_array, wait_for_slurm_job, get_slurm_log_location
+    from utils import ensure_path, get_user
+
+    dir_loc = ensure_path(dir_loc)
+    fused_output_path = ensure_path(fused_output_path)
+
+    # prepare_block_fusion's overwrite only replaces <montage>/0, so stale
+    # pyramid levels from a previous run would survive here and be reused by
+    # the overwrite=False pyramid write below.
+    if fused_output_path.exists():
+        shutil.rmtree(fused_output_path)
+
+    store_url = str(fused_output_path / '0')
+
+    output_chunksize = {
+        'z': int(MVS_OUTPUT_CHUNKSIZE[0]),
+        'y': int(MVS_OUTPUT_CHUNKSIZE[1]),
+        'x': int(MVS_OUTPUT_CHUNKSIZE[2]),
+    }
+
+    # Without an explicit compressor zarr's default for v2 arrays is zstd
+    # level 0, which stores the montage uncompressed (4x the input size).
+    zarr_array_creation_kwargs = {}
+    if MVS_MONTAGE_COMPRESSOR:
+        zarr_array_creation_kwargs['compressor'] = get_codec(dict(MVS_MONTAGE_COMPRESSOR))
+
+    # Ensure creation kwargs reflect NGFF version; fusion.fuse does the same
+    # before prepare_block_fusion. prepare_block_fusion passes these kwargs to
+    # zarr.create unchanged, so without this level 0 would be created with
+    # zarr v2's default '.' dimension separator instead of '/'.
+    zarr_array_creation_kwargs = ngff_utils.update_zarr_array_creation_kwargs_for_ngff_version(
+        '0.4', zarr_array_creation_kwargs
+    )
+
+    # Fresh dict: prepare_block_fusion mutates its input via .pop().
+    # Keys omitted here resolve to fusion.fuse's own defaults inside each
+    # worker's fuse() call, identical to the local path.
+    per_chunk_fuse_kwargs = {
+        'images': msims,
+        'transform_key': REGISTERED_TRANSFORM_KEY,
+        'output_chunksize': output_chunksize,
+        'blending_widths': get_blending_widths(),
+    }
+
+    block_fusion_info = fusion.prepare_block_fusion(
+        store_url,
+        fuse_kwargs=per_chunk_fuse_kwargs,
+        zarr_array_creation_kwargs=zarr_array_creation_kwargs,
+    )
+    fuse_chunk = block_fusion_info['func']
+    nblocks = block_fusion_info['nblocks']
+    osp = block_fusion_info['output_stack_properties']
+
+    total_blocks = math.prod(int(n) for n in nblocks)
+    all_block_ids = [list(b) for b in itertools.product(*(range(int(n)) for n in nblocks))]
+
+    n_tasks = min(int(MVS_FUSION_SLURM_TASKS), total_blocks)
+    base = total_blocks // n_tasks
+    rem = total_blocks % n_tasks
+    sizes = [base + 1 if i < rem else base for i in range(n_tasks)]
+    tasks = []
+    offset = 0
+    for size in sizes:
+        tasks.append(all_block_ids[offset:offset + size])
+        offset += size
+    assert sum(len(t) for t in tasks) == total_blocks
+    assert all(len(t) > 0 for t in tasks)
+    assert len({tuple(block_id) for task in tasks for block_id in task}) == total_blocks
+
+    print(f'Fusing {total_blocks} blocks with {n_tasks} SLURM worker tasks')
+    print(f'Fusion payload: serialized zarr sims = {"_serialized_zarr_sims" in fuse_chunk.keywords.get("fuse_kwargs", {})}')
+
+    # Staging must exist before submit_array: format_sbatch_wrap redirects
+    # array logs to the parent dir when the log_location dir does not exist.
+    staging_dir = dir_loc / SLURM_FUSION_STAGING_DIR_NAME
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir(parents=True)
+    with open(staging_dir / 'fuse_chunk.pkl', 'wb') as f:
+        pickle.dump(fuse_chunk, f)
+    with open(staging_dir / 'tasks.json', 'w') as f:
+        json.dump({'n_tasks': n_tasks, 'blocks': tasks}, f)
+
+    worker_command = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/mv_stitcher.py fuse-worker'
+    commands = [f'{worker_command} --staging-dir "{staging_dir}" --task-index {i}' for i in range(n_tasks)]
+
+    log_dir = get_slurm_log_location(dir_loc)
+    username = get_user(dir_loc)
+    # log_suffix must never contain 'multiview_stitcher': the skip gate globs
+    # *_multiview_stitcher.log and must not scan these worker logs.
+    job_number = submit_array(
+        commands,
+        staging_dir,
+        SLURM_PARAMETERS_FOR_MULTIVIEW_STITCHER_WORKERS,
+        log_dir,
+        after_slurm_jobs=None,
+        username=username,
+        log_prefix='mvstitcher',
+        log_suffix='fusion_worker',
+    )
+    print(f'Fusion worker array job: {job_number}')
+
+    print(f'Waiting for fusion worker array job {job_number} (logs: {log_dir})')
+    wait_for_slurm_job(job_number)
+
+    # Done markers are the authoritative, sacct-independent completion signal.
+    missing = [i for i in range(n_tasks) if not (staging_dir / 'done' / f'task_{i}').is_file()]
+    if missing:
+        raise RuntimeError(f'Fusion worker array job {job_number} did not complete tasks {missing}; check worker logs in {log_dir}')
+
+    print('All fusion worker tasks completed; writing pyramid and OME-Zarr metadata')
+    # Post-loop block copied from the fork's fusion.fuse (fusion/_core.py),
+    # with the pyramid and metadata written in the driver.
+    fusion_transform_key = REGISTERED_TRANSFORM_KEY
+    fused = si_utils.get_sim_from_array(
+        array=da.from_zarr(store_url),
+        dims=list(msims[0].dims),
+        transform_key=fusion_transform_key,
+        scale=osp['spacing'],
+        translation=osp['origin'],
+        c_coords=msims[0].coords['c'].values,
+        t_coords=msims[0].coords['t'].values,
+    )
+
+    # Before the write below, which reads it off the sim.
+    ngff_utils.copy_ngff_time_transform(msims[0], fused)
+
+    ngff_utils.write_sim_to_ome_zarr(
+        fused,
+        output_zarr_url=str(fused_output_path),
+        overwrite=False,
+        batch_options={
+            'batch_func': misc_utils.process_batch_using_dask,
+            'n_batch': int(MVS_FUSION_BATCH_SIZE),
+        },
+        zarr_array_creation_kwargs=zarr_array_creation_kwargs,
+        ngff_version='0.4',
+    )
+
+    shutil.rmtree(staging_dir, ignore_errors=True)
+    print(f'Fusion via SLURM workers completed: {fused_output_path}')
+
+    return fused
+
+
 def stitch_and_fuse_collection(dir_loc: Path, fused_file_type: str = 'omezarr'):
     '''
     Run multiview-stitcher registration and fusion on a MesoSPIM OME-Zarr
@@ -759,7 +950,7 @@ def stitch_and_fuse_collection(dir_loc: Path, fused_file_type: str = 'omezarr'):
 
     msims = concat_channels_per_tile(msims_by_channel)
 
-    fuse_tiles(msims, fused_output_path)
+    fuse_tiles(msims, fused_output_path, dir_loc=dir_loc)
 
     remove_fusion_cache(cache_dir)
 
