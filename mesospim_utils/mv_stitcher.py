@@ -32,6 +32,7 @@ pip install -e /h20/CBI/Iana/src/mesospim/multiview-stitcher
 '''
 
 import json
+import os
 import shutil
 from typing import Any
 
@@ -611,7 +612,17 @@ def fuse_tiles(msims: list, fused_output_path: Path):
     Fuse the registered multi-channel tiles into a 5D multiscale OME-Zarr at
     fused_output_path. Fusion is streamed chunk by chunk using dask so very
     large datasets do not need to fit into memory.
+
+    When dask-distributed is installed, output blocks are fused on a local
+    cluster of worker processes instead of threads, so per-block Python
+    overhead no longer serializes on the GIL. The fork's block fusion is
+    built for this: sims arrive pre-serialized, the live output zarr array
+    pickles to the workers, and _fuse_chunk_to_zarr pins its inner write to
+    a single-threaded scheduler. Without dask-distributed the threaded
+    dask.compute path is kept unchanged.
     '''
+    from contextlib import nullcontext
+
     from numcodecs import get_codec
 
     from multiview_stitcher import fusion, misc_utils
@@ -628,23 +639,71 @@ def fuse_tiles(msims: list, fused_output_path: Path):
     if MVS_MONTAGE_COMPRESSOR:
         zarr_array_creation_kwargs['compressor'] = get_codec(dict(MVS_MONTAGE_COMPRESSOR))
 
+    try:
+        from distributed import Client, LocalCluster
+    except ImportError:
+        client = None
+        client_ctx = nullcontext()
+    else:
+        # Per-block fusion accumulates unmanaged Python memory in long-lived
+        # workers (sim rehydration, xarray graph objects, ~350 MiB per fused
+        # block on this dataset). Once workers pass the default 70% pause
+        # threshold they stop taking tasks and the run stalls; if instead the
+        # nanny's 95% budget triggers, restarting workers mid-task raises
+        # KilledWorker and the run crashes. Managed dask data is negligible
+        # here, so disable the target/spill/pause thresholds and bound the
+        # growth by restarting all workers between batches instead.
+        import dask
+
+        os.environ.setdefault('MALLOC_TRIM_THRESHOLD_', '0')
+        os.environ.setdefault('MALLOC_MMAP_THRESHOLD_', '131072')
+
+        dask.config.set(
+            {
+                'distributed.worker.memory.pause': False,
+                'distributed.worker.memory.target': False,
+                'distributed.worker.memory.spill': False,
+            }
+        )
+
+        n_workers = len(os.sched_getaffinity(0))
+        print(f'Starting dask-distributed local cluster with {n_workers} worker processes')
+        client = Client(
+            LocalCluster(n_workers=n_workers, threads_per_worker=1, processes=True)
+        )
+        client_ctx = client
+
+        def _fuse_batch_and_restart_workers(func, batch):
+            from dask import compute, delayed
+
+            compute([delayed(func)(block_id) for block_id in batch])
+            client.restart_workers(list(client.scheduler_info()['workers']))
+
     print(f'Fusing {len(msims)} tiles into {fused_output_path}')
-    fused = fusion.fuse(
-        images=msims,
-        transform_key=REGISTERED_TRANSFORM_KEY,
-        output_chunksize=output_chunksize,
-        blending_widths=get_blending_widths(),
-        output_zarr_url=str(fused_output_path),
-        zarr_options={
-            'ome_zarr': True,
-            'ngff_version': '0.4',
-            'zarr_array_creation_kwargs': zarr_array_creation_kwargs,
-        },
-        batch_options={
-            'batch_func': misc_utils.process_batch_using_dask,
-            'n_batch': int(MVS_FUSION_BATCH_SIZE),
-        },
-    )
+    with client_ctx:
+        fused = fusion.fuse(
+            images=msims,
+            transform_key=REGISTERED_TRANSFORM_KEY,
+            output_chunksize=output_chunksize,
+            blending_widths=get_blending_widths(),
+            output_zarr_url=str(fused_output_path),
+            zarr_options={
+                'ome_zarr': True,
+                'ngff_version': '0.4',
+                'zarr_array_creation_kwargs': zarr_array_creation_kwargs,
+            },
+            batch_options=(
+                {
+                    'batch_func': _fuse_batch_and_restart_workers,
+                    'n_batch': int(MVS_FUSION_BATCH_SIZE),
+                }
+                if client is not None
+                else {
+                    'batch_func': misc_utils.process_batch_using_dask,
+                    'n_batch': int(MVS_FUSION_BATCH_SIZE),
+                }
+            ),
+        )
     print(f'Fusion completed: {fused_output_path}')
 
     return fused
