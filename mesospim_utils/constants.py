@@ -211,5 +211,18 @@ MVS_MONTAGE_COMPRESSOR = MULTIVIEW_STITCHER.get('montage_compressor', {'id': 'bl
 
 SLURM_PARAMETERS_FOR_MULTIVIEW_STITCHER = slurm.get('multiview_stitcher', SLURM_PARAMETERS_FOR_BIGSTITCHER)
 
+MVS_FUSION_EXECUTOR = MULTIVIEW_STITCHER.get('fusion_executor', 'slurm')
+MVS_FUSION_SLURM_TASKS = MULTIVIEW_STITCHER.get('fusion_slurm_tasks', 64)
+SLURM_PARAMETERS_FOR_MULTIVIEW_STITCHER_WORKERS = slurm.get('multiview_stitcher_workers', {
+    'PARTITION': 'gpu,ai',
+    'CPUS': 1,
+    'JOB_LABEL': 'ms_mvstitcher_worker',
+    'RAM_GB': 32,
+    'GRES': None,
+    'PARALLEL_JOBS': 16,
+    'NICE': 0,
+    'TIME_LIMIT': '08:00:00',
+})
+
 
 ########################################################################################################################

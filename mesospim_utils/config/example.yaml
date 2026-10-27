@@ -208,6 +208,16 @@ slurm:
     'PARALLEL_JOBS': 4
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  multiview_stitcher_workers:
+    # Independent fuse-worker SLURM array tasks that write the montage chunks during fusion
+    'PARTITION': 'gpu,ai' #multiple partitions can be specified with comma separation part1,par2
+    'CPUS': 1
+    'JOB_LABEL': 'ms_mvstitcher_worker'
+    'RAM_GB': 32
+    'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'PARALLEL_JOBS': 16 # In a slurm array, how many jobs will run in parallel
+    'NICE': 0
+    'TIME_LIMIT': '08:00:00' # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
 multiview_stitcher:
   registration_res_level: 3 # Multiscale level used for pairwise tile registration. Lower is finer and slower, higher is coarser and faster
   pre_registration_pruning_method: 'keep_axis_aligned' # None, 'alternating_pattern', 'keep_axis_aligned', 'otsu_threshold_on_overlap', 'shortest_paths_overlap_weighted'
@@ -217,6 +227,8 @@ multiview_stitcher:
   fusion_batch_size: 400 # Number of fused chunks scheduled at a time during fusion; with dask-distributed, workers restart between batches to bound per-worker memory growth
   fusion_cache_chunks: [256, 256, 256] # z,y,x chunk size of the rechunked fusion cache tiles. Fusion reads small crops per output chunk, and the omezarr writer's huge tile chunks (~1.4 GB) make every crop pull whole slabs, so tiles are rechunked into a cache before fusion
   montage_compressor: {'id': 'blosc', 'cname': 'zstd', 'clevel': 5, 'shuffle': 2} # Compressor for the fused montage zarr. Without it zarr defaults to zstd level 0, i.e. uncompressed output
+  fusion_executor: 'slurm' # 'slurm' = montage scale-0 chunks written by a SLURM array of fuse-worker tasks during fusion (new default); 'local' = previous dask-distributed/threaded behavior on the driver node
+  fusion_slurm_tasks: 64 # Number of fuse-worker array tasks; scale-0 blocks are partitioned contiguously across tasks, capped at the total block count
 bigstitcher:
   fiji_install_folder: "" # If empty "", will use Fiji installed with mesospim_utils
   downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
