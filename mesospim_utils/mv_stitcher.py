@@ -53,6 +53,7 @@ from utils import ensure_path
 
 from constants import (
     MVS_REGISTRATION_RES_LEVEL,
+    MVS_REGISTRATION_RES_LEVELS,
     MVS_PRE_REGISTRATION_PRUNING_METHOD,
     MVS_OVERLAP_TOLERANCE_UM,
     MVS_OUTPUT_CHUNKSIZE,
@@ -118,6 +119,10 @@ def rechunk_tile_level(source_array_path: Path, cached_store_path: Path) -> None
     if filters:
         filters = [get_codec(filter_dict) for filter_dict in filters]
 
+    compressor = source_metadata.get('compressor')
+    if compressor:
+        compressor = get_codec(compressor)
+
     cached_array = zarr.create(
         shape=source_array.shape,
         chunks=cache_chunks,
@@ -126,7 +131,7 @@ def rechunk_tile_level(source_array_path: Path, cached_store_path: Path) -> None
         overwrite=True,
         zarr_format=2,
         dimension_separator='/',
-        compressor=get_codec(source_metadata['compressor']),
+        compressor=compressor,
         order=source_metadata.get('order', 'C'),
         fill_value=source_metadata.get('fill_value', 0),
         filters=filters,
@@ -653,7 +658,7 @@ def load_tile_msims_for_collection(collection_dir: Path, metadata_by_channel: di
     return msims_by_channel
 
 
-def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res_level: int, pruning_method: str, overlap_tolerance: float = 0.0) -> str:
+def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res_level: int, pruning_method: str, overlap_tolerance: float = 0.0, registration_res_levels: list = None) -> str:
     '''
     Register the tiles of the first channel using phase correlation. The
     registered transforms are written onto the registered channel's msims under
@@ -671,12 +676,15 @@ def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res
     reg_msims = [msims_by_channel[reg_channel_key][tile_number] for tile_number in sorted(msims_by_channel[reg_channel_key])]
 
     print(f'Registering {len(reg_msims)} tiles using channel {reg_channel_key} at resolution level {registration_res_level}')
+    if registration_res_levels:
+        print(f'Coarse-to-fine registration over levels {registration_res_levels} (coarsest first)')
     registration.register(
         reg_msims,
         reg_channel_index=0,
         transform_key=STAGE_TRANSFORM_KEY,
         new_transform_key=REGISTERED_TRANSFORM_KEY,
-        reg_res_level=registration_res_level,
+        reg_res_level=None if registration_res_levels else registration_res_level,
+        reg_res_levels=registration_res_levels,
         overlap_tolerance=float(overlap_tolerance),
         pre_registration_pruning_method=pruning_method,
         plot_summary=False,
@@ -1143,11 +1151,17 @@ def stitch_and_fuse_collection(dir_loc: Path, fused_file_type: str = 'omezarr'):
     )
 
     registration_res_level = int(MVS_REGISTRATION_RES_LEVEL)
+    registration_res_levels = (
+        [int(level) for level in MVS_REGISTRATION_RES_LEVELS]
+        if MVS_REGISTRATION_RES_LEVELS
+        else None
+    )
     reg_channel_key = register_tiles(
         msims_by_channel,
         registration_res_level,
         MVS_PRE_REGISTRATION_PRUNING_METHOD,
         overlap_tolerance=float(MVS_OVERLAP_TOLERANCE_UM),
+        registration_res_levels=registration_res_levels,
     )
     copy_registered_transforms(msims_by_channel, reg_channel_key)
 
