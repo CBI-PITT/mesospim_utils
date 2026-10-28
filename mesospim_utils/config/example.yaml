@@ -218,6 +218,16 @@ slurm:
     'PARALLEL_JOBS': 16 # In a slurm array, how many jobs will run in parallel
     'NICE': 0
     'TIME_LIMIT': '08:00:00' # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  multiview_stitcher_rechunk_workers:
+    # Independent rechunk-worker SLURM array tasks that build the fusion cache before stitching; one task per tile pyramid level
+    'PARTITION': 'gpu,ai' #multiple partitions can be specified with comma separation part1,par2
+    'CPUS': 4
+    'JOB_LABEL': 'ms_mvstitcher_rechunk'
+    'RAM_GB': 32
+    'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'PARALLEL_JOBS': 16 # In a slurm array, how many jobs will run in parallel
+    'NICE': 0
+    'TIME_LIMIT': '04:00:00' # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
 multiview_stitcher:
   registration_res_level: 3 # Multiscale level used for pairwise tile registration. Lower is finer and slower, higher is coarser and faster
   pre_registration_pruning_method: 'keep_axis_aligned' # None, 'alternating_pattern', 'keep_axis_aligned', 'otsu_threshold_on_overlap', 'shortest_paths_overlap_weighted'

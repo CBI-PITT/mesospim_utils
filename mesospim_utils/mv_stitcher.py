@@ -23,6 +23,12 @@ mirrors the collection with identical multiscale metadata, shapes and dtypes,
 only with smaller chunks. It is removed after successful fusion and reused
 (tiled, marker-based) across reruns.
 
+When multiview_stitcher.fusion_executor is 'slurm' (the default), the rechunk
+runs as a SLURM array of rechunk-worker tasks - one task per (tile, pyramid
+level) pair, never one task per zarr chunk - instead of the in-process serial
+loop, which rechunks one level at a time and takes hours on multi-tile
+collections.
+
 The fused output is a 5D (t,c,z,y,x) multiscale OME-Zarr written to the same
 <xml_basename>_montage.ome.zarr path convention used by the BigStitcher backend,
 so downstream IMS/TIFF conversion works unchanged.
@@ -79,12 +85,56 @@ MULTIVIEW_STITCHER_SUCCESS_MARKER = 'MULTIVIEW_STITCHER_SUCCESS:'
 
 FUSE_WORKER_TASK_DONE_MARKER = 'MV_FUSE_WORKER_TASK_DONE:'
 
+RECHUNK_WORKER_TASK_DONE_MARKER = 'MV_RECHUNK_WORKER_TASK_DONE:'
+
 STAGE_TRANSFORM_KEY = 'stage_metadata'
 REGISTERED_TRANSFORM_KEY = 'translation_registered'
 
 FUSION_CACHE_DIR_NAME = 'mvstitcher_fusion_cache'
 FUSION_CACHE_MARKER = '.rechunk_complete'
 SLURM_FUSION_STAGING_DIR_NAME = 'mvstitcher_slurm_fusion'
+SLURM_RECHUNK_STAGING_DIR_NAME = 'mvstitcher_slurm_rechunk'
+
+
+def rechunk_tile_level(source_array_path: Path, cached_store_path: Path) -> None:
+    '''
+    Rechunk one pyramid level of one tile OME-Zarr into the fusion cache with
+    fusion-friendly chunks, creating the cached store (overwrite) and copying
+    the source array attrs onto it. Shared by the in-process serial loop
+    (build_fusion_cache) and the SLURM rechunk workers (rechunk-worker).
+    '''
+    import dask.array as da
+    import zarr
+    from numcodecs import get_codec
+
+    source_array = zarr.open_array(str(source_array_path), mode='r')
+    source_metadata = source_array.metadata.to_dict()
+    cache_chunks = tuple(
+        min(int(chunk), int(size))
+        for chunk, size in zip(MVS_FUSION_CACHE_CHUNKS, source_array.shape)
+    )
+
+    filters = source_metadata.get('filters')
+    if filters:
+        filters = [get_codec(filter_dict) for filter_dict in filters]
+
+    cached_array = zarr.create(
+        shape=source_array.shape,
+        chunks=cache_chunks,
+        dtype=source_array.dtype,
+        store=str(cached_store_path),
+        overwrite=True,
+        zarr_format=2,
+        dimension_separator='/',
+        compressor=get_codec(source_metadata['compressor']),
+        order=source_metadata.get('order', 'C'),
+        fill_value=source_metadata.get('fill_value', 0),
+        filters=filters,
+    )
+    source_dask = da.from_zarr(str(source_array_path))
+    da.store(source_dask.rechunk(cache_chunks), cached_array, compute=True)
+    for attr_key, attr_value in dict(source_array.attrs).items():
+        cached_array.attrs[attr_key] = attr_value
 
 
 def build_fusion_cache(collection_dir: Path, cache_dir: Path) -> Path:
@@ -103,10 +153,6 @@ def build_fusion_cache(collection_dir: Path, cache_dir: Path) -> Path:
     Tiles whose marker file is present and whose cached multiscale metadata
     still matches the source are reused from previous runs.
     '''
-    import dask.array as da
-    import zarr
-    from numcodecs import get_codec
-
     collection_dir = ensure_path(collection_dir)
     cache_dir = ensure_path(cache_dir)
 
@@ -141,35 +187,7 @@ def build_fusion_cache(collection_dir: Path, cache_dir: Path) -> Path:
             raise ValueError(f'Tile OME-Zarr multiscales list no datasets: {tile_dir}')
 
         for level_path in level_paths:
-            source_array_path = tile_dir / level_path
-            source_array = zarr.open_array(str(source_array_path), mode='r')
-            source_metadata = source_array.metadata.to_dict()
-            cache_chunks = tuple(
-                min(int(chunk), int(size))
-                for chunk, size in zip(MVS_FUSION_CACHE_CHUNKS, source_array.shape)
-            )
-
-            filters = source_metadata.get('filters')
-            if filters:
-                filters = [get_codec(filter_dict) for filter_dict in filters]
-
-            cached_array = zarr.create(
-                shape=source_array.shape,
-                chunks=cache_chunks,
-                dtype=source_array.dtype,
-                store=str(cached_tile_dir / level_path),
-                overwrite=True,
-                zarr_format=2,
-                dimension_separator='/',
-                compressor=get_codec(source_metadata['compressor']),
-                order=source_metadata.get('order', 'C'),
-                fill_value=source_metadata.get('fill_value', 0),
-                filters=filters,
-            )
-            source_dask = da.from_zarr(str(source_array_path))
-            da.store(source_dask.rechunk(cache_chunks), cached_array, compute=True)
-            for attr_key, attr_value in dict(source_array.attrs).items():
-                cached_array.attrs[attr_key] = attr_value
+            rechunk_tile_level(tile_dir / level_path, cached_tile_dir / level_path)
 
         cached_tile_dir.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(tile_dir / '.zattrs', cached_tile_dir / '.zattrs')
@@ -187,6 +205,152 @@ def remove_fusion_cache(cache_dir: Path):
     cache_dir = ensure_path(cache_dir)
     if cache_dir.exists():
         shutil.rmtree(cache_dir, ignore_errors=True)
+
+
+def build_fusion_cache_slurm(collection_dir: Path, cache_dir: Path, dir_loc: Path) -> Path:
+    '''
+    Rechunk the collection's tile OME-Zarrs into cache_dir with a SLURM array
+    of rechunk-worker tasks instead of the in-process serial loop of
+    build_fusion_cache.
+
+    The serial loop rechunks one tile pyramid level at a time inside the
+    stitch job, and a single level-0 rechunk is ~25 GB written as ~50k small
+    zarr chunks, so rechunking a multi-tile collection takes hours before any
+    registration work starts. This driver mirrors fuse_tiles_slurm: work is
+    enumerated as one task per (tile, level) pair - NOT one task per zarr
+    chunk, which would mean hundreds of thousands of array tasks - staged as
+    tasks.json under <dir_loc>/mvstitcher_slurm_rechunk, and submitted as ONE
+    SLURM array via slurm.submit_array with PARALLEL_JOBS capping the
+    concurrency. Each task rechunks its pair into the cache and writes a done
+    marker. After the array completes, this driver verifies all done markers
+    (the sacct-independent correctness signal), copies the tile .zattrs/.zgroup
+    and writes the per-tile .rechunk_complete markers, and removes the staging
+    directory. dir_loc anchors the staging directory, the SLURM logs, and the
+    submission username.
+    '''
+    import time
+
+    import zarr
+
+    from constants import (
+        ENV_PYTHON_LOC,
+        LOCATION_OF_MESOSPIM_UTILS_INSTALL,
+        SLURM_PARAMETERS_FOR_RECHUNK_WORKERS,
+    )
+    from slurm import submit_array, get_slurm_log_location
+    from utils import ensure_path, get_user
+
+    collection_dir = ensure_path(collection_dir)
+    cache_dir = ensure_path(cache_dir)
+    dir_loc = ensure_path(dir_loc)
+
+    tile_dirs = sorted(
+        child for child in collection_dir.iterdir()
+        if child.is_dir() and (child / '.zattrs').is_file()
+    )
+    if not tile_dirs:
+        raise FileNotFoundError(f'No tile OME-Zarrs found in {collection_dir}')
+
+    # Cache-hit check per tile mirrors build_fusion_cache: a tile is reused
+    # only when its marker file is present and the cached multiscale metadata
+    # still matches the source.
+    rechunk_tiles = []
+    for tile_dir in tile_dirs:
+        cached_tile_dir = cache_dir / tile_dir.name
+        source_zattrs = (tile_dir / '.zattrs').read_text()
+        if (
+            (cached_tile_dir / FUSION_CACHE_MARKER).is_file()
+            and (cached_tile_dir / '.zattrs').is_file()
+            and (cached_tile_dir / '.zattrs').read_text() == source_zattrs
+        ):
+            print(f'Fusion cache hit for {tile_dir.name}')
+            continue
+        rechunk_tiles.append(tile_dir)
+
+    if not rechunk_tiles:
+        return cache_dir
+
+    work_items = []
+    for tile_dir in rechunk_tiles:
+        multiscales = json.loads((tile_dir / '.zattrs').read_text()).get('multiscales')
+        if not multiscales:
+            raise ValueError(f'Tile OME-Zarr has no multiscales metadata: {tile_dir}')
+        level_paths = [
+            dataset['path'] for dataset in multiscales[0].get('datasets', [])
+        ]
+        if not level_paths:
+            raise ValueError(f'Tile OME-Zarr multiscales list no datasets: {tile_dir}')
+        for level_path in level_paths:
+            source_array_path = tile_dir / level_path
+            # Open the source array here (metadata only) so a broken source
+            # fails in this driver before any array task is submitted.
+            zarr.open_array(str(source_array_path), mode='r')
+            work_items.append([str(source_array_path), str(cache_dir / tile_dir.name / level_path)])
+
+    print(f'Rechunking {len(work_items)} tile levels with {len(work_items)} SLURM rechunk tasks')
+
+    # Staging must exist before submit_array: format_sbatch_wrap redirects
+    # array logs to the parent dir when the log_location dir does not exist.
+    staging_dir = dir_loc / SLURM_RECHUNK_STAGING_DIR_NAME
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir(parents=True)
+    with open(staging_dir / 'tasks.json', 'w') as f:
+        json.dump({'n_tasks': len(work_items), 'work': work_items}, f)
+
+    worker_command = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/mv_stitcher.py rechunk-worker'
+    commands = [f'{worker_command} --staging-dir "{staging_dir}" --task-index {i}' for i in range(len(work_items))]
+
+    log_dir = get_slurm_log_location(dir_loc)
+    username = get_user(dir_loc)
+    # log_suffix must never contain 'multiview_stitcher': the skip gate globs
+    # *_multiview_stitcher.log and must not scan these worker logs.
+    job_number = submit_array(
+        commands,
+        staging_dir,
+        SLURM_PARAMETERS_FOR_RECHUNK_WORKERS,
+        log_dir,
+        after_slurm_jobs=None,
+        username=username,
+        log_prefix='mvstitcher',
+        log_suffix='rechunk_worker',
+    )
+    print(f'Rechunk worker array job: {job_number}')
+
+    print(f'Waiting for rechunk worker array job {job_number} (logs: {log_dir})')
+    # Same sacct-independent wait as fuse_tiles_slurm: scheduler CLIs
+    # (sacct/squeue) can be unreachable from nodes without a slurm config
+    # source, so poll the done markers themselves - they are the
+    # authoritative, sacct-independent completion signal. The array's own
+    # time limit bounds a stuck task; the wait timeout adds a margin to it.
+    time_limit = SLURM_PARAMETERS_FOR_RECHUNK_WORKERS.get('TIME_LIMIT')
+    try:
+        hours, minutes, seconds = (int(part) for part in str(time_limit).split(':'))
+        wait_timeout_s = hours * 3600 + minutes * 60 + seconds + 3600
+    except (ValueError, AttributeError):
+        wait_timeout_s = 6 * 3600
+    wait_started = time.time()
+    while True:
+        missing = [i for i in range(len(work_items)) if not (staging_dir / 'done' / f'task_{i}').is_file()]
+        if not missing:
+            break
+        if time.time() - wait_started > wait_timeout_s:
+            raise RuntimeError(f'Rechunk worker array job {job_number} did not complete tasks {missing} within {wait_timeout_s} seconds; check worker logs in {log_dir}')
+        time.sleep(30)
+
+    print('All rechunk worker tasks completed; writing tile metadata and cache markers')
+    for tile_dir in rechunk_tiles:
+        cached_tile_dir = cache_dir / tile_dir.name
+        cached_tile_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(tile_dir / '.zattrs', cached_tile_dir / '.zattrs')
+        if (tile_dir / '.zgroup').is_file():
+            shutil.copyfile(tile_dir / '.zgroup', cached_tile_dir / '.zgroup')
+        (cached_tile_dir / FUSION_CACHE_MARKER).write_text('ok')
+
+    shutil.rmtree(staging_dir, ignore_errors=True)
+    print(f'Fusion cache built via SLURM rechunk workers: {cache_dir}')
+
+    return cache_dir
 
 
 def get_stage_xaffine_from_metadata(affine_microns, sim):
@@ -967,7 +1131,10 @@ def stitch_and_fuse_collection(dir_loc: Path, fused_file_type: str = 'omezarr'):
     if not use_metadata_positions:
         print('Annotated metadata contains no stage positions; using direction-corrected tile OME-Zarr stage positions instead')
 
-    cache_dir = build_fusion_cache(source_omezarr_dir, dir_loc / FUSION_CACHE_DIR_NAME)
+    if MVS_FUSION_EXECUTOR == 'slurm':
+        cache_dir = build_fusion_cache_slurm(source_omezarr_dir, dir_loc / FUSION_CACHE_DIR_NAME, dir_loc)
+    else:
+        cache_dir = build_fusion_cache(source_omezarr_dir, dir_loc / FUSION_CACHE_DIR_NAME)
 
     msims_by_channel = load_tile_msims_for_collection(
         cache_dir,
@@ -1099,6 +1266,40 @@ def fuse_worker(staging_dir: Path = typer.Option(...), task_index: int = None):
 
     done_marker.write_text('ok')
     print(f'{FUSE_WORKER_TASK_DONE_MARKER} {task_index}')
+
+
+@app.command()
+def rechunk_worker(staging_dir: Path = typer.Option(...), task_index: int = None):
+    '''
+    Rechunk one (tile, pyramid level) pair into the fusion cache (executed as
+    one task of a SLURM array). Loads tasks.json written by
+    build_fusion_cache_slurm, rechunks the pair assigned to this task, and
+    writes a done marker. task_index defaults to $SLURM_ARRAY_TASK_ID.
+    '''
+    # typer.Option(...) makes --staging-dir a required OPTION: build_fusion_cache_slurm
+    # invokes this command as 'rechunk-worker --staging-dir <dir> --task-index <i>'.
+    import os
+
+    if task_index is None:
+        task_index = int(os.environ['SLURM_ARRAY_TASK_ID'])
+
+    staging_dir = ensure_path(staging_dir)
+
+    with open(staging_dir / 'tasks.json') as f:
+        work_items = json.load(f)['work']
+
+    done_marker = staging_dir / 'done' / f'task_{task_index}'
+    done_marker.parent.mkdir(parents=True, exist_ok=True)
+    if done_marker.is_file():
+        print(f'Task {task_index} done marker already present, skipping (idempotent requeue)')
+        return
+
+    source_array_path, cached_store_path = work_items[task_index]
+    print(f'Rechunking {source_array_path} into {cached_store_path}', flush=True)
+    rechunk_tile_level(Path(source_array_path), Path(cached_store_path))
+
+    done_marker.write_text('ok')
+    print(f'{RECHUNK_WORKER_TASK_DONE_MARKER} {task_index}')
 
 
 if __name__ == '__main__':

@@ -224,5 +224,16 @@ SLURM_PARAMETERS_FOR_MULTIVIEW_STITCHER_WORKERS = slurm.get('multiview_stitcher_
     'TIME_LIMIT': '08:00:00',
 })
 
+SLURM_PARAMETERS_FOR_RECHUNK_WORKERS = slurm.get('multiview_stitcher_rechunk_workers', {
+    'PARTITION': 'gpu,ai',
+    'CPUS': 4,
+    'JOB_LABEL': 'ms_mvstitcher_rechunk',
+    'RAM_GB': 32,
+    'GRES': None,
+    'PARALLEL_JOBS': 16,
+    'NICE': 0,
+    'TIME_LIMIT': '04:00:00',
+})
+
 
 ########################################################################################################################
