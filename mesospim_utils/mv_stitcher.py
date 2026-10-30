@@ -62,6 +62,7 @@ from constants import (
     MVS_FUSION_EXECUTOR,
     MVS_FUSION_CACHE_CHUNKS,
     MVS_MONTAGE_COMPRESSOR,
+    MVS_REGISTRATION_EXECUTOR,
 )
 
 from bigstitcher import (
@@ -95,6 +96,9 @@ FUSION_CACHE_DIR_NAME = 'mvstitcher_fusion_cache'
 FUSION_CACHE_MARKER = '.rechunk_complete'
 SLURM_FUSION_STAGING_DIR_NAME = 'mvstitcher_slurm_fusion'
 SLURM_RECHUNK_STAGING_DIR_NAME = 'mvstitcher_slurm_rechunk'
+SLURM_REGISTRATION_STAGING_DIR_NAME = 'mvstitcher_slurm_registration'
+
+REGISTRATION_WORKER_TASK_DONE_MARKER = 'MV_REGISTRATION_WORKER_TASK_DONE:'
 
 
 def rechunk_tile_level(source_array_path: Path, cached_store_path: Path) -> None:
@@ -658,7 +662,7 @@ def load_tile_msims_for_collection(collection_dir: Path, metadata_by_channel: di
     return msims_by_channel
 
 
-def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res_level: int, pruning_method: str, overlap_tolerance: float = 0.0, registration_res_levels: list = None) -> str:
+def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res_level: int, pruning_method: str, overlap_tolerance: float = 0.0, registration_res_levels: list = None, dir_loc: Path = None, cache_dir: Path = None, metadata_by_channel: dict = None) -> str:
     '''
     Register the tiles of the first channel using phase correlation. The
     registered transforms are written onto the registered channel's msims under
@@ -669,6 +673,12 @@ def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res
     off by more than the true tile overlap; without the extension the overlap
     crop is narrower than the residual shift and phase correlation locks onto
     the circular wrap-around peak.
+
+    With MVS_REGISTRATION_EXECUTOR=slurm, pairwise registrations run as one
+    SLURM array task per tile pair via slurm_pairwise_executor, which needs
+    dir_loc (staging/logs), cache_dir (tile zarr paths) and metadata_by_channel
+    (tile_number -> file_name mapping). The global optimization linking the
+    pairwise results stays in-process.
     '''
     from multiview_stitcher import registration
 
@@ -678,6 +688,30 @@ def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res
     print(f'Registering {len(reg_msims)} tiles using channel {reg_channel_key} at resolution level {registration_res_level}')
     if registration_res_levels:
         print(f'Coarse-to-fine registration over levels {registration_res_levels} (coarsest first)')
+
+    pairwise_executor = None
+    if MVS_REGISTRATION_EXECUTOR == 'slurm':
+        if dir_loc is None or cache_dir is None or metadata_by_channel is None:
+            raise ValueError(
+                'MVS_REGISTRATION_EXECUTOR=slurm requires dir_loc, cache_dir and '
+                'metadata_by_channel on register_tiles'
+            )
+        tile_file_names = {
+            int(entry.get('tile_number', 0)): entry.get('file_name')
+            for entry in metadata_by_channel.get(reg_channel_key, [])
+        }
+
+        def pairwise_executor(msims, edges, register_kwargs):
+            return slurm_pairwise_executor(
+                msims,
+                edges,
+                register_kwargs,
+                dir_loc=dir_loc,
+                reg_channel_key=reg_channel_key,
+                tile_file_names=tile_file_names,
+                cache_dir=cache_dir,
+            )
+
     registration.register(
         reg_msims,
         reg_channel_index=0,
@@ -688,10 +722,148 @@ def register_tiles(msims_by_channel: dict[str, dict[int, Any]], registration_res
         overlap_tolerance=float(overlap_tolerance),
         pre_registration_pruning_method=pruning_method,
         plot_summary=False,
+        pairwise_executor=pairwise_executor,
     )
     print(f'Registration of channel {reg_channel_key} completed')
 
     return reg_channel_key
+
+
+def _build_registration_tasks(msims, edges, register_kwargs, cache_dir, reg_channel_key, tile_file_names):
+    '''
+    Build one work item per registration pair for the SLURM registration
+    workers. Each item carries the two tiles' fusion-cache zarr paths, their
+    stage transforms (as set by the driver) and the worker-serializable
+    subset of the registration kwargs. msims order must match
+    sorted(tile_file_names), which is how register_tiles builds reg_msims.
+    '''
+    from multiview_stitcher import msi_utils
+
+    tile_numbers_sorted = sorted(tile_file_names)
+    tile_specs = []
+    for index, msim in enumerate(msims):
+        tile_number = tile_numbers_sorted[index]
+        stage_xaffine = msi_utils.get_transform_from_msim(msim, STAGE_TRANSFORM_KEY)
+        tile_specs.append({
+            'tile_number': tile_number,
+            'zarr_path': str(ensure_path(cache_dir) / tile_file_names[tile_number]),
+            'channel_key': reg_channel_key,
+            'stage_xaffine': stage_xaffine,
+        })
+
+    # register_pair_of_msims defaults to phase_correlation_registration, the
+    # only pairwise function this pipeline uses; a custom function would be
+    # silently replaced by the worker's default, so fail instead.
+    pairwise_reg_func = register_kwargs.get('pairwise_reg_func')
+    if pairwise_reg_func is not None:
+        from multiview_stitcher import registration
+        if pairwise_reg_func is not registration.phase_correlation_registration:
+            raise NotImplementedError(
+                'The SLURM registration executor only supports the default '
+                'phase_correlation_registration pairwise function'
+            )
+
+    # Not serializable to the worker task or handled by the library's default:
+    # the executor itself, the in-process parallelism cap and the pairwise
+    # function (dropped; the worker default matches).
+    dropped_keys = ('pairwise_reg_func', 'pairwise_executor', 'n_parallel_pairwise_regs')
+    worker_kwargs = {key: value for key, value in register_kwargs.items() if key not in dropped_keys}
+
+    return [
+        {'tiles': [tile_specs[i], tile_specs[j]], 'register_kwargs': worker_kwargs}
+        for i, j in edges
+    ]
+
+
+def slurm_pairwise_executor(msims, edges, register_kwargs, dir_loc, reg_channel_key, tile_file_names, cache_dir):
+    '''
+    pairwise_executor hook for registration.register: runs one SLURM array
+    task per registration pair instead of the library's in-process dask path,
+    which forces n_parallel_pairwise_regs=1 for 3D data and makes
+    multi-pair registration sequential.
+
+    Called by registration.compute_pairwise_registrations as
+    executor(msims, edges, register_kwargs); must return one result per edge
+    with keys 'transform', 'quality' and 'bbox' - the structure
+    register_pair_of_msims_over_time returns, which the workers pickle to
+    their done markers. The global optimization linking pairwise results into
+    per-tile transforms stays in-process in register() and is fast.
+    '''
+    import pickle
+    import time
+
+    from constants import (
+        ENV_PYTHON_LOC,
+        LOCATION_OF_MESOSPIM_UTILS_INSTALL,
+        SLURM_PARAMETERS_FOR_REGISTRATION_WORKERS,
+    )
+    from slurm import get_slurm_log_location, submit_array
+    from utils import get_user
+
+    dir_loc = ensure_path(dir_loc)
+    cache_dir = ensure_path(cache_dir)
+
+    work = _build_registration_tasks(msims, edges, register_kwargs, cache_dir, reg_channel_key, tile_file_names)
+
+    print(f'Registering {len(work)} tile pairs with {len(work)} SLURM registration tasks')
+
+    staging_dir = dir_loc / SLURM_REGISTRATION_STAGING_DIR_NAME
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir(parents=True)
+    # Pickle rather than json: work items carry xarray stage transforms.
+    with open(staging_dir / 'tasks.pkl', 'wb') as f:
+        pickle.dump({'n_tasks': len(work), 'work': work}, f)
+
+    worker_command = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/mv_stitcher.py registration-worker'
+    commands = [f'{worker_command} --staging-dir "{staging_dir}" --task-index {i}' for i in range(len(work))]
+
+    log_dir = get_slurm_log_location(dir_loc)
+    username = get_user(dir_loc)
+    # log_suffix must never contain 'multiview_stitcher': the skip gate globs
+    # *_multiview_stitcher.log and must not scan these worker logs.
+    job_number = submit_array(
+        commands,
+        staging_dir,
+        SLURM_PARAMETERS_FOR_REGISTRATION_WORKERS,
+        log_dir,
+        after_slurm_jobs=None,
+        username=username,
+        log_prefix='mvstitcher',
+        log_suffix='registration_worker',
+    )
+    print(f'Registration worker array job: {job_number}')
+
+    print(f'Waiting for registration worker array job {job_number} (logs: {log_dir})')
+    # Same sacct-independent wait as the rechunk and fusion drivers: poll the
+    # done markers themselves - they are the authoritative completion signal.
+    # Each done marker holds the pickled pairwise result for its task.
+    time_limit = SLURM_PARAMETERS_FOR_REGISTRATION_WORKERS.get('TIME_LIMIT')
+    try:
+        hours, minutes, seconds = (int(part) for part in str(time_limit).split(':'))
+        wait_timeout_s = hours * 3600 + minutes * 60 + seconds + 3600
+    except (ValueError, AttributeError):
+        wait_timeout_s = 6 * 3600
+    wait_started = time.time()
+    while True:
+        missing = [i for i in range(len(work)) if not (staging_dir / 'done' / f'task_{i}').is_file()]
+        if not missing:
+            break
+        if time.time() - wait_started > wait_timeout_s:
+            raise RuntimeError(
+                f'Registration worker array job {job_number} did not complete tasks '
+                f'{missing} within {wait_timeout_s} seconds; check worker logs in {log_dir}'
+            )
+        time.sleep(30)
+
+    print('All registration worker tasks completed; collecting pairwise results')
+    results = []
+    for i in range(len(work)):
+        with open(staging_dir / 'done' / f'task_{i}', 'rb') as f:
+            results.append(pickle.load(f))
+
+    shutil.rmtree(staging_dir, ignore_errors=True)
+    return results
 
 
 def copy_registered_transforms(msims_by_channel: dict[str, dict[int, Any]], reg_channel_key: str):
@@ -1162,6 +1334,9 @@ def stitch_and_fuse_collection(dir_loc: Path, fused_file_type: str = 'omezarr'):
         MVS_PRE_REGISTRATION_PRUNING_METHOD,
         overlap_tolerance=float(MVS_OVERLAP_TOLERANCE_UM),
         registration_res_levels=registration_res_levels,
+        dir_loc=dir_loc,
+        cache_dir=cache_dir,
+        metadata_by_channel=metadata_by_channel,
     )
     copy_registered_transforms(msims_by_channel, reg_channel_key)
 
@@ -1314,6 +1489,66 @@ def rechunk_worker(staging_dir: Path = typer.Option(...), task_index: int = None
 
     done_marker.write_text('ok')
     print(f'{RECHUNK_WORKER_TASK_DONE_MARKER} {task_index}')
+
+
+@app.command()
+def registration_worker(staging_dir: Path = typer.Option(...), task_index: int = None):
+    '''
+    Register one pair of tiles (executed as one task of a SLURM array). Loads
+    tasks.pkl written by slurm_pairwise_executor, rebuilds the two msims from
+    the fusion cache with their stage transforms, runs the coarse-to-fine
+    pairwise registration, and pickles the pairwise result (transform, quality,
+    bbox) to the task's done marker. task_index defaults to $SLURM_ARRAY_TASK_ID.
+    '''
+    # typer.Option(...) makes --staging-dir a required OPTION: slurm_pairwise_executor
+    # invokes this command as 'registration-worker --staging-dir <dir> --task-index <i>'.
+    import os
+    import pickle
+
+    from multiview_stitcher import msi_utils
+    from multiview_stitcher import ngff_utils
+    from multiview_stitcher import registration
+
+    if task_index is None:
+        task_index = int(os.environ['SLURM_ARRAY_TASK_ID'])
+
+    staging_dir = ensure_path(staging_dir)
+
+    with open(staging_dir / 'tasks.pkl', 'rb') as f:
+        tasks = pickle.load(f)
+
+    done_marker = staging_dir / 'done' / f'task_{task_index}'
+    done_marker.parent.mkdir(parents=True, exist_ok=True)
+    if done_marker.is_file():
+        print(f'Task {task_index} done marker already present, skipping (idempotent requeue)')
+        return
+
+    task = tasks['work'][task_index]
+
+    msims = []
+    for spec in task['tiles']:
+        print(f"Rebuilding msim for tile {spec['tile_number']} from {spec['zarr_path']}", flush=True)
+        msim = ngff_utils.read_msim_from_ome_zarr(spec['zarr_path'], transform_key=STAGE_TRANSFORM_KEY, array_backend='dask')
+        msi_utils.set_affine_transform(msim, spec['stage_xaffine'], transform_key=STAGE_TRANSFORM_KEY)
+        msim = set_channel_coord_on_msim(msim, spec['channel_key'])
+        if "c" in msi_utils.get_dims(msim):
+            # Drop the c dim like register()'s msims_reg handling does; the
+            # direct register_pair_of_msims_over_time call bypasses that
+            # selection, and a retained c dim makes the warp a 4-D sim whose
+            # affine dask_image rejects with "wrong number of rows".
+            msim = msi_utils.multiscale_sel_coords(msim, {"c": str(spec['channel_key'])})
+        msims.append(msim)
+
+    print(
+        f"Registering pair ({task['tiles'][0]['tile_number']}, {task['tiles'][1]['tile_number']}) "
+        f"with kwargs {sorted(task['register_kwargs'])}",
+        flush=True,
+    )
+    result = registration.register_pair_of_msims_over_time(msims[0], msims[1], **task['register_kwargs'])
+
+    with open(done_marker, 'wb') as f:
+        pickle.dump(result, f)
+    print(f'{REGISTRATION_WORKER_TASK_DONE_MARKER} {task_index}')
 
 
 if __name__ == '__main__':

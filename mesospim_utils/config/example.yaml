@@ -228,6 +228,16 @@ slurm:
     'PARALLEL_JOBS': 16 # In a slurm array, how many jobs will run in parallel
     'NICE': 0
     'TIME_LIMIT': '04:00:00' # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+  multiview_stitcher_registration_workers:
+    # Independent registration-worker SLURM array tasks; one task per pairwise tile registration
+    'PARTITION': 'gpu,ai' #multiple partitions can be specified with comma separation part1,par2
+    'CPUS': 8
+    'JOB_LABEL': 'ms_mvstitcher_registration'
+    'RAM_GB': 256 # Coarse-to-fine phase-correlation registration of two full-res tiles OOMs at 64G
+    'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
+    'PARALLEL_JOBS': 16 # In a slurm array, how many jobs will run in parallel
+    'NICE': 0
+    'TIME_LIMIT': '08:00:00' # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
 multiview_stitcher:
   registration_res_level: 3 # Multiscale level used for pairwise tile registration. Lower is finer and slower, higher is coarser and faster. Ignored when registration_res_levels is set
   registration_res_levels: [3, 2] # Coarse-to-fine pairwise registration over these pyramid levels (coarsest first): each finer pass is constrained to the previous pass's solution. Empty/null registers at the single registration_res_level

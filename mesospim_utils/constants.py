@@ -236,5 +236,17 @@ SLURM_PARAMETERS_FOR_RECHUNK_WORKERS = slurm.get('multiview_stitcher_rechunk_wor
     'TIME_LIMIT': '04:00:00',
 })
 
+MVS_REGISTRATION_EXECUTOR = MULTIVIEW_STITCHER.get('registration_executor', 'slurm')
+SLURM_PARAMETERS_FOR_REGISTRATION_WORKERS = slurm.get('multiview_stitcher_registration_workers', {
+    'PARTITION': 'gpu,ai',
+    'CPUS': 8,
+    'JOB_LABEL': 'ms_mvstitcher_registration',
+    'RAM_GB': 64,
+    'GRES': None,
+    'PARALLEL_JOBS': 16,
+    'NICE': 0,
+    'TIME_LIMIT': '08:00:00',
+})
+
 
 ########################################################################################################################
