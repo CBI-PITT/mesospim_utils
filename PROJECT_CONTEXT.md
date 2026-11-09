@@ -6,17 +6,53 @@
 
 ## Current Branch And Working State
 
-- Expected branch when this note was updated: `main`
+- Expected branch when this note was updated: `dev` (at `966259d`)
 - The repository may be dirty from ongoing local work; inspect `git status` before editing.
 - Recent work has touched BigStitcher, metadata/config, Fiji install helpers, and packaging metadata.
 
 ## Current Focus Areas
 
 - BigStitcher alignment and fusion behavior
+- BigStitcher parameter automation roadmap (planned; Phase 0 spec ready)
 - Chromatic aberration and per-channel alignment tuning
 - Memory pressure during BigStitcher fusion/export on SLURM
 - Objective-aware deconvolution configuration and CLI plumbing
+- BaSiCPy pooled-fit refactor (planned, not yet implemented)
 - Keeping agent documentation split cleanly between `AGENTS.md` and this file
+
+## Planned Follow-Up: BaSiCPy Pooled Fit Refactor (discussed, not yet implemented)
+
+- Current behavior in `mesospim_utils/basicpy_worker.py` + `mesospim_utils/preprocess.py::process_basicpy_group`: `basic.fit()` re-runs on the same fit tile once per target tile (~N fits per channel/filter group), fields are estimated from a single representative tile, and `transform()` applies one 2D flatfield + one 2D darkfield to every z-plane.
+- Verified in the installed BaSiCPy 2.0.0 source: fitting runs internally at `working_size=128` and upsamples fields to full res with bilinear `align_corners=True`; `transform()` broadcasts a single field pair across all z-planes, so the correction has **no z-dependence** at all (per-z intensity differences are absorbed into fit-time baseline terms and dropped). Light-sheet attenuation along z is currently uncaptured.
+- Stage 1 (pooled single-field fit, one fit per group): add a `basicpy-fit-fields` command that lazily pools z-planes across ALL tiles in the (channel, filter) group (per-plane zarr reads resized to working size immediately, optional z subsampling to bound image count), fits once, and saves fields as a small `.npz` at working size in a hidden dir inside the output collection (same pattern as `.basicpy_tmp/`), e.g. `.basicpy_fields/<channel>_<filter>.npz`. The existing per-target-tile worker invocation would accept `--fields <npz>`, skip the fit, and transform as today, keeping the per-tile queue shape, tile-level resume, and `.basicpy_tmp` flow unchanged.
+- Stage 2 (z-mapped fields pooled across all tiles): bin the z-depth (e.g. 10-20 bins), fit one field pair per bin from all tiles' planes in that bin, store fields at working size and upsample at transform time (bilinear `align_corners=True` to match BaSiCPy), apply by indexing an `(n_bins, H, W)` field stack by plane depth, and smooth across bins with a moving average to stabilize the depth profile. Stage 2 slots into Stage 1's fit/apply structure.
+- Main new Stage 2 failure mode to design for: empty/low-signal bins. The BigStitcher analysis showed many near-zero-signal planes; bins above/below the sample will fit garbage. Skip low-signal planes per bin and fall back to the nearest good bin's fields, or weight planes by signal.
+- Channel scope decision: flatfield stays per (channel, filter) group since vignetting differs per excitation/filter. Optional cross-channel darkfield sharing (average per-channel darkfields and reassign before transform) is a refinement only — darkfield interacts with per-plane exposure/signal level and may bias dim channels, so default off and validate before enabling.
+- User is not concerned about illumination drift over acquisition time, so pooling tiles acquired at different times within a scan is acceptable.
+- Config knobs for this change: `basicpy.fit_z_subsample`, optional `working_size` passthrough, optional `share_darkfield` in `config/example.yaml` (+ `main.yaml`).
+- Files that would change: `mesospim_utils/basicpy_worker.py` (new fit-fields command, `--fields` on apply path, binning later), `mesospim_utils/preprocess.py` (fit job + per-tile apply orchestration), `mesospim_utils/automated.py` (CLI plumbing if options are surfaced), `mesospim_utils/config/example.yaml` + `main.yaml`, `mesospim_utils/constants.py` if needed.
+- Validation plan: run one channel of a real dataset old-vs-new and compare flatfield/darkfield and corrected tiles; for Stage 2 specifically compare shallow vs deep planes; time and peak-RAM the fit job on the largest recent grid.
+- Full plan text is also saved at `/h20/home/lab/.opencode/plan/basicpy-pooled-fit.md` (this machine only).
+
+## Planned Follow-Up: BigStitcher Parameter Automation (discussed, not yet implemented)
+
+- Goal: automate optimization of BigStitcher parameters to fine-tune alignment accuracy, building directly on the findings in `BIGSTITCHER_STITCHING_ANALYSIS.md` (residual ceiling ~2.9px from 4x-downsampled narrow strips; STAGE 2 signal starvation; 3-7% zoom/ETL pixel-size miscalibration).
+- Core architecture idea: keep fusion OUT of the optimization loop. Alignment only writes registrations into the XML, so parameter sets are evaluated with cheap align-only macro runs (minutes for 16-48 views) and fusion happens exactly once at the end with the winner. BigStitcher caches interest-point detections and pairwise comparisons, so sweeping thresholds (relative/absolute, ICP params) only re-runs global optimization.
+- Objective function comes from existing logs + XML, no fusion needed: first-round Avg/Max Error, dropped links, pairwise r values, DoG peaks per view, ICP correspondence counts, plus a scaled-grid fit of final tile positions in the stitched XML (residual scatter + fitted scale ratio, which doubles as the self-calibration estimate). IMPORTANT: the score must combine residual + connectivity + dropped links - Avg Error alone is gameable by dropping links.
+- Most gains are deterministic, no search needed: STAGE 1 downsample from overlap % (target strip >= ~150-300px, i.e. 2x/2x/1x for 10% overlap), DoG min/max intensity or empty-view exclusion from tile percentile stats, and a self-calibration guard when fitted |s-1| > ~2%. Remaining search space is small: relative/absolute thresholds, icp_maximum_error, lambda, STAGE 2 scoping - coordinate descent over 3-4 knobs = ~10-20 align-only runs per dataset.
+- Two caveats every phase must respect: (1) headless run() silently ignores macro keys that do not match the installed BigStitcher version's dialog labels (2.5.3 as of 2026-10-23), so any automated loop must verify effective params from logs (e.g. "Correcting coordinates for downsampling") before trusting scores; (2) the zoom/ETL pixel-size miscalibration cannot be tuned away - it needs the calibration fix or the self-calibration guard (analysis §9 revised priorities 1-2).
+- Phased plan: Phase 0 = split macro templates into align-only + fuse-only and parameterize relative/absolute/icp_maximum_error/lambda via config (defaults = current hardcoded values, byte-identical output, no production behavior change); Phase 1 = log/XML scorer module + report-only mode grading past runs; Phase 2 = deterministic adaptive selection; Phase 3 = optional search driver (align-only SLURM array -> score -> single fusion).
+- Phase 0 safety property: it only parameterizes macro keys already exercised verbatim in the current templates AND in the real production log (alder-j/072326/.../1642738_align_fuse_bigstitcher.log) - no new macro keys, so no macro-key-drift risk in that phase. Custom link-filtering numbers (today a baked-in RELAXED (5.0x/7.0px) dialog preset label) and explicit DoG min/max intensity are deferred because both need dialog-label verification against BigStitcher 2.5.3 before being sent headlessly.
+- Full roadmap including the complete Phase 0 implementation spec (exact files, config keys, backward-compat notes, validation plan, risks) is saved at `/h20/home/lab/.opencode/plan/bigstitcher-parameter-automation.md` (this machine only).
+
+## Recent Change: Fiji Auto-Install Hardening (resolved and verified)
+
+- `mesospim_utils/fiji.py` now delivers a working Fiji + BigStitcher install. Verified: a full from-scratch `--force` run exits 0, writes the `.fiji_bigstitcher_ready` stamp, and an independent headless import check (`from net.preibisch.stitcher.plugin import BigStitcher`) passes.
+- Root cause of the long debugging saga was path resolution, not the filesystem: `resolve_install_root()` returns `<repo>/fiji-linux` (the dir CONTAINING `Fiji.app`), but `_install_pinned_bigstitcher` and `bigstitcher_jar` built `root / "plugins"` paths that landed jars OUTSIDE `Fiji.app`, where the classloader never sees them. Script-side checks on the same wrong path reported "present" while diagnostics on `Fiji.app/plugins/` reported "missing", which masqueraded as phantom beegfs views.
+- Fixed: all jar paths now resolve app-relative (`app = root / "Fiji.app"`); `bigstitcher_jar` globs `root / "Fiji.app" / "plugins"`.
+- Also fixed: `--update add-update-site` exits non-zero with "Site ... was already added!" on re-runs - the script now checks `Fiji.app/db.xml.gz` for the site before registering; the Fiji 544MB download is skipped when `fiji_exe(root)` already exists (re-runs are fast); pinned jars are always downloaded fresh to `/tmp`, zip-validated, copied via `_copy_jar_into_place` (with fresh-subprocess `unzip -t` verification and retries), and the headless verify retries 3x for FS metadata lag.
+- Working pinned Maven set (from `https://maven.scijava.org/content/groups/public`): BigStitcher 2.5.3 -> `plugins/Big_Stitcher-2.5.3.jar`, multiview-reconstruction 7.0.7 -> `plugins/`, multiview-simulation 0.2.0 -> `jars/`, with any Java-21 `jars/multiview-reconstruction*.jar` disabled in place. Base Fiji's own mpicbg + bigdataviewer-core are sufficient - no extra pins needed.
+- Genuine beegfs quirk worth remembering: per-process negative-dentry caching sticks a stale "No such file" in one process while fresh processes see the file. Verify filesystem state from fresh subprocesses, not one long-lived process's view.
 
 ## Recent Work Snapshot
 
@@ -37,6 +73,12 @@
   - tune channel-alignment/chromatic-aberration handling
   - adjust BigStitcher refinement downsampling and fusion memory settings
   - move deconvolution PSF/objective parameters out of hardcoded `rl.py` values and into config
+
+## Recent Change: BigStitcher Stitching Review (read-only)
+
+- Added `BIGSTITCHER_STITCHING_ANALYSIS.md` at the repo root: a detailed read-only review of the BigStitcher alignment path explaining why stitched montages can come out poorly aligned, based on code inspection plus a full real run log (`alder-j/072326/.../1642738_align_fuse_bigstitcher.log`). No code was changed for this review.
+- Key findings in that document: the real run's initial metadata grid disagreed with measured tile offsets by a constant ~5.6% per step (corrections grew ~150px/step to ~550px at the grid corner, forcing 13 link-dropping rounds from Avg Error 417px to 2.73px); STAGE 2 DoG/ICP ran on near-zero signal (2-9823 peaks per view due to per-image relative thresholds, 5 views with zero detections, ICP pairs with 1-149 matches); STAGE 2 with `group_tiles` only applies one rigid transform per (channel, illumination) group and never refines tile geometry.
+- Top recommendations (details and verification greps in the document): derive the initial grid from actual stage positions / re-check nominal `Pixelsize in um` against measured offsets; lower STAGE 1 downsampling to 2x/2x/1x for 10% overlap; set explicit min/max intensity in the DoG stage; re-scope STAGE 2 to lateral-only or drop it for samples without common per-channel structure.
 
 ## Recent Change: IMS Export From Fused OME-Zarr
 
