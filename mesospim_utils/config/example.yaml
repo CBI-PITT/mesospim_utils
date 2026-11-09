@@ -197,6 +197,11 @@ slurm:
     'PARALLEL_JOBS': 4
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+fiji:
+  # 'stable': Fiji stable archive + pinned classic BigStitcher 2.5.3 (reads OME-Zarr v0.4 / zarr v2 only)
+  # 'latest': pinned Fiji-Latest archive build; BigStitcher 3.x + new N5 stack ship with it (adds OME-Zarr v0.5 sharded / zarr v3 reading)
+  distribution: stable
+
 bigstitcher:
   fiji_install_folder: "" # If empty "", will use Fiji installed with mesospim_utils
   downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher

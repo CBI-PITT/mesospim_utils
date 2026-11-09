@@ -172,6 +172,11 @@ IMARIS_CONVERTER_LOC = Path(IMARIS_CONVERTER_LOC)
 ########################################################################################################################
 BIGSTITCHER = config.get('bigstitcher')
 
+FIJI = config.get('fiji', {})
+# 'stable': Fiji stable archive + pinned classic BigStitcher 2.5.3 (OME-Zarr v0.4 / zarr v2 reading)
+# 'latest': pinned Fiji-Latest archive build; BigStitcher 3.x + new N5 stack ship with it (adds OME-Zarr v0.5 sharded / zarr v3 reading)
+FIJI_DISTRIBUTION = FIJI.get('distribution', 'stable')
+
 FIJI_INSTALL_LOCATION = BIGSTITCHER.get('fiji_install_folder')
 if FIJI_INSTALL_LOCATION:
     FIJI_INSTALL_LOCATION = Path(FIJI_INSTALL_LOCATION)
