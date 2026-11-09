@@ -101,7 +101,7 @@ SLURM_PARAMETERS_DECON = slurm.get('decon')
 SLURM_PARAMETERS_BASICPY = slurm.get('basicpy', {
     'PARTITION': 'ai',
     'CPUS': 1,
-    'JOB_LABEL': 'ms_basicpy',
+    'JOB_LABEL': 'dev_basicpy',
     'RAM_GB': 512,
     'GRES': 'gpu:1',
     'PARALLEL_JOBS': 8,
@@ -111,7 +111,7 @@ SLURM_PARAMETERS_BASICPY = slurm.get('basicpy', {
 SLURM_PARAMETERS_GAIN_CORRECTION = slurm.get('gain_correction', {
     'PARTITION': 'gpu',
     'CPUS': 1,
-    'JOB_LABEL': 'ms_gaincorr',
+    'JOB_LABEL': 'dev_gaincorr',
     'RAM_GB': 512,
     'GRES': None,
     'PARALLEL_JOBS': 8,

@@ -660,7 +660,7 @@ def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, arra
     GENERIC_slurm_parameters_dictionary = {
         PARTITION: 'compute,gpu', #multiple partitions can be specified with comma separation part1,par2
         CPUS: 24,
-        JOB_LABEL: 'ims_conv',
+        JOB_LABEL: 'dev_ims_conv',
         RAM_GB: 64,
         GRES: None, # Specific exactly as it would be in slurm eg. "gpu:1" or None
         PARALLEL_JOBS: 8,
