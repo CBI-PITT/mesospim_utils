@@ -205,8 +205,10 @@ fiji:
 bigstitcher:
   fiji_install_folder: "" # If empty "", will use Fiji installed with mesospim_utils
   # Stage 1 global optimization link filtering thresholds (px)
-  link_relative: 2.5
-  link_absolute: 3.5
+  # Tuned by the auto-tune search on delima (winner lr7.0/la5.0, 68.0/100 vs 54.0 for 2.5/3.5):
+  # link_absolute 5.0 is the dominant axis - cuts dropped links to 0-2 at every relative value
+  link_relative: 7.0
+  link_absolute: 5.0
   # Stage 2 ICP refinement
   icp_maximum_error: 5
   icp_lambda: 0.10
@@ -222,7 +224,7 @@ bigstitcher:
   dog_max_intensity: 65535.0
   # Self-calibration guard: warn (or rescale the fused voxel size) when the fitted grid scale differs from 1 by more than the threshold
   self_calibration_threshold_pct: 2.0
-  self_calibration_correction: false
+  self_calibration_correction: true # rescales the fused voxel size when the fitted grid scale differs from 1 by more than self_calibration_threshold_pct
   blocksize_x: 256
   blocksize_y: 256
   blocksize_z: 256
