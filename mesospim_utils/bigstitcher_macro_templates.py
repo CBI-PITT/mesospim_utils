@@ -341,7 +341,7 @@ create_multi-resolution \
 store \
 zarr_dataset_path='{4}' \
 show_advanced_block_size_options \
-block_size_x={5} \
+{enable_sharding_line}block_size_x={5} \
 block_size_y={6} \
 block_size_z={7} \
 block_size_factor_x={8} \

@@ -84,6 +84,27 @@
 - Known recommender quirk: it suggests "try the RELAXED preset (7.0/5.0)" even when that preset is already active - read it as "relax further or fix calibration". Worth a small fix (pass the current thresholds) later.
 - Pre-existing logs-dir permission gotcha: datasets owned by other users (iana) have read-only `logs_mesospim_utils/` - sbatch fails in 1s. Workaround: rename the old dir aside (parent dir must be lab-writable) or use a wrapper dir with real-copied XMLs.
 
+## Recent Change: Sharded OME-Zarr v0.5 Fused Output
+
+- The fused volume now writes as a SHARDED OME-Zarr 0.5 (`enable_sharding: true` in the bigstitcher config; macro key `enable_sharding` verified against the multiview-reconstruction 9.0.12 `ExportN5Api` dialog). Shard size = blocksize * blocksize_factor per axis (256^3 * 2 = 512^3 voxels); raise the factors for fewer, larger shards.
+- Validated end-to-end on a wrapper copy of exosomes_2 (fuse job 2051281): 1045 -> 147 files (7.1x fewer; full-res 145 chunks -> 19 shards), full-res write 74.3s -> 39.4s (1.9x faster), total fuse 2:20 -> 1:19 (1.8x faster) on beegfs. Output verified: `sharding_indexed` codec with 256^3 inner chunks + crc32c index, zstd-3 inner compression, OME multiscales in the root zarr.json, planes byte-identical to the unsharded output, and zarr-python 3.0.6 opens it transparently (chunks resolve as the inner 256^3).
+- Inner chunks tuned to 256x256x16 (blocksize_z 16, factor_z 32; shard stays 512^3, fuse job 2051293): write speed unchanged (36.0s full-res vs 39.4s at 256^3; total 1:18 vs 1:19) and file count identical (147), but plane reads drop 1203 -> 107 ms (11x faster; read amplification 268x -> 17x) because every consumer of the fused volume is plane-oriented (napari, MAX projections, .ims resampling). Planes still byte-identical to the unsharded baseline. 256^3 cuboids would only be better for a future 3D patch-based consumer of the fused zarr.
+- The chained fix/guard steps work on sharded v0.5 output unchanged (the guard reads the root zarr.json multiscales fine; for v3 the voxel size is already correct, so the step is a no-op as before).
+- Larger datasets benefit most: the file reduction is the factor product (2^3 = 8x) regardless of volume size, and big sequential shard writes are what beegfs likes.
+
+## Recent Change: Sharded OME-Zarr 0.5 Raw-Tile Converter
+
+- The raw-tile converter (`convert_mesospim_btf_to_omezarr`) now defaults to SHARDED OME-Zarr 0.5 (zarr v3) with 512-voxel shard requests, gated on `fiji.distribution` via the new `omezarr:` config section (`ome_version`, `shard_shape`): 'latest' -> 0.5 sharded, 'stable' -> 0.4 zarr v2. The writer package (`ome_zarr_multiscale_writer`) already supported both; only the mesospim_utils call site + config changed.
+- Validated end-to-end on a re-written copy of the exosomes source (2 tile groups): zarr.json `sharding_indexed` codec, 256^3 chunks in per-level shards, planes byte-identical to the 0.4 original, 2.3G on disk vs 8.4G (the shards compress the low-dynamic-range data ~3.6x better), and BigStitcher align-only ran to BIGSTITCHER_ALIGN_SUCCESS on the sharded source with registrations written.
+- Three v3-readiness gaps surfaced and fixed in mesospim_utils: `OmeZarrV2Multiscale` now falls back from forced zarr_format=2 to auto-detect with `attributes.ome` multiscale parsing; the sampling resolver's metadata discovery falls back from .zattrs to zarr.json; the XML writer emits `zarr.version="ZarrV3"` for 0.5 configs (the bdv loader reads null multiscales if the XML says ZarrV2 on a v3 source).
+- Writer-package follow-up (not changed here): `generate_multiscales_from_omezarr` silently overrides the requested ome_version with the source's metadata version - worth fixing upstream so 0.5 re-writes of 0.4 sources work through that convenience wrapper.
+- beegfs gotcha: freshly written shard files can show near-zero stat blocks until `sync` (dirty page cache with stale block accounting) - a post-write sync makes the real usage visible.
+
+## Recent Change: Write-Once Original XML Backup
+
+- `make_bigstitcher_slurm_dir_and_macro`'s xml backup is now write-once: the first `.backup` in `bigstitcher/` is the true pre-alignment original and is never overwritten. Each align run re-saves the stitched XML over the source path (mvrecon's .xml~N rotation), so a later run's source XML may be a stitched state; repeated runs keep their pre-run state under timestamped backups (`.backup.YYYYMMDD-HHMMSS`). The old numbered-candidate branch only fired for read-only backups and let a writable .backup be overwritten by a stitched state on run 2+.
+- Verified with a repeated-run simulation: run 1 backs up the original; after the source is replaced by a stitched state, run 2 leaves the original untouched and writes the pre-run state to a timestamped backup.
+
 ## Recent Change: Auto-tune Search Driver (Phase 3 of the parameter-automation roadmap)
 
 - New CLI in `mesospim_utils/automated.py`: `big-stitcher-search <dir> [--link-relative ... --link-absolute ...] [--fuse/--no-fuse] [--dry-run]` and `big-stitcher-search-score <dir> [--fuse/--no-fuse]`.

@@ -45,7 +45,9 @@ BIGSTITCHER_DOG_INTENSITY_MODE,
 BIGSTITCHER_DOG_MIN_INTENSITY,
 BIGSTITCHER_DOG_MAX_INTENSITY,
 BIGSTITCHER_SELF_CALIBRATION_THRESHOLD_PCT,
-BIGSTITCHER_SELF_CALIBRATION_CORRECTION
+BIGSTITCHER_SELF_CALIBRATION_CORRECTION,
+BIGSTITCHER_ENABLE_SHARDING,
+OMEZARR_OME_VERSION
 )
 
 from bigstitcher_macro_templates import (
@@ -609,6 +611,7 @@ def get_bigstitcher_align_only_macro(
         link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
         icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
         icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}",
+        enable_sharding_line=("enable_sharding \\\n" if BIGSTITCHER_ENABLE_SHARDING else ""),
         **_dog_intensity_kwargs()
     )
     if path_to_write_macro:
@@ -653,6 +656,7 @@ def get_bigstitcher_omezarr_fuse_only_macro(
         link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
         icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
         icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}",
+        enable_sharding_line=("enable_sharding \\\n" if BIGSTITCHER_ENABLE_SHARDING else ""),
         **_dog_intensity_kwargs()
     )
     if path_to_write_macro:
@@ -797,8 +801,12 @@ def list_mesospim_ome_zarr_zattrs(path_to_mesospim_omezarr:Path):
     '''
     path_to_mesospim_omezarr = ensure_path(path_to_mesospim_omezarr)
     tile_dir_list = list_mesospim_ome_zarr_tile_dirs(path_to_mesospim_omezarr)
+    # v2 sources carry .zattrs; sharded OME-Zarr 0.5 sources carry zarr.json
     zattrs_list = [x / '.zattrs' for x in tile_dir_list]
     zattrs_list = [x for x in zattrs_list if x.is_file()]
+    if not zattrs_list:
+        zattrs_list = [x / 'zarr.json' for x in tile_dir_list]
+        zattrs_list = [x for x in zattrs_list if x.is_file()]
     return zattrs_list
 
 @app.command()
@@ -812,7 +820,10 @@ def determine_sampling_factors_for_bigstitcher(omezarr_xml_path: Path) -> tuple[
     zattrs_list = list_mesospim_ome_zarr_zattrs(zarr_dir)
     zattr_file = zattrs_list[0]
     zattr_data = json.loads(zattr_file.read_text())
-    multiscales_dict = zattr_data.get('multiscales',[])[0]
+    # v2: multiscales at the top level; v3: nested under attributes.ome
+    multiscales_dict = zattr_data.get('multiscales') or \
+        zattr_data.get('attributes', {}).get('ome', {}).get('multiscales', [])
+    multiscales_dict = (multiscales_dict or [{}])[0]
     datasets_list = multiscales_dict.get('datasets',[])
 
     # Extract a list of scales for each multiscale
@@ -1155,6 +1166,10 @@ def mesospim_metadata_to_bigstitcher_xml(
     imageloader = ET.SubElement(sequence_description, 'ImageLoader')
     imageloader.set('format', 'bdv.multimg.zarr')
     imageloader.set('version', '3.0')
+    # The declared zarr version must match the converter's output: sharded
+    # OME-Zarr 0.5 sources are zarr v3 groups (zarr.json, no .zattrs) - the
+    # bdv.multimg.zarr loader reads null multiscales if the XML says ZarrV2.
+    imageloader.set('zarr.version', 'ZarrV3' if OMEZARR_OME_VERSION == '0.5' else 'ZarrV2')
 
     # spimdata/SequenceDescription/ViewSetups:
     viewsetups = ET.SubElement(sequence_description, 'ViewSetups')

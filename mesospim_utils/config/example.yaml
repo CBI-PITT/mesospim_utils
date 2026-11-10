@@ -202,6 +202,15 @@ fiji:
   # 'latest': pinned Fiji-Latest archive build; BigStitcher 3.x + new N5 stack ship with it (adds OME-Zarr v0.5 sharded / zarr v3 reading)
   distribution: stable
 
+# Raw-tile OME-Zarr converter (raw BTF -> source zarr, used before decon and stitching)
+omezarr:
+  # OME-Zarr version for the converter. Defaults to what the configured fiji.distribution
+  # can read ('latest' -> 0.5 sharded zarr v3, 'stable' -> 0.4 zarr v2); this key overrides.
+  ome_version: '0.5'
+  # Shard shape (z,y,x) for the source tiles: each shard file holds this many voxels
+  # (~8x fewer files than per-chunk writing). Only applies to 0.5 / zarr v3; ignored for 0.4.
+  shard_shape: [512, 512, 512]
+
 bigstitcher:
   fiji_install_folder: "" # If empty "", will use Fiji installed with mesospim_utils
   # Stage 1 global optimization link filtering thresholds (px)
@@ -225,12 +234,25 @@ bigstitcher:
   # Self-calibration guard: warn (or rescale the fused voxel size) when the fitted grid scale differs from 1 by more than the threshold
   self_calibration_threshold_pct: 2.0
   self_calibration_correction: true # rescales the fused voxel size when the fitted grid scale differs from 1 by more than self_calibration_threshold_pct
+  # Fused-output chunking: blocksize = the storage chunk (inner chunk in the sharded
+  # zarr). Small z-chunks keep plane-wise reads cheap (napari, MAX projections, .ims
+  # resampling all read the fused volume plane by plane); x/y sizes trade request
+  # count vs per-request overhead.
+  # blocksize_factor = how many chunks are fused and written at once (the compute
+  # block). With sharding enabled, each compute block becomes one shard file, so
+  # shard size = blocksize * blocksize_factor per axis (here 256x256x16 * 2/2/32 =
+  # 512x512x512 voxels, ~256 MB). Larger factors give fewer, larger shards - better
+  # write throughput on beegfs but more RAM per block; 512^3 is the measured sweet spot.
   blocksize_x: 256
   blocksize_y: 256
-  blocksize_z: 256
+  blocksize_z: 16
   blocksize_factor_x: 2
   blocksize_factor_y: 2
-  blocksize_factor_z: 2
+  blocksize_factor_z: 32
+  # Sharded OME-Zarr v0.5 fused output: writes each compute block as one shard file
+  # (~8x fewer files than per-chunk writing). Macro key verified against the
+  # multiview-reconstruction 9.0.12 dialog.
+  enable_sharding: true
   subsampling_factors: 'automated' # "{{1,1,1}, {2,2,2}, {4,4,4}, {8,8,8}, {16,16,16}, {32,32,32}}"
   ram_fraction: 0.95 # 0-1, Fraction of allocated RAM to allocate to bigstitcher Java heap
 
