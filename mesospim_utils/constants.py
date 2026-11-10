@@ -187,6 +187,31 @@ BIGSTITCHER_LINK_ABSOLUTE = float(BIGSTITCHER.get('link_absolute', 3.5))
 BIGSTITCHER_ICP_MAXIMUM_ERROR = int(BIGSTITCHER.get('icp_maximum_error', 5))
 BIGSTITCHER_ICP_LAMBDA = float(BIGSTITCHER.get('icp_lambda', 0.10))
 
+# Adaptive STAGE 1 downsampling from the metadata overlap: 'overlap' as a
+# downsample_in_x/y/z value computes the largest lateral downsample keeping the
+# overlap strip >= BIGSTITCHER_MIN_OVERLAP_STRIP_PX (10% overlap, 3000px tiles
+# -> 2x/2x/1x). Numeric values keep the fixed per-axis behavior; 'automated'
+# keeps the multiscale-derived behavior.
+BIGSTITCHER_MIN_OVERLAP_STRIP_PX = float(BIGSTITCHER.get('min_overlap_strip_px', 150))
+
+# DoG detection intensity gating (macro keys verified against the installed
+# BigStitcher 3.0.8 / multiview-reconstruction 9.0.12 dialogs and upstream
+# DifferenceOfGUI.java): 'off' sends nothing (prior behavior), 'common' sends
+# use_same_min_&_max_intensity_for_all_views=true so the DoG threshold is
+# comparable across views, 'fixed' sends set_minimal_and_maximal_intensity=true
+# with explicit minimal/maximal values.
+BIGSTITCHER_DOG_INTENSITY_MODE = BIGSTITCHER.get('dog_intensity_mode', 'off')
+BIGSTITCHER_DOG_MIN_INTENSITY = float(BIGSTITCHER.get('dog_min_intensity', 0.0))
+BIGSTITCHER_DOG_MAX_INTENSITY = float(BIGSTITCHER.get('dog_max_intensity', 65535.0))
+
+# Self-calibration guard: after fusion, the stitched XML's fitted grid scale
+# estimates the zoom/ETL pixel-size miscalibration; when |s - 1| exceeds
+# BIGSTITCHER_SELF_CALIBRATION_THRESHOLD_PCT the pipeline warns loudly and,
+# when BIGSTITCHER_SELF_CALIBRATION_CORRECTION is true, rescales the fused
+# output voxel size by 1/s (true px = nominal px / s).
+BIGSTITCHER_SELF_CALIBRATION_THRESHOLD_PCT = float(BIGSTITCHER.get('self_calibration_threshold_pct', 2.0))
+BIGSTITCHER_SELF_CALIBRATION_CORRECTION = bool(BIGSTITCHER.get('self_calibration_correction', False))
+
 FIJI_INSTALL_LOCATION = BIGSTITCHER.get('fiji_install_folder')
 if FIJI_INSTALL_LOCATION:
     FIJI_INSTALL_LOCATION = Path(FIJI_INSTALL_LOCATION)

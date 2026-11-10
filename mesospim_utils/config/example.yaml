@@ -210,10 +210,19 @@ bigstitcher:
   # Stage 2 ICP refinement
   icp_maximum_error: 5
   icp_lambda: 0.10
-  downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
-  downsample_in_y: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
+  downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher. 'overlap' computes the largest lateral downsample keeping the overlap strip >= min_overlap_strip_px
+  downsample_in_y: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher. 'overlap' computes it from the metadata overlap
   downsample_in_z: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
+  # Adaptive overlap-driven downsampling target (px); used when downsample_in_x/y is 'overlap'
+  min_overlap_strip_px: 150
   downsample_refinement: '8/8/4' # 'automated' # Controls the downsampling factor in X/Y/Z for the refinement step in BigStitcher. Suggest 8/8/4 or 4/4/2 for large datasets.
+  # DoG detection intensity gating; macro keys verified against BigStitcher 3.0.8. 'off' preserves prior behavior
+  dog_intensity_mode: 'off' # 'off' | 'common' (use_same_min_&_max_intensity_for_all_views=true) | 'fixed' (explicit values below)
+  dog_min_intensity: 0.0
+  dog_max_intensity: 65535.0
+  # Self-calibration guard: warn (or rescale the fused voxel size) when the fitted grid scale differs from 1 by more than the threshold
+  self_calibration_threshold_pct: 2.0
+  self_calibration_correction: false
   blocksize_x: 256
   blocksize_y: 256
   blocksize_z: 256

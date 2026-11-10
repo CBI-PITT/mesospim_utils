@@ -96,7 +96,7 @@ BIGSTITCHER_ALIGN_OMEZARR_OUT = '''
 // It can be run headlessly in Fiji with BigStitcher installed
 
 print("");
-print("BIGSTITCHER_PARAMS: link_relative={link_relative} link_absolute={link_absolute} icp_maximum_error={icp_maximum_error} icp_lambda={icp_lambda}");
+print("BIGSTITCHER_PARAMS: link_relative={link_relative} link_absolute={link_absolute} icp_maximum_error={icp_maximum_error} icp_lambda={icp_lambda} dog_intensity_mode={dog_intensity_mode} dog_min_intensity={dog_min_intensity} dog_max_intensity={dog_max_intensity}");
 
 // --------------------------------------------------------------------
 // STAGE 1: Tile alignment using channels=[Average Channels]
@@ -179,11 +179,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={12}x \
 downsample_z={13}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -225,11 +225,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={14}x \
 downsample_z={15}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -271,11 +271,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={16}x \
 downsample_z={17}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -361,7 +361,7 @@ BIGSTITCHER_ALIGN_HDF5_OUT = '''
 // It can be run headlessly in Fiji with BigStitcher installed
 
 print("");
-print("BIGSTITCHER_PARAMS: link_relative={link_relative} link_absolute={link_absolute} icp_maximum_error={icp_maximum_error} icp_lambda={icp_lambda}");
+print("BIGSTITCHER_PARAMS: link_relative={link_relative} link_absolute={link_absolute} icp_maximum_error={icp_maximum_error} icp_lambda={icp_lambda} dog_intensity_mode={dog_intensity_mode} dog_min_intensity={dog_min_intensity} dog_max_intensity={dog_max_intensity}");
 
 // --------------------------------------------------------------------
 // STAGE 1: Tile alignment using channels=[Average Channels]
@@ -444,11 +444,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={12}x \
 downsample_z={13}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -490,11 +490,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={14}x \
 downsample_z={15}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -536,11 +536,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={16}x \
 downsample_z={17}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");

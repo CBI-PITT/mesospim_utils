@@ -29,6 +29,7 @@ from bigstitcher import (does_dir_contain_bigstitcher_metadata,
                          get_bigstitcher_omezarr_alignment_marco,
                          make_bigstitcher_slurm_dir_and_macro,
                          adjust_scale_in_bigstitcher_produced_ome_zarr,
+                         apply_self_calibration_guard,
                          get_ome_zarr_directory_from_xml,
                          get_reference_multiscale_tile_path,
                          get_bigstitcher_fused_output_path,
@@ -474,6 +475,7 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
             return
         cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
         cmd += f' "{dir_loc}" "{fused_out_dir_or_file}"'
+        cmd += f' && {mesospim_root_application}/bigstitcher.py apply-self-calibration-guard "{dir_loc}" "{fused_out_dir_or_file}"'
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'fix_bigstitcher_omezarr_metadata')
         print(f'BigStitcher Fix OME-Zarr Metadata Scale: {job_number}')
