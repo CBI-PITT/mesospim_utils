@@ -882,19 +882,36 @@ def adjust_scale_in_bigstitcher_produced_ome_zarr(omezarr_xml_or_acquisition_pat
         omezarr_xml = ensure_path(omezarr_xml)
 
     scales_list_zyx, _, _ = determine_sampling_factors_for_bigstitcher(omezarr_xml)
+    # zarr v2 stores OME multiscales in .zattrs; zarr v3 (mvrecon >= 9) stores
+    # them in the root zarr.json under attributes.ome
     target_zattr_path = omezarr_produced_by_bigstitcher_path / '.zattrs'
-    target_zattr = json.loads(target_zattr_path.read_text())
+    v3_root_json = None
+    if not target_zattr_path.exists():
+        v3_root_json = omezarr_produced_by_bigstitcher_path / 'zarr.json'
+        if not v3_root_json.exists():
+            raise FileNotFoundError(f'no .zattrs or zarr.json under {omezarr_produced_by_bigstitcher_path}')
+        target_zattr = json.loads(v3_root_json.read_text())
+    else:
+        target_zattr = json.loads(target_zattr_path.read_text())
     print(f'{target_zattr=}')
 
-    for dataset in target_zattr.get('multiscales',[])[0].get('datasets',[]):
+    # v2: multiscales at the top level; v3: nested under attributes.ome
+    multiscales = target_zattr.get('multiscales')
+    if multiscales is None:
+        multiscales = target_zattr.get('attributes', {}).get('ome', {}).get('multiscales', [])
+    for dataset in multiscales[0].get('datasets',[]) if multiscales else []:
         idx = dataset.get('path')
         idx = int(idx)
         dataset['coordinateTransformations'][0]['scale'] = [1,1] + scales_list_zyx[idx]
 
     print(f'{target_zattr=}')
 
-    with open(target_zattr_path, "w") as json_file:
-        json.dump(target_zattr, json_file, indent=4)
+    if v3_root_json is not None:
+        with open(v3_root_json, "w") as json_file:
+            json.dump(target_zattr, json_file, indent=4)
+    else:
+        with open(target_zattr_path, "w") as json_file:
+            json.dump(target_zattr, json_file, indent=4)
 
 
 def apply_self_calibration_guard(stitched_xml_or_acquisition_path: Path, fused_omezarr_path: Path):

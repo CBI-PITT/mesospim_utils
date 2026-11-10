@@ -458,7 +458,9 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     elif stages == 'fuse':
         bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type, stages=stages)
         cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
-        cmd += f' && [ -e "{fused_out_dir_or_file}" ]'
+        # -nt (not just -e): a stale container from a previous run must not
+        # count as success when BigStitcher refuses to create it
+        cmd += f' && [ "{fused_out_dir_or_file}" -nt "{macro_file}" ]'
         cmd += f' && printf "BIGSTITCHER_SUCCESS: {Path(fused_out_dir_or_file).name}\\n"'
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
                                 after_slurm_jobs=None, username=username, log_suffix=f'fuse_only_bigstitcher')
@@ -466,7 +468,9 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     else:
         bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type)
         cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
-        cmd += f' && [ -e "{fused_out_dir_or_file}" ]'
+        # -nt (not just -e): a stale container from a previous run must not
+        # count as success when BigStitcher refuses to create it
+        cmd += f' && [ "{fused_out_dir_or_file}" -nt "{macro_file}" ]'
         cmd += f' && printf "BIGSTITCHER_SUCCESS: {Path(fused_out_dir_or_file).name}\\n"'
 
         job_number = None
@@ -482,7 +486,7 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
             return
         cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
         cmd += f' "{dir_loc}" "{fused_out_dir_or_file}"'
-        cmd += f' && {mesospim_root_application}/bigstitcher.py apply-self-calibration-guard "{dir_loc}" "{fused_out_dir_or_file}"'
+        cmd += f' && {mesospim_root_application}/bigstitcher.py apply-self-calibration-guard-cli "{dir_loc}" "{fused_out_dir_or_file}"'
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'fix_bigstitcher_omezarr_metadata')
         print(f'BigStitcher Fix OME-Zarr Metadata Scale: {job_number}')
@@ -692,7 +696,7 @@ def big_stitcher_search(
     optionally submits exactly one fuse-only run.
     '''
     dir_loc = ensure_path(dir_loc)
-    from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER
+    from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER, SLURM_PARAMETERS_FOR_DEPENDENCIES
     from string_templates import BIGSTITCHER_ALIGN_TEMPLATE
     import bigstitcher as bs
 
@@ -713,7 +717,6 @@ def big_stitcher_search(
     abs_values = _csv(link_absolute, [BIGSTITCHER_LINK_ABSOLUTE, 5.0])
     candidates = [(rel, ab) for rel in rel_values for ab in abs_values]
     print(f'search candidates ({len(candidates)}): ' + ', '.join(f'(rel {r}, abs {a})' for r, a in candidates))
-
     search_dir = dir_loc / 'bigstitcher'
     search_dir.mkdir(parents=True, exist_ok=True)
 
@@ -781,8 +784,8 @@ def big_stitcher_search_score(
     if not logs:
         raise FileNotFoundError(f'no search align-only logs under {slurm_log_dir}')
 
-    results = []
-    for log_path in logs:
+    results_by_tag = {}
+    for log_path in logs:  # sorted by mtime: the latest log per tag wins
         metrics = parse_align_log(log_path)
         params = metrics.get('params') or {}
         if 'link_relative' not in params or 'link_absolute' not in params:
@@ -803,12 +806,13 @@ def big_stitcher_search_score(
             xml_error = f'snapshot not found: {snapshot.name}'
         score, components = alignment_quality_score(metrics, xml_metrics)
         recs = recommend_params(metrics, xml_metrics)
-        results.append({
+        results_by_tag[tag] = {
             'tag': tag, 'rel': rel, 'abs': ab, 'log': log_path,
             'metrics': metrics, 'xml_metrics': xml_metrics, 'xml_error': xml_error,
             'score': score, 'components': components, 'recommendations': recs,
-        })
+        }
 
+    results = list(results_by_tag.values())
     if not results:
         raise RuntimeError('no scoreable search runs found')
 
