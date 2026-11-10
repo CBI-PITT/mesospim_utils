@@ -15,6 +15,7 @@ import os
 import shutil
 import json
 import re
+from datetime import datetime
 
 # Installed Package imports
 import zarr
@@ -727,15 +728,13 @@ def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr', stag
     bigstitcher_dir = path / 'bigstitcher'
     bigstitcher_dir.mkdir(parents=True, exist_ok=True)
     backup_xml = bigstitcher_dir / (omezarr_xml.name + '.backup')
-
-    if backup_xml.exists() and not os.access(backup_xml, os.W_OK):
-        backup_index = 1
-        while True:
-            candidate_backup = bigstitcher_dir / f'{omezarr_xml.name}.backup.{backup_index}'
-            if not candidate_backup.exists():
-                backup_xml = candidate_backup
-                break
-            backup_index += 1
+    if backup_xml.exists():
+        # The first .backup is the true original (pre-any-alignment) and is
+        # write-once: each align run re-saves the stitched XML over the source
+        # path (mvrecon's .xml~N rotation), so a later run's source XML may be
+        # a stitched state. Repeated runs keep their pre-run state under
+        # timestamped backups; the original is never overwritten.
+        backup_xml = bigstitcher_dir / f'{omezarr_xml.name}.backup.{datetime.now().strftime("%Y%m%d-%H%M%S")}'
 
     shutil.copyfile(omezarr_xml, backup_xml)
 
