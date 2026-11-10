@@ -6,8 +6,8 @@
 
 ## Current Branch And Working State
 
-- Expected branch when this note was updated: `bigstitcher-optimization` (branched off `dev` at `966259d`; commits through `755aec3`)
-- The repository may be dirty from ongoing local work; inspect `git status` before editing. Uncommitted from the latest-distribution work: `fiji.py`, `constants.py`, `config/example.yaml`, `config/main.yaml`.
+- Expected branch when this note was updated: `bigstitcher-optimization` (branched off `dev` at `966259d`; Phase 3 committed as `206e778`+`5c56a52`, pushed at `8266dd9`)
+- Uncommitted from the delima search verification round: `mesospim_utils/automated.py` (SLURM_PARAMETERS_FOR_DEPENDENCIES import fix in big_stitcher_search; `-nt` fresh-container success check replacing `-e` in both fuse branches; `apply-self-calibration-guard-cli` command name fix in the chained fix step) and `mesospim_utils/bigstitcher.py` (zarr v3 support in adjust_scale_in_bigstitcher_produced_ome_zarr - reads root zarr.json attributes.ome.multiscales when .zattrs is absent).
 - Recent work has touched BigStitcher, metadata/config, Fiji install helpers, and packaging metadata.
 
 ## Current Focus Areas
@@ -62,6 +62,27 @@
 - dutta (Mag4x, 4x3 grid, 2ch, 24 tiles, job 2049509): first-round Avg 88.69px / Max 195.43px, 5 dropped links, 6 opt rounds, final Avg 2.39px / Max 3.31px, 0 zero-detection views, ICP clean, success marker + valid fused OME-Zarr. Heavy heap pressure during fusion: ~186 `block error (will be re-tried): OutOfMemoryError: Java heap space` events during pyramid writing (s0->s1); all blocks recovered via retry (each level ends `remaining for retry: 0`) but this confirms the fusion-OOM note below on a 2ch 4x3 grid.
 - Exceptions counted in these logs are benign except the dutta fusion block retries noted above: optional-export `VerifyError` (OpenSeaDragon path, caught), `HeadlessException` from the macro's final "Wrapping ImagePlus around fused image" display step (caught), and `Could not find X11 library, not running XInitThreads` (headless startup).
 - Macro-key drift on 3.0.8: all keys the templates send (alignment, DoG detector, ICP, fusion, downsampling) still take effect under the jaunch-based latest launcher - logs show resolved parameters and `Downsampling: (4, 4, 1, 1, 1) with relative downsampling of (2, 2, 1, 1, 1)` style lines, and every macro-controlled stage banner appears. No silent key drops observed.
+
+## Recent Change: Delima Auto-Tune Search Result + Verification Fixes
+
+- The first auto-tune search ran on delima (6 align-only candidates, lr 2.5-7.0 x la 3.5-5.0, scored with the Phase 1 scorer). WINNER lr7.0/la5.0 at 68.0/100 vs in-search control (config thresholds) 54.0 vs original baseline composite 45.6 - zero dropped links (control dropped 6). link_absolute is the dominant axis; the fitted grid-fit numbers (scale offset +5.55-5.59%, residual scatter 38-39px) are FLAT across all candidates, confirming the zoom/ETL miscalibration is not tunable by link thresholds - it needs the self-calibration correction (guard measured x +4.65%, y +5.58% vs 2% threshold; correction disabled by default).
+- Two pipeline bugs found and fixed during verification: (1) the fuse success marker passed on a STALE container from a previous run (BigStitcher refuses to create an existing container, but `&& [ -e ]` passed) - replaced with `-nt` against the macro; (2) the chained metadata-fix step crashed with FileNotFoundError on `.zattrs` since the mvrecon 9.0.12 pin (it writes zarr v3 `zarr.json`) - both fixed and proven on the real re-run fusion (fresh container written, adjust-scale v3 read/write in the fix log).
+- The fused volume metadata is already correct for v3 (the v3 writer transfers voxel size from the tile XML), so adjust-scale is a no-op for v3 rather than a correction.
+- The stale baseline fused container was preserved as `pig_ON_Mag4x_Ch488_montage_baseline_nov9.ome.zarr` (non-destructive rename) before the re-fuse.
+
+## Recent Change: Config Changes Applied + Multi-Dataset Validation (approved)
+
+- Config changes applied to `config/main.yaml` and `config/example.yaml` (person-approved): `link_relative: 7.0`, `link_absolute: 5.0` (the search winner), `self_calibration_correction: true`. Constants verified loading 7.0/5.0/True in a fresh process.
+- Multi-dataset validation (align-only runs with the new config, scored with the Phase 1 scorer): delima 54.0 -> 60.2 (dropped 6 -> 3), dutta 76.1 -> 82.9 (dropped 5 -> 2), 102226_2 56.9 -> 56.9 (already well-stitched, unchanged, no regression). All runs warm-started from existing registrations, so the dropped-links comparison is the clean signal.
+- Self-calibration correction tested end-to-end on the delima winner fusion: guard measured x +4.67%, y +5.58% (> 2% threshold) and rescaled the fused voxel size across all 6 pyramid levels (y 1.2 -> 1.137um, x 1.2 -> 1.146um; z untouched - no resolvable z fit). CAVEAT: the correction is not idempotent - each fuse produces a fresh (nominal) volume so the chained guard corrects once, but manually re-running the guard on an already-corrected volume double-corrects.
+- Uncommitted work now spans: `automated.py` (import fix, `-nt` fuse checks, guard-cli name), `bigstitcher.py` (zarr v3 in adjust-scale), `config/main.yaml`, `config/example.yaml`, `PROJECT_CONTEXT.md`.
+
+## Recent Change: Six-Dataset Config Validation (new thresholds, align-only + scorer)
+
+- Ran the new config (7.0/5.0 + correction) align-only on six more datasets and scored all with the Phase 1 scorer. Tiles/score/dropped/grid-offset/flags: exosomes_2 2t/100-vacuous (2 tiles = no scoreable metrics; fused + MAX-rendered, seam check PASSED - continuous field, no step, no ghosting), green_embryo_3x3 27t/58.2 (7 dropped, +2.66%, 1 zero-DR view), almarza_knee 28t/34.4 (39 dropped, +5.95%, 5 zero-DR views - WORST; ran on a lab wrapper `almarza_knee_lab/` with real-copied XMLs + symlinked 590G data because the original is iana-owned read-only), zhang_070726 36t/49.7 (11 dropped, +2.18%, 6 zero-DR views), klimstra 40t/44.5 (21 dropped, +5.45%), alder_mcdyer_lung 48t/51.2 (11 dropped, +5.45%).
+- Conclusion: the tuned config clearly improves the previously-validated datasets (delima/dutta) and is neutral on well-stitched ones (102226_2), but 4 of 5 scorable new datasets still drop links at 7.0/5.0 - these have colder/wilder grids (first-round 83-686px) and several have zero-detection views (illumination problems). Per the agreed workflow these are the per-dataset-search candidates (relax beyond 7.0/5.0) plus scope-side attention (illumination, calibration).
+- Known recommender quirk: it suggests "try the RELAXED preset (7.0/5.0)" even when that preset is already active - read it as "relax further or fix calibration". Worth a small fix (pass the current thresholds) later.
+- Pre-existing logs-dir permission gotcha: datasets owned by other users (iana) have read-only `logs_mesospim_utils/` - sbatch fails in 1s. Workaround: rename the old dir aside (parent dir must be lab-writable) or use a wrapper dir with real-copied XMLs.
 
 ## Recent Change: Auto-tune Search Driver (Phase 3 of the parameter-automation roadmap)
 
