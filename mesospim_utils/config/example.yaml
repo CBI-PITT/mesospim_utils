@@ -204,6 +204,12 @@ fiji:
 
 bigstitcher:
   fiji_install_folder: "" # If empty "", will use Fiji installed with mesospim_utils
+  # Stage 1 global optimization link filtering thresholds (px)
+  link_relative: 2.5
+  link_absolute: 3.5
+  # Stage 2 ICP refinement
+  icp_maximum_error: 5
+  icp_lambda: 0.10
   downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
   downsample_in_y: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
   downsample_in_z: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher

@@ -34,40 +34,33 @@ BLOCKSIZE_Z,
 BLOCKSIZE_FACTOR_X,
 BLOCKSIZE_FACTOR_Y,
 BLOCKSIZE_FACTOR_Z,
-SUBSAMPLING_FACTORS
+SUBSAMPLING_FACTORS,
+BIGSTITCHER_LINK_RELATIVE,
+BIGSTITCHER_LINK_ABSOLUTE,
+BIGSTITCHER_ICP_MAXIMUM_ERROR,
+BIGSTITCHER_ICP_LAMBDA
 )
 
 from bigstitcher_macro_templates import (
     BIGSTITCHER_ALIGN_OMEZARR_OUT,
-    BIGSTITCHER_ALIGN_HDF5_OUT
+    BIGSTITCHER_ALIGN_HDF5_OUT,
+    BIGSTITCHER_ALIGN_ONLY_OUT,
+    BIGSTITCHER_FUSE_ONLY_OMEZARR_OUT,
+    BIGSTITCHER_FUSE_ONLY_HDF5_OUT
 )
 
 # INIT typer cmdline interface
 app = typer.Typer()
 
 
-def get_bigstitcher_omezarr_alignment_marco(
+def _resolve_automated_sampling(
     input_omezarr_xml_path: Path,
-    output_omezarr_path: Path,
-    path_to_write_macro: Path=None,
-    downsample_in_x: str=DOWNSAMPLE_IN_X,
-    downsample_in_y: str=DOWNSAMPLE_IN_Y,
-    downsample_in_z: str=DOWNSAMPLE_IN_Z,
-    block_size_x: int=BLOCKSIZE_X,
-    block_size_y: int=BLOCKSIZE_Y,
-    block_size_z: int=BLOCKSIZE_Z,
-    block_size_factor_x: int=BLOCKSIZE_FACTOR_X,
-    block_size_factor_y: int=BLOCKSIZE_FACTOR_Y,
-    block_size_factor_z: int=BLOCKSIZE_FACTOR_Z,
-    subsampling_factors: str=SUBSAMPLING_FACTORS,
-    downsample_refinement: str=DOWNSAMPLE_REFINEMENT
+    downsample_in_x: str,
+    downsample_in_y: str,
+    downsample_in_z: str,
+    subsampling_factors: str,
+    downsample_refinement: str,
 ):
-    '''
-    Generate BigStitcher macro for aligning omezarr data
-    Return the macro string
-    If given path_to_write_macro, also write the macro to that path
-    '''
-
     automated_downsample = any([x.lower() == 'automated' for x in [downsample_in_x, downsample_in_y, downsample_in_z]])
     automated_subsampling = subsampling_factors.lower() == 'automated'
     automated_refinement_sampling = downsample_refinement.lower() == 'automated'
@@ -94,6 +87,34 @@ def get_bigstitcher_omezarr_alignment_marco(
         # downsample_refinement list of tuples lowest res to highest res [(8,8,4),(4,4,2),(2,2,1)]
         print(f'{downsample_refinement=}')
 
+    return downsample_in_x, downsample_in_y, downsample_in_z, subsampling_factors, downsample_refinement
+
+
+def get_bigstitcher_omezarr_alignment_marco(
+    input_omezarr_xml_path: Path,
+    output_omezarr_path: Path,
+    path_to_write_macro: Path=None,
+    downsample_in_x: str=DOWNSAMPLE_IN_X,
+    downsample_in_y: str=DOWNSAMPLE_IN_Y,
+    downsample_in_z: str=DOWNSAMPLE_IN_Z,
+    block_size_x: int=BLOCKSIZE_X,
+    block_size_y: int=BLOCKSIZE_Y,
+    block_size_z: int=BLOCKSIZE_Z,
+    block_size_factor_x: int=BLOCKSIZE_FACTOR_X,
+    block_size_factor_y: int=BLOCKSIZE_FACTOR_Y,
+    block_size_factor_z: int=BLOCKSIZE_FACTOR_Z,
+    subsampling_factors: str=SUBSAMPLING_FACTORS,
+    downsample_refinement: str=DOWNSAMPLE_REFINEMENT
+):
+    '''
+    Generate BigStitcher macro for aligning omezarr data
+    Return the macro string
+    If given path_to_write_macro, also write the macro to that path
+    '''
+
+    downsample_in_x, downsample_in_y, downsample_in_z, subsampling_factors, downsample_refinement = _resolve_automated_sampling(
+        input_omezarr_xml_path, downsample_in_x, downsample_in_y, downsample_in_z, subsampling_factors, downsample_refinement)
+
 
     macro = BIGSTITCHER_ALIGN_OMEZARR_OUT.format(
         ensure_path(input_omezarr_xml_path).as_posix(),
@@ -113,7 +134,11 @@ def get_bigstitcher_omezarr_alignment_marco(
         downsample_refinement[1][2], # Second y
         downsample_refinement[1][0], # Second z
         downsample_refinement[2][2], # Third y
-        downsample_refinement[2][0]  # Third z
+        downsample_refinement[2][0], # Third z
+        link_relative=f"{BIGSTITCHER_LINK_RELATIVE:.3f}",
+        link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
+        icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
+        icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}"
     )
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:
@@ -188,7 +213,11 @@ def get_bigstitcher_hdf5_alignment_marco(
         downsample_refinement[1][2],  # Second y
         downsample_refinement[1][0],  # Second z
         downsample_refinement[2][2],  # Third y
-        downsample_refinement[2][0]  # Third z
+        downsample_refinement[2][0],  # Third z
+        link_relative=f"{BIGSTITCHER_LINK_RELATIVE:.3f}",
+        link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
+        icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
+        icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}"
     )
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:
@@ -498,7 +527,137 @@ def should_skip_bigstitcher_run(dir_loc: Path, fused_file_type: str, final_file_
     return False, ''
 
 @app.command()
-def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr'):
+def get_bigstitcher_align_only_macro(
+    input_omezarr_xml_path: Path,
+    path_to_write_macro: Path=None,
+    downsample_in_x: str=DOWNSAMPLE_IN_X,
+    downsample_in_y: str=DOWNSAMPLE_IN_Y,
+    downsample_in_z: str=DOWNSAMPLE_IN_Z,
+    downsample_refinement: str=DOWNSAMPLE_REFINEMENT
+):
+    '''
+    Generate BigStitcher macro for STAGE 1 (pairwise shifts + global optimization) and
+    STAGE 2 (interest point detection + ICP refinement) only, without fusion. The
+    registrations are written into the input XML; fusion runs separately with
+    get_bigstitcher_omezarr_fuse_only_macro / get_bigstitcher_hdf5_fuse_only_macro.
+    '''
+
+    downsample_in_x, downsample_in_y, downsample_in_z, _, downsample_refinement = _resolve_automated_sampling(
+        input_omezarr_xml_path, downsample_in_x, downsample_in_y, downsample_in_z, 'not_automated', downsample_refinement)
+
+    macro = BIGSTITCHER_ALIGN_ONLY_OUT.format(
+        ensure_path(input_omezarr_xml_path).as_posix(),
+        downsample_in_x,
+        downsample_in_y,
+        downsample_in_z,
+        None,  # fused output path (unused in align-only)
+        None, None, None,  # block sizes (unused)
+        None, None, None,  # block factors (unused)
+        None,  # subsampling factors (unused)
+        downsample_refinement[0][2], # First y
+        downsample_refinement[0][0], # First z
+        downsample_refinement[1][2], # Second y
+        downsample_refinement[1][0], # Second z
+        downsample_refinement[2][2], # Third y
+        downsample_refinement[2][0], # Third z
+        link_relative=f"{BIGSTITCHER_LINK_RELATIVE:.3f}",
+        link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
+        icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
+        icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}"
+    )
+    if path_to_write_macro:
+        with open(path_to_write_macro, 'w') as f:
+            f.write(macro)
+    return macro
+
+
+def get_bigstitcher_omezarr_fuse_only_macro(
+    input_omezarr_xml_path: Path,
+    output_omezarr_path: Path,
+    path_to_write_macro: Path=None,
+    block_size_x: int=BLOCKSIZE_X,
+    block_size_y: int=BLOCKSIZE_Y,
+    block_size_z: int=BLOCKSIZE_Z,
+    block_size_factor_x: int=BLOCKSIZE_FACTOR_X,
+    block_size_factor_y: int=BLOCKSIZE_FACTOR_Y,
+    block_size_factor_z: int=BLOCKSIZE_FACTOR_Z,
+    subsampling_factors: str=SUBSAMPLING_FACTORS
+):
+    '''
+    Generate BigStitcher macro for STAGE 3 (OME-Zarr fusion) only. The input XML must
+    already carry the stitched registrations from an align-only run.
+    '''
+
+    _, _, _, subsampling_factors, _ = _resolve_automated_sampling(
+        input_omezarr_xml_path, 'not_automated', 'not_automated', 'not_automated', subsampling_factors, 'not_automated')
+
+    macro = BIGSTITCHER_FUSE_ONLY_OMEZARR_OUT.format(
+        ensure_path(input_omezarr_xml_path).as_posix(),
+        None, None, None,  # downsample x/y/z (unused in fuse-only)
+        ensure_path(output_omezarr_path).as_posix(),
+        block_size_x,
+        block_size_y,
+        block_size_z,
+        block_size_factor_x,
+        block_size_factor_y,
+        block_size_factor_z,
+        subsampling_factors,
+        None, None, None, None, None, None,  # refinement y/z (unused)
+        link_relative=f"{BIGSTITCHER_LINK_RELATIVE:.3f}",
+        link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
+        icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
+        icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}"
+    )
+    if path_to_write_macro:
+        with open(path_to_write_macro, 'w') as f:
+            f.write(macro)
+    return macro
+
+
+def get_bigstitcher_hdf5_fuse_only_macro(
+    input_omezarr_xml_path: Path,
+    output_omezarr_path: Path,
+    path_to_write_macro: Path=None,
+    block_size_x: int=BLOCKSIZE_X,
+    block_size_y: int=BLOCKSIZE_Y,
+    block_size_z: int=BLOCKSIZE_Z,
+    block_size_factor_x: int=BLOCKSIZE_FACTOR_X,
+    block_size_factor_y: int=BLOCKSIZE_FACTOR_Y,
+    block_size_factor_z: int=BLOCKSIZE_FACTOR_Z,
+    subsampling_factors: str=SUBSAMPLING_FACTORS
+):
+    '''
+    Generate BigStitcher macro for STAGE 3 (HDF5 fusion) only. The input XML must
+    already carry the stitched registrations from an align-only run.
+    '''
+
+    _, _, _, subsampling_factors, _ = _resolve_automated_sampling(
+        input_omezarr_xml_path, 'not_automated', 'not_automated', 'not_automated', subsampling_factors, 'not_automated')
+
+    macro = BIGSTITCHER_FUSE_ONLY_HDF5_OUT.format(
+        ensure_path(input_omezarr_xml_path).as_posix(),
+        None, None, None,  # downsample x/y/z (unused in fuse-only)
+        ensure_path(output_omezarr_path).as_posix(),
+        block_size_x,
+        block_size_y,
+        block_size_z,
+        block_size_factor_x,
+        block_size_factor_y,
+        block_size_factor_z,
+        subsampling_factors,
+        None, None, None, None, None, None,  # refinement y/z (unused)
+        link_relative=f"{BIGSTITCHER_LINK_RELATIVE:.3f}",
+        link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
+        icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
+        icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}"
+    )
+    if path_to_write_macro:
+        with open(path_to_write_macro, 'w') as f:
+            f.write(macro)
+    return macro
+
+
+def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr', stages: str='align+fuse'):
     '''
     Takes path where bigstitcher metadata xml and
     makes a bigsitcher dir, backup of xml file,
@@ -532,10 +691,23 @@ def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr'):
     fused_out_dir_or_file = get_bigstitcher_fused_output_path(path, format=format)
 
     # Writes macro file
-    if format == 'omezarr':
-        _ = get_bigstitcher_omezarr_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
-    elif format == 'hdf5':
-        _ = get_bigstitcher_hdf5_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
+    if stages == 'align+fuse':
+        macro_file = bigstitcher_dir / 'macro.ijm'
+        if format == 'omezarr':
+            _ = get_bigstitcher_omezarr_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
+        elif format == 'hdf5':
+            _ = get_bigstitcher_hdf5_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
+    elif stages == 'align':
+        macro_file = bigstitcher_dir / 'macro_align.ijm'
+        _ = get_bigstitcher_align_only_macro(omezarr_xml, macro_file)
+    elif stages == 'fuse':
+        macro_file = bigstitcher_dir / 'macro_fuse.ijm'
+        if format == 'omezarr':
+            _ = get_bigstitcher_omezarr_fuse_only_macro(omezarr_xml, fused_out_dir_or_file, macro_file)
+        elif format == 'hdf5':
+            _ = get_bigstitcher_hdf5_fuse_only_macro(omezarr_xml, fused_out_dir_or_file, macro_file)
+    else:
+        raise ValueError(f'Unsupported BigStitcher stages: {stages} (use align+fuse, align, or fuse)')
 
     return bigstitcher_dir, fused_out_dir_or_file, macro_file
 

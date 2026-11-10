@@ -400,7 +400,7 @@ def get_intermediate_file_type_for_bigstitcher_alignment(final_file_type: str):
 
 
 @app.command()
-def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file_type: str='omezarr', ims_resolution_level: int=0, supernice: bool=False):
+def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file_type: str='omezarr', ims_resolution_level: int=0, supernice: bool=False, stages: str='align+fuse'):
 
     if supernice:
         set_super_nice()
@@ -440,6 +440,21 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     if skip_bigstitcher:
         print(f'Skipping BigStitcher rerun: {skip_reason}')
         job_number = None
+    elif stages == 'align':
+        bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type, stages=stages)
+        cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
+        cmd += f' && printf "BIGSTITCHER_ALIGN_SUCCESS: {Path(macro_file).name}\\n"'
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
+                                after_slurm_jobs=None, username=username, log_suffix=f'align_only_bigstitcher')
+        print(f'BigStitcher align-only process number: {job_number}')
+    elif stages == 'fuse':
+        bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type, stages=stages)
+        cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
+        cmd += f' && [ -e "{fused_out_dir_or_file}" ]'
+        cmd += f' && printf "BIGSTITCHER_SUCCESS: {Path(fused_out_dir_or_file).name}\\n"'
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
+                                after_slurm_jobs=None, username=username, log_suffix=f'fuse_only_bigstitcher')
+        print(f'BigStitcher fuse-only process number: {job_number}')
     else:
         bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type)
         cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
@@ -450,6 +465,9 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'align_fuse_bigstitcher')
         print(f'BigStitcher process number: {job_number}')
+
+    if stages == 'align':
+        return
 
     if final_file_type.lower() == 'omezarr' and not final_file_type.lower() == 'ims':
         if skip_bigstitcher:

@@ -177,12 +177,26 @@ FIJI = config.get('fiji', {})
 # 'latest': pinned Fiji-Latest archive build; BigStitcher 3.x + new N5 stack ship with it (adds OME-Zarr v0.5 sharded / zarr v3 reading)
 FIJI_DISTRIBUTION = FIJI.get('distribution', 'stable')
 
+# BigStitcher alignment knobs, mapped to the macro placeholders {link_relative},
+# {link_absolute}, {icp_maximum_error}, {icp_lambda}. Defaults are the values
+# previously hardcoded in the macro templates; bigstitcher.py formats relative/
+# absolute with 3 decimals and lambda with 2 so the generated macros stay
+# byte-identical to the pre-parameterization output.
+BIGSTITCHER_LINK_RELATIVE = float(BIGSTITCHER.get('link_relative', 2.5))
+BIGSTITCHER_LINK_ABSOLUTE = float(BIGSTITCHER.get('link_absolute', 3.5))
+BIGSTITCHER_ICP_MAXIMUM_ERROR = int(BIGSTITCHER.get('icp_maximum_error', 5))
+BIGSTITCHER_ICP_LAMBDA = float(BIGSTITCHER.get('icp_lambda', 0.10))
+
 FIJI_INSTALL_LOCATION = BIGSTITCHER.get('fiji_install_folder')
 if FIJI_INSTALL_LOCATION:
     FIJI_INSTALL_LOCATION = Path(FIJI_INSTALL_LOCATION)
 else:
     FIJI_INSTALL_LOCATION = Path(__file__).resolve().parent.parent / 'fiji-linux' / 'Fiji.app'
 FIJI_EXECUTABLE = FIJI_INSTALL_LOCATION / "ImageJ-linux64"
+if not FIJI_EXECUTABLE.exists() and (FIJI_INSTALL_LOCATION / "fiji-linux-x64").exists():
+    # The Fiji-Latest distribution launches via the jaunch-based
+    # fiji-linux-x64 launcher; the stable archive ships ImageJ-linux64.
+    FIJI_EXECUTABLE = FIJI_INSTALL_LOCATION / "fiji-linux-x64"
 
 DOWNSAMPLE_IN_X = str(BIGSTITCHER.get('downsample_in_x'))
 DOWNSAMPLE_IN_Y = str(BIGSTITCHER.get('downsample_in_y'))
