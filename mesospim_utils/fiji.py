@@ -91,13 +91,15 @@ BIGSTITCHER_IMPORT_CHECK = "from net.preibisch.stitcher.plugin import BigStitche
 
 # Latest distribution: multiview-reconstruction 9.0.11 (bundled with the
 # Fiji-Latest archive, 2026-07-03) predates the zarr-version-aware
-# AllenOMEZarr loader and cannot open OME-Zarr v0.5 collections. 9.1.4
-# reads a zarr.version attribute from the XML and opens zarr v3 sharded
-# stores via the n5-universe v3 reader. Requires Java 21 (bundled with
-# Fiji-Latest).
+# AllenOMEZarr loader and cannot open OME-Zarr v0.5 collections. 9.0.12
+# (the multiview-reconstruction version the BigStitcher update site pairs
+# with BigStitcher 3.0.8) has the v3-aware XmlIoAllenOMEZarrLoader AND
+# keeps the GlobalOptTwoRound.computeTiles signature BigStitcher 3.0.8
+# calls — 9.1.x changed that API and crashes BigStitcher 3.0.8 alignment
+# with NoSuchMethodError. Requires Java 21 (bundled with Fiji-Latest).
 MVRECON_PINNED_JAR = (
-    "net/preibisch/multiview-reconstruction/9.1.4/multiview-reconstruction-9.1.4.jar",
-    "jars/multiview-reconstruction-9.1.4.jar",
+    "net/preibisch/multiview-reconstruction/9.0.12/multiview-reconstruction-9.0.12.jar",
+    "jars/multiview-reconstruction-9.0.12.jar",
     ("jars/multiview-reconstruction-*.jar",),
 )
 
