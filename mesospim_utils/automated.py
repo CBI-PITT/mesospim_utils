@@ -164,7 +164,7 @@ def automated_method_slurm(dir_loc: Path,
                            frames_per_chunk: Annotated[int,typer.Option(help="How many z-planes are deconvolved at once. Best to let this be automatically determined")]=None,
                            num_parallel: Annotated[int,typer.Option(help="How many MesoSPIM tiles will be deconvolved in parallel on SLURM")]=None,
                            basicpy: Annotated[bool,typer.Option(help="Run BaSiCPy flat-field correction after deconvolution and before gain correction")]=False,
-                           gain_correction: Annotated[bool,typer.Option(help="Run gain correction after deconvolution and BaSiCPy")]=False,
+                           gain_correction: Annotated[bool,typer.Option(help="Run two-stage (log-gain field + residual scalar) gain correction after deconvolution and BaSiCPy")]=False,
                            ims_resolution_level: Annotated[int,typer.Option(help="OME-Zarr multiscale resolution level to convert when --final-file-type ims or tiff")]=0,
                            supernice: Annotated[bool,typer.Option(help="Submit all downstream slurm jobs will elevated nice value")]=False
                            ):

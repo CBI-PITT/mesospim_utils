@@ -158,6 +158,10 @@ python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automate
 # 3) Optional deconvolution: runs when `--decon` is enabled and a refractive index is available from metadata or `--refractive-index`.
 # 4) Optional preprocessing: if `--basicpy` is enabled, it runs on the current OME-Zarr tiles and rebuilds multiscales.
 # 5) Optional preprocessing: if `--gain-correction` is enabled, it runs after BaSiCPy on the current OME-Zarr tiles and then rebuilds multiscales.
+#    Gain correction is two-stage: per-tile (z, y) log-gain fields estimated from per-tile metadata offsets
+#    (with masked-NCC residual shift compensation) over all tile-neighbor pairs, plus residual scalar gains
+#    from the maxip seam ratios of the field-corrected tiles. Estimated at a downsampled multiscale level
+#    (default 2), applied to level 0, and multiscales rebuilt.
 # 6) A BigStitcher XML is generated for the final OME-Zarr tile collection.
 # 7) BigStitcher alignment and fusion run on SLURM using Fiji/BigStitcher.
 # 8) Final output is produced as OME-Zarr, HDF5, TIFF series, or IMS depending on `--final-file-type`.

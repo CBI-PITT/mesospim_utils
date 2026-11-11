@@ -13,7 +13,7 @@ import numpy as np
 import zarr
 
 from constants import LOCATION_BASICPY_ENV, LOCATION_OF_MESOSPIM_UTILS_INSTALL
-from metadata import collect_all_metadata, get_first_entry
+from metadata import collect_all_metadata, get_first_entry, get_anchor_tile_entry
 from utils import ensure_path
 
 
@@ -322,140 +322,448 @@ def robust_overlap_ratio(
     return float(ratio), npx
 
 
-def make_residual_function(pairs, n_tiles, anchor_tile, anchor_weight):
-    def residual(x):
-        res = []
+def get_grid_formula_offset(entry, anchor_entry):
+    gy0, gx0 = anchor_entry.get('grid_location')
+    z0 = anchor_entry['POSITION']['z_start']
+    z_step = anchor_entry['POSITION']['z_stepsize']
 
-        for a, b, ratio, npx in pairs:
-            weight = np.sqrt(npx)
-            res.append(weight * ((x[b] - x[a]) - np.log(ratio)))
+    gy, gx = entry.get('grid_location')
+    overlap = entry.get('overlap')
+    nz, ny, nx = entry.get('tile_shape')
 
-        if 0 <= anchor_tile < n_tiles:
-            res.append(anchor_weight * x[anchor_tile])
+    x_offset = (gx - gx0) * nx * (1 - overlap)
+    y_offset = (gy - gy0) * ny * (1 - overlap)
+    z_offset = (entry['POSITION']['z_start'] - z0) / z_step
+
+    return z_offset, y_offset, x_offset
+
+
+def get_tile_offsets_zyx(input_collection: Path, tile_records: dict) -> dict:
+    '''Per-tile (z, y, x) offsets in level-0 voxels.
+
+    Primary source is the per-tile annotated `affine_voxel` translation, which
+    is the same value written into the BigStitcher XML 'Translation to Regular
+    Grid' transform. Falls back to the grid-layout formula per tile if the
+    annotated translation is missing.
+    '''
+    metadata_by_channel = collect_all_metadata(input_collection)
+    anchor_entry = get_anchor_tile_entry(metadata_by_channel)
+
+    entries_by_tile_number = {}
+    for _, entries in metadata_by_channel.items():
+        for entry in entries:
+            tile_number = entry.get('tile_number')
+            if tile_number is None:
+                continue
+            entries_by_tile_number.setdefault(int(tile_number), entry)
+
+    offsets = {}
+    for tile in tile_records:
+        entry = entries_by_tile_number.get(tile)
+        if entry is None:
+            raise RuntimeError(
+                f'No metadata entry found for tile {tile}; '
+                f'cannot resolve tile offsets for gain correction.'
+            )
+
+        affine_voxel = entry.get('affine_voxel')
+        if affine_voxel is not None:
+            offsets[tile] = (
+                float(affine_voxel[0][-1]),
+                float(affine_voxel[1][-1]),
+                float(affine_voxel[2][-1]),
+            )
         else:
-            res.append(anchor_weight * x[0])
+            offsets[tile] = get_grid_formula_offset(entry, anchor_entry)
 
-        return np.array(res, dtype=np.float64)
+    return offsets
 
-    return residual
+
+def generate_pair_specs(rows: int, cols: int) -> list[tuple[int, int, int, str]]:
+    '''Neighbor pairs for the tile grid, column-major tile_id(row, col, rows).
+
+    (a, b, array_axis, kind): axis 1 = y-neighbors (vertical), axis 2 = x-neighbors.
+    '''
+    pair_specs = []
+
+    for row in range(rows - 1):
+        for col in range(cols):
+            a = tile_id(row, col, rows)
+            b = tile_id(row + 1, col, rows)
+            pair_specs.append((a, b, 1, 'vertical'))
+
+    for row in range(rows):
+        for col in range(cols - 1):
+            a = tile_id(row, col, rows)
+            b = tile_id(row, col + 1, rows)
+            pair_specs.append((a, b, 2, 'horizontal'))
+
+    return pair_specs
+
+
+def get_tile_level_paths(tile_path: Path) -> list[str]:
+    tile_root = zarr.open_group(str(tile_path), mode='r', zarr_version=2)
+    multiscales = tile_root.attrs.get('multiscales')
+
+    if not multiscales:
+        raise RuntimeError(f'No multiscales metadata found in tile {tile_path}')
+
+    datasets = multiscales[0].get('datasets', [])
+    level_paths = [dataset.get('path') for dataset in datasets if dataset.get('path')]
+
+    if not level_paths:
+        raise RuntimeError(f'No multiscale datasets found in tile {tile_path}')
+
+    return level_paths
+
+
+def choose_estimation_level(tile_records: dict, requested_level: str) -> str:
+    '''Multiscale level used for gain estimation: the requested level if every
+    tile has it, otherwise the highest common non-zero level.'''
+    level_sets = [
+        set(get_tile_level_paths(tile_records[tile]['path']))
+        for tile in sorted(tile_records)
+    ]
+    common_levels = set.intersection(*level_sets)
+
+    requested = str(requested_level)
+    if requested in common_levels:
+        return requested
+
+    nonzero = sorted((level for level in common_levels if level != '0'), key=int)
+    if nonzero:
+        fallback = nonzero[-1]
+        print(
+            f'Estimation level {requested} is not present in every tile. '
+            f'Using the highest common level {fallback} instead.'
+        )
+        return fallback
+
+    raise RuntimeError(
+        f'No usable multiscale level found for gain estimation '
+        f'(requested {requested}); available common levels: {sorted(common_levels, key=int)}.'
+    )
+
+
+def load_estimation_level(tile_path: Path, level: str) -> np.ndarray:
+    tile_root = zarr.open_group(str(tile_path), mode='r')
+    return np.asarray(tile_root[level])
 
 
 def tile_id(row, col, rows):
     return col * rows + row
 
 
-def estimate_pairs(
-    projs,
-    rows,
-    cols,
-    overlap,
+def overlap_interval(off_a: float, off_b: float, size: int):
+    start = max(off_a, off_b)
+    end = min(off_a + size, off_b + size)
+    if end - start < 8:
+        return None
+    return start, end
+
+
+def local_slice(offset: float, start: float, end: float) -> slice:
+    return slice(int(round(start - offset)), int(round(end - offset)))
+
+
+def estimate_pair_shift(
+    mp_a: np.ndarray,
+    mp_b: np.ndarray,
+    axis: int,
+    shift_search: int,
+    low_percentile: float,
+) -> int:
+    '''Integer residual shift of b relative to a along `axis` of the 2D
+    max-projections: peak of the masked zero-mean normalized cross-correlation
+    (crop-based search). NCC is invariant to the intensity mismatch between
+    tiles, unlike SSD, which locks onto the intensity gradient across the
+    strip. 0 means the tile offsets are exact.'''
+    n = mp_a.shape[axis]
+    a = mp_a.astype(np.float32, copy=False)
+    b = mp_b.astype(np.float32, copy=False)
+    mask0 = (a > np.percentile(a, low_percentile)) & (b > np.percentile(b, low_percentile))
+    best_sh, best_v = 0, -np.inf
+    for sh in range(-shift_search, shift_search + 1):
+        lo = max(0, sh)
+        hi = min(n, n + sh)
+        if hi - lo < 8:
+            continue
+        sl_a = [slice(None)] * 2
+        sl_b = [slice(None)] * 2
+        sl_a[axis] = slice(lo, hi)
+        sl_b[axis] = slice(lo - sh, hi - sh)
+        m = mask0[tuple(sl_a)]
+        if m.sum() < 100:
+            continue
+        aa = a[tuple(sl_a)][m]
+        bb = b[tuple(sl_b)][m]
+        aa_z = aa - aa.mean()
+        bb_z = bb - bb.mean()
+        v = float((aa_z * bb_z).sum() / (np.linalg.norm(aa_z) * np.linalg.norm(bb_z) + 1e-9))
+        if v > best_v:
+            best_sh, best_v = sh, v
+    return best_sh
+
+
+def load_pair_strips(tile_arrays, offsets, a, b, axis, shift_search, low_percentile):
+    '''Overlap strips for tiles a, b with residual-shift compensation.
+
+    axis: 1 (y-neighbors) or 2 (x-neighbors). Returns
+    (strip_a, strip_b, sh, pair_start, strip_start) where pair_start is the
+    shift-crop start and strip_start the uncropped strip's start, both along
+    the pair axis in tile-a local coords, or None if no overlap.
+    '''
+    interval = overlap_interval(offsets[a][axis], offsets[b][axis], tile_arrays[a].shape[axis])
+    if interval is None:
+        return None
+    start, end = interval
+    strip_start = int(round(start - offsets[a][axis]))
+    sl_a = [slice(None)] * 3
+    sl_b = [slice(None)] * 3
+    sl_a[axis] = local_slice(offsets[a][axis], start, end)
+    sl_b[axis] = local_slice(offsets[b][axis], start, end)
+    strip_a = tile_arrays[a][tuple(sl_a)]
+    strip_b = tile_arrays[b][tuple(sl_b)]
+
+    sh = estimate_pair_shift(
+        strip_a.max(axis=0),
+        strip_b.max(axis=0),
+        0 if axis == 1 else 1,
+        shift_search,
+        low_percentile,
+    )
+    pair_start = 0
+    if sh != 0:
+        n = strip_a.shape[axis]
+        lo = max(0, sh)
+        hi = min(n, n + sh)
+        sl_a = [slice(None)] * 3
+        sl_b = [slice(None)] * 3
+        sl_a[axis] = slice(lo, hi)
+        sl_b[axis] = slice(lo - sh, hi - sh)
+        strip_a = strip_a[tuple(sl_a)]
+        strip_b = strip_b[tuple(sl_b)]
+        pair_start = lo
+    return strip_a, strip_b, sh, pair_start, strip_start
+
+
+def solve_log_fields(
+    tile_arrays,
+    offsets,
+    pair_specs,
+    cell,
+    smooth_lambda,
+    shift_search,
     low_percentile,
     high_percentile,
     min_valid_fraction,
     min_ratio,
     max_ratio,
+    anchor_tile,
+    anchor_weight,
 ):
-    height, width = projs[0].shape
+    '''Sparse regularized least squares for per-tile (z, y) log-gain fields on a
+    global cell grid.
 
-    oy = int(height * overlap)
-    ox = int(width * overlap)
+    Data terms: (L_b - L_a) = log(ratio) per (z, y) cell of each pairwise
+    overlap, ratios computed by robust masked medians with the tiles' offsets
+    mapped into global coords. Smoothness terms weakly penalize differences
+    between adjacent cells, and the anchor tile's field is pinned to zero.
+    Returns (log_fields dict, (z0, y0, n_zc, n_yc), pair_stats dict).'''
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.linalg import lsqr
 
-    if oy < 1:
-        raise RuntimeError(
-            f'Y overlap is {oy} pixels. Increase overlap or check image height.'
-        )
+    n_tiles = len(tile_arrays)
+    nz, ny, _ = tile_arrays[0].shape
 
-    if ox < 1:
-        raise RuntimeError(
-            f'X overlap is {ox} pixels. Increase overlap or check image width.'
-        )
+    z_offs = [offsets[i][0] for i in tile_arrays]
+    y_offs = [offsets[i][1] for i in tile_arrays]
+    z0 = min(z_offs)
+    y0 = min(y_offs)
+    gz1 = max(o + nz for o in z_offs)
+    gy1 = max(o + ny for o in y_offs)
+    n_zc = int(np.ceil((gz1 - z0) / cell))
+    n_yc = int(np.ceil((gy1 - y0) / cell))
+    print(f'\tGlobal field grid: z_cells={n_zc}, y_cells={n_yc} (origin z={z0:.1f}, y={y0:.1f})')
 
-    print('Tile projection size:', height, width)
-    print('Overlap pixels Y/X:', oy, ox)
+    def cell_idx(tile, zc, yc):
+        return tile * n_zc * n_yc + zc * n_yc + yc
 
-    pairs = []
+    matrix_rows, matrix_cols, vals, rhs = [], [], [], []
+    row = 0
+    pair_stats = {}
+    for a, b, axis, kind in pair_specs:
+        pair = load_pair_strips(tile_arrays, offsets, a, b, axis, shift_search, low_percentile)
+        if pair is None:
+            print(f'\tPair {a}-{b} ({kind}): no overlap')
+            continue
+        strip_a, strip_b, sh, pair_start, strip_start = pair
 
-    print('\n\tVertical overlap ratios:')
-    for row in range(rows - 1):
-        for col in range(cols):
-            a = tile_id(row, col, rows)
-            b = tile_id(row + 1, col, rows)
+        # Vertical pairs: the pair axis is y, so the strip covers only the
+        # y-overlap and cell centers must be mapped through the strip's
+        # tile-local start plus the shift-crop start. Horizontal pairs: the
+        # pair axis is x, so strip y is the full tile extent starting at 0.
+        y_pad = (strip_start + pair_start) if axis == 1 else 0
 
-            strip_a = projs[a][-oy:, :]
-            strip_b = projs[b][:oy, :]
+        n_strip_z, n_strip_y = strip_a.shape[0], strip_a.shape[1]
+        n_cells_z = int(np.ceil(n_strip_z / cell))
+        n_cells_y = int(np.ceil(n_strip_y / cell))
 
-            ratio, npx = robust_overlap_ratio(
-                strip_a,
-                strip_b,
-                low_percentile=low_percentile,
-                high_percentile=high_percentile,
-                min_valid_fraction=min_valid_fraction,
-                min_ratio=min_ratio,
-                max_ratio=max_ratio,
+        cell_ratios = []
+        for zc in range(n_cells_z):
+            for yc in range(n_cells_y):
+                zs, ze = zc * cell, min((zc + 1) * cell, n_strip_z)
+                ys, ye = yc * cell, min((yc + 1) * cell, n_strip_y)
+                ratio, npx = robust_overlap_ratio(
+                    strip_a[zs:ze, ys:ye],
+                    strip_b[zs:ze, ys:ye],
+                    low_percentile=low_percentile,
+                    high_percentile=high_percentile,
+                    min_valid_fraction=min_valid_fraction,
+                    min_ratio=min_ratio,
+                    max_ratio=max_ratio,
+                )
+                if ratio is None:
+                    continue
+                # Cell center in tile-a local coords -> global cell indices.
+                gz_center = (zs + (ze - zs) / 2.0) + offsets[a][0] - z0
+                gy_center = (y_pad + ys + (ye - ys) / 2.0) + offsets[a][1] - y0
+                gzc = min(n_zc - 1, max(0, int(gz_center / cell)))
+                gyc = min(n_yc - 1, max(0, int(gy_center / cell)))
+                matrix_rows.append(row); matrix_cols.append(cell_idx(b, gzc, gyc)); vals.append(1.0)
+                matrix_rows.append(row); matrix_cols.append(cell_idx(a, gzc, gyc)); vals.append(-1.0)
+                rhs.append(np.log(ratio))
+                row += 1
+                cell_ratios.append(ratio)
+
+        if cell_ratios:
+            pair_stats[(a, b)] = {
+                'kind': kind,
+                'shift': sh,
+                'n_cells': len(cell_ratios),
+                'median_ratio': float(np.median(cell_ratios)),
+            }
+            print(
+                f'\tPair {a}-{b} ({kind}): shift={sh:+d}px, {len(cell_ratios)} valid cells, '
+                f'median ratio={np.median(cell_ratios):.4f}'
             )
+        else:
+            print(f'\tPair {a}-{b} ({kind}): shift={sh:+d}px, no valid cells')
 
-            if ratio is None:
-                print(f'\t\tSkipping vertical pair {a}->{b}, valid pixels={npx}')
-            else:
-                print(f'\t\tVertical pair {a}->{b}: ratio={ratio:.3f}, valid pixels={npx}')
-                pairs.append((a, b, ratio, npx))
+    n_unknowns = n_tiles * n_zc * n_yc
 
-    print('\n\tHorizontal overlap ratios:')
-    for row in range(rows):
-        for col in range(cols - 1):
-            a = tile_id(row, col, rows)
-            b = tile_id(row, col + 1, rows)
+    # Smoothness terms.
+    for tile in range(n_tiles):
+        for zc in range(n_zc):
+            for yc in range(n_yc - 1):
+                matrix_rows.append(row); matrix_cols.append(cell_idx(tile, zc, yc + 1)); vals.append(smooth_lambda)
+                matrix_rows.append(row); matrix_cols.append(cell_idx(tile, zc, yc)); vals.append(-smooth_lambda)
+                rhs.append(0.0)
+                row += 1
+        for zc in range(n_zc - 1):
+            for yc in range(n_yc):
+                matrix_rows.append(row); matrix_cols.append(cell_idx(tile, zc + 1, yc)); vals.append(smooth_lambda)
+                matrix_rows.append(row); matrix_cols.append(cell_idx(tile, zc, yc)); vals.append(-smooth_lambda)
+                rhs.append(0.0)
+                row += 1
 
-            strip_a = projs[a][:, -ox:]
-            strip_b = projs[b][:, :ox]
+    # Anchor: anchor tile's field pinned to zero.
+    for zc in range(n_zc):
+        for yc in range(n_yc):
+            matrix_rows.append(row); matrix_cols.append(cell_idx(anchor_tile, zc, yc)); vals.append(anchor_weight)
+            rhs.append(0.0)
+            row += 1
 
-            ratio, npx = robust_overlap_ratio(
-                strip_a,
-                strip_b,
-                low_percentile=low_percentile,
-                high_percentile=high_percentile,
-                min_valid_fraction=min_valid_fraction,
-                min_ratio=min_ratio,
-                max_ratio=max_ratio,
-            )
+    A = coo_matrix((vals, (matrix_rows, matrix_cols)), shape=(row, n_unknowns)).tocsr()
+    b_vec = np.array(rhs, dtype=np.float64)
+    print(f'\tSolving sparse LS: {A.shape[0]} rows x {n_unknowns} unknowns ...')
+    solution = lsqr(A, b_vec, atol=1e-10, btol=1e-10, iter_lim=20000)[0]
 
-            if ratio is None:
-                print(f'\t\tSkipping horizontal pair {a}->{b}, valid pixels={npx}')
-            else:
-                print(f'\t\tHorizontal pair {a}->{b}: ratio={ratio:.3f}, valid pixels={npx}')
-                pairs.append((a, b, ratio, npx))
-
-    return pairs
+    log_fields = {
+        tile: solution[cell_idx(tile, 0, 0): cell_idx(tile, 0, 0) + n_zc * n_yc].reshape(n_zc, n_yc)
+        for tile in range(n_tiles)
+    }
+    grid = (z0, y0, n_zc, n_yc)
+    return log_fields, grid, pair_stats
 
 
-def solve_gains(
-    pairs,
-    n_tiles,
-    anchor_tile=0,
-    anchor_weight=1000.0,
-    min_gain=0.75,
-    max_gain=1.35,
+def field_gain_map_for_tile(shape, offsets_tile, log_field, grid, cell) -> np.ndarray:
+    '''exp of the global log-gain field sampled at a tile's local coords
+    (both in estimation-level units).'''
+    from scipy.ndimage import map_coordinates
+
+    z0, y0, n_zc, n_yc = grid
+    gz = np.clip((np.arange(shape[0]) + offsets_tile[0] - z0) / cell, 0, n_zc - 1)
+    gy = np.clip((np.arange(shape[1]) + offsets_tile[1] - y0) / cell, 0, n_yc - 1)
+    coords = np.meshgrid(gz, gy, indexing='ij')
+    return np.exp(map_coordinates(log_field, coords, order=1, mode='nearest')).astype(np.float32)
+
+
+def solve_residual_scalars(
+    tile_arrays,
+    field_gains,
+    offsets,
+    pair_specs,
+    anchor_tile,
+    anchor_weight,
+    low_percentile,
+    high_percentile,
+    min_valid_fraction,
+    min_ratio,
+    max_ratio,
+    min_gain,
+    max_gain,
 ):
+    '''Stage-2 scalar gains balancing the residual maxip seam ratios of the
+    field-corrected tiles. The median-based fields cannot capture the
+    signal-dependent mismatch of the brightest maxip pixels, so the residual
+    ratios are balanced by a least-squares over the tile graph, anchored and
+    normalized at the anchor tile.'''
     from scipy.optimize import least_squares
 
-    if len(pairs) == 0:
-        raise RuntimeError('No valid overlap pairs found.')
+    n_tiles = len(tile_arrays)
+    maxips = {
+        tile: (tile_arrays[tile].astype(np.float32) * field_gains[tile][:, :, None]).max(axis=0)
+        for tile in tile_arrays
+    }
 
-    residual = make_residual_function(
-        pairs=pairs,
-        n_tiles=n_tiles,
-        anchor_tile=anchor_tile,
-        anchor_weight=anchor_weight,
-    )
+    rho = {}
+    for a, b, axis, kind in pair_specs:
+        ia = max(offsets[a][axis], offsets[b][axis])
+        ib = min(offsets[a][axis] + tile_arrays[a].shape[axis],
+                 offsets[b][axis] + tile_arrays[b].shape[axis])
+        sa = slice(int(round(ia - offsets[a][axis])), int(round(ib - offsets[a][axis])))
+        sb = slice(int(round(ia - offsets[b][axis])), int(round(ib - offsets[b][axis])))
+        strip_a = maxips[a][sa, :] if axis == 1 else maxips[a][:, sa]
+        strip_b = maxips[b][sb, :] if axis == 1 else maxips[b][:, sb]
+        ratio, npx = robust_overlap_ratio(
+            strip_a,
+            strip_b,
+            low_percentile=low_percentile,
+            high_percentile=high_percentile,
+            min_valid_fraction=min_valid_fraction,
+            min_ratio=min_ratio,
+            max_ratio=max_ratio,
+        )
+        if ratio is None:
+            print(f'\tResidual pair {a}-{b} ({kind}): skipped, valid pixels={npx}')
+            continue
+        rho[(a, b)] = ratio
+        print(f'\tResidual pair {a}-{b} ({kind}): {ratio:.4f}')
 
-    x0 = np.zeros(n_tiles, dtype=np.float64)
-    sol = least_squares(residual, x0)
+    if not rho:
+        raise RuntimeError('No valid residual maxip ratios found for the scalar stage.')
 
-    gains = np.exp(sol.x)
-    gains = gains / np.median(gains)
-    gains = np.clip(gains, min_gain, max_gain)
+    def residual(x):
+        res = [((x[b] - x[a]) - np.log(rho[(a, b)])) for (a, b) in rho]
+        res.append(anchor_weight * x[anchor_tile])
+        return np.array(res, dtype=np.float64)
 
-    return gains
+    sol = least_squares(residual, np.zeros(n_tiles))
+    scalars = np.exp(sol.x)
+    scalars = scalars / scalars[anchor_tile]
+
+    return np.clip(scalars, min_gain, max_gain)
 
 
 def validate_tile_set(tile_records, rows, cols, channel, filt):
@@ -541,6 +849,84 @@ def write_corrected_tile(src_path: Path, out_path: Path, corrected_data: np.ndar
 
     out_ome_zarr.mode = 'a'
     out_ome_zarr[:] = corrected_data
+    out_ome_zarr.create_multiscales(async_close=False)
+
+
+def level0_gain_map_for_tile(
+    src_root,
+    level: str,
+    offsets_tile: tuple,
+    log_field: np.ndarray,
+    grid: tuple,
+    cell: int,
+    resid_scalar: float,
+) -> np.ndarray:
+    '''(z, y) gain map for a tile at level 0, from the estimation-level log
+    field. The field grid is in estimation-level units; the level-0/level-L
+    shape ratio gives the coordinate mapping.'''
+    from scipy.ndimage import map_coordinates
+
+    base_shape = src_root['0'].shape
+    level_shape = src_root[level].shape
+    z_div = base_shape[0] / level_shape[0]
+    y_div = base_shape[1] / level_shape[1]
+
+    z0, y0, n_zc, n_yc = grid
+    gz = np.clip(((np.arange(base_shape[0]) + offsets_tile[0]) / z_div - z0) / cell, 0, n_zc - 1)
+    gy = np.clip(((np.arange(base_shape[1]) + offsets_tile[1]) / y_div - y0) / cell, 0, n_yc - 1)
+    coords = np.meshgrid(gz, gy, indexing='ij')
+
+    field = np.exp(map_coordinates(log_field, coords, order=1, mode='nearest'))
+    return (field * resid_scalar).astype(np.float32)
+
+
+def write_corrected_tile_with_gain_map(
+    src_path: Path,
+    out_path: Path,
+    gain_map_zy: np.ndarray,
+    overwrite: bool,
+):
+    '''Write a gain-corrected tile: level 0 is read and written chunk-wise with
+    the (z, y) gain map applied, then multiscales are rebuilt from the
+    corrected level 0. Mirrors write_corrected_tile but bounds memory.'''
+    from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
+
+    src_path = ensure_path(src_path)
+    out_path = ensure_path(out_path)
+
+    if overwrite and out_path.exists():
+        shutil.rmtree(out_path)
+
+    input_omezarr = OmeZarrArray(src_path)
+    out_ome_zarr = input_omezarr.omezarr_like(out_path)
+
+    if str(src_path.parent).endswith('.ome.zarr'):
+        zgroup_file = src_path.parent / '.zgroup'
+        zattrs_file = src_path.parent / '.zattrs'
+        if zgroup_file.is_file() and not (out_path.parent / '.zgroup').is_file():
+            shutil.copy2(zgroup_file, out_path.parent / '.zgroup')
+        if zattrs_file.is_file() and not (out_path.parent / '.zattrs').is_file():
+            shutil.copy2(zattrs_file, out_path.parent / '.zattrs')
+
+    out_ome_zarr.mode = 'a'
+
+    src_root = zarr.open_group(str(src_path), mode='r')
+    src_arr = src_root['0']
+    shape = src_arr.shape
+    cz, cy, cx = src_arr.chunks
+
+    for z in range(0, shape[0], cz):
+        for y in range(0, shape[1], cy):
+            for x in range(0, shape[2], cx):
+                sl = (
+                    slice(z, min(z + cz, shape[0])),
+                    slice(y, min(y + cy, shape[1])),
+                    slice(x, min(x + cx, shape[2])),
+                )
+                stack = np.asarray(src_arr[sl])
+                corrected = apply_gain_to_stack(stack, gain_map_zy[sl[0], sl[1], None], stack.dtype)
+                out_ome_zarr[sl] = corrected
+
     out_ome_zarr.create_multiscales(async_close=False)
 
 
@@ -665,13 +1051,61 @@ def apply_gain_to_stack(stack, gain, out_dtype):
     return corrected
 
 
+def save_gain_estimation_npz(
+    output_collection: Path,
+    channel: str,
+    filter_name: str,
+    level: str,
+    cell: int,
+    grid: tuple,
+    offsets_voxel: dict,
+    log_fields: dict,
+    residual_scalars: np.ndarray,
+    pair_stats: dict,
+    tile_names: dict,
+) -> Path:
+    '''Save the estimated fields/gains for QC, mirroring the reference
+    estimated_gains.npz artifacts.'''
+    group_key = re.sub(r'[^A-Za-z0-9._-]+', '_', f'{channel}_{filter_name}')
+    out_path = output_collection / f'.gains_{group_key}.npz'
+
+    tiles = sorted(tile_names)
+    payload = {
+        'channel': np.array(channel),
+        'filter': np.array(filter_name),
+        'level': np.array(level),
+        'cell': np.array(cell),
+        'grid': np.array(grid, dtype=np.float64),
+        'tile_indices': np.array(tiles),
+        'tile_names': np.array([tile_names[tile] for tile in tiles]),
+        'offsets_zyx_voxel': np.array([offsets_voxel[tile] for tile in tiles], dtype=np.float64),
+        'resid_scalar': np.array([residual_scalars[tile] for tile in tiles], dtype=np.float64),
+    }
+    for tile in tiles:
+        payload[f'log_field_t{tile}'] = log_fields[tile]
+
+    pairs = sorted(pair_stats)
+    payload['pair_a'] = np.array([pair[0] for pair in pairs])
+    payload['pair_b'] = np.array([pair[1] for pair in pairs])
+    payload['pair_kind'] = np.array([pair_stats[pair]['kind'] for pair in pairs])
+    payload['pair_shift'] = np.array([pair_stats[pair]['shift'] for pair in pairs])
+    payload['pair_n_cells'] = np.array([pair_stats[pair]['n_cells'] for pair in pairs])
+    payload['pair_median_ratio'] = np.array([pair_stats[pair]['median_ratio'] for pair in pairs])
+
+    np.savez(out_path, **payload)
+    print(f'\tSaved gain estimation artifact: {out_path}')
+    return out_path
+
+
 def process_gain_correction_group(
     input_collection: Path,
     output_collection: Path,
     channel: str,
     filter_name: str,
-    overlap_override: float | None,
-    projection_percentile: float,
+    estimation_level: str,
+    cell: int,
+    smooth_lambda: float,
+    shift_search: int,
     low_percentile: float,
     high_percentile: float,
     min_valid_fraction: float,
@@ -683,11 +1117,17 @@ def process_gain_correction_group(
     anchor_weight: float,
     overwrite: bool,
 ):
-    rows, cols, overlap = resolve_grid_and_overlap(input_collection)
-    if overlap_override is not None:
-        overlap = overlap_override
+    '''Two-stage gain correction for one channel/filter group.
 
-    n_tiles = rows * cols
+    Stage 1 solves per-tile (z, y) log-gain fields by sparse regularized least
+    squares over all neighbor pairs, using robust masked median ratios in the
+    overlap intervals implied by the tile offsets (with masked-NCC residual
+    shift compensation). Stage 2 balances the residual maxip seam ratios of
+    the field-corrected tiles with scalar gains. The final gain per tile is
+    field x residual scalar, applied to level 0 chunk-wise before multiscales
+    are rebuilt.'''
+    rows, cols, _ = resolve_grid_and_overlap(input_collection)
+
     records_by_combo = discover_tiles(input_collection)
     combo = (channel, filter_name)
     if combo not in records_by_combo:
@@ -697,73 +1137,124 @@ def process_gain_correction_group(
     validate_tile_set(tile_records, rows, cols, channel, filter_name)
 
     print(f'Channel: {channel}  Filter: {filter_name}')
-    print('Levels: [\'0\']')
+    print('Gain correction: two-stage (log-gain fields + residual scalars)')
 
-    print('\n\tMaking level 0 projections...')
-    projs = [None] * n_tiles
-    source_dtypes = {}
+    offsets_voxel = get_tile_offsets_zyx(input_collection, tile_records)
+    pair_specs = generate_pair_specs(rows, cols)
+    level = choose_estimation_level(tile_records, estimation_level)
+    print(f'Estimation level: {level}')
 
-    for tile in range(n_tiles):
+    tile_arrays = {}
+    for tile in sorted(tile_records):
         record = tile_records[tile]
-        print(f'\t\tprocessing tile {tile} Sh{record["sh"]} Rot{record["rot"]}')
+        print(f'\tLoading tile {tile} Sh{record["sh"]} Rot{record["rot"]}: {record["name"]}')
+        tile_arrays[tile] = load_estimation_level(record['path'], level)
 
-        src_root = zarr.open_group(str(record['path']), mode='r')
-        src_arr = src_root['0']
-        source_dtypes[tile] = src_arr.dtype
-        stack = src_arr[:].astype(np.float32)
-        proj = np.percentile(stack, projection_percentile, axis=0)
-        projs[tile] = proj
+    # Offsets are annotated in level-0 voxels; map them into estimation-level
+    # units using divisors derived from the level-0/level-L shape ratio.
+    src_root = zarr.open_group(str(tile_records[0]['path']), mode='r')
+    base_shape = src_root['0'].shape
+    level_shape = tile_arrays[0].shape
+    z_div = base_shape[0] / level_shape[0]
+    y_div = base_shape[1] / level_shape[1]
+    x_div = base_shape[2] / level_shape[2]
+    print(f'Level-0 to level-{level} divisors (z, y, x): {z_div:.1f} {y_div:.1f} {x_div:.1f}')
+    offsets = {
+        tile: (o[0] / z_div, o[1] / y_div, o[2] / x_div)
+        for tile, o in offsets_voxel.items()
+    }
 
-    pairs = estimate_pairs(
-        projs=projs,
-        rows=rows,
-        cols=cols,
-        overlap=overlap,
+    print('\n\tStage 1: estimating (z, y) log-gain fields ...')
+    log_fields, grid, pair_stats = solve_log_fields(
+        tile_arrays=tile_arrays,
+        offsets=offsets,
+        pair_specs=pair_specs,
+        cell=cell,
+        smooth_lambda=smooth_lambda,
+        shift_search=shift_search,
         low_percentile=low_percentile,
         high_percentile=high_percentile,
         min_valid_fraction=min_valid_fraction,
         min_ratio=min_ratio,
         max_ratio=max_ratio,
-    )
-
-    if len(pairs) == 0:
-        raise RuntimeError(
-            f'No valid overlap pairs found for {channel} / {filter_name}, level 0.'
-        )
-
-    gains = solve_gains(
-        pairs=pairs,
-        n_tiles=n_tiles,
         anchor_tile=anchor_tile,
         anchor_weight=anchor_weight,
+    )
+
+    field_gains = {
+        tile: field_gain_map_for_tile(tile_arrays[tile].shape, offsets[tile], log_fields[tile], grid, cell)
+        for tile in tile_records
+    }
+    for tile in sorted(tile_records):
+        g = field_gains[tile]
+        print(f'\tTile {tile} field gain: min={g.min():.3f} median={np.median(g):.3f} max={g.max():.3f}')
+
+    print('\n\tStage 2: estimating residual scalar gains ...')
+    residual_scalars = solve_residual_scalars(
+        tile_arrays=tile_arrays,
+        field_gains=field_gains,
+        offsets=offsets,
+        pair_specs=pair_specs,
+        anchor_tile=anchor_tile,
+        anchor_weight=anchor_weight,
+        low_percentile=low_percentile,
+        high_percentile=high_percentile,
+        min_valid_fraction=min_valid_fraction,
+        min_ratio=min_ratio,
+        max_ratio=max_ratio,
         min_gain=min_gain,
         max_gain=max_gain,
     )
 
-    print('\n\tEstimated gains:')
-    for idx, gain in enumerate(gains):
-        print(f'\t\t{idx:02d}  gain={gain:.4f}')
-
-    print('\n\tApplying gains to level 0 and rebuilding multiscales...')
-    prepare_output_collection(input_collection, output_collection)
-
-    for tile in range(n_tiles):
-        record = tile_records[tile]
+    print('\n\tEstimated gains (field x residual scalar):')
+    for tile in sorted(tile_records):
+        s = residual_scalars[tile]
+        g = field_gains[tile]
         print(
-            f'\t\tprocessing tile {tile} '
-            f'gain={gains[tile]:.4f} '
-            f'Sh{record["sh"]} Rot{record["rot"]}'
+            f'\t\t{tile:02d}  scalar={s:.4f}  '
+            f'field min/med/max={g.min():.3f}/{np.median(g):.3f}/{g.max():.3f}'
         )
 
-        src_root = zarr.open_group(str(record['path']), mode='r')
-        src_arr = src_root['0']
-        stack = src_arr[:]
-        corrected = apply_gain_to_stack(stack, gains[tile], source_dtypes[tile])
+    print('\n\tApplying gain maps to level 0 and rebuilding multiscales...')
+    prepare_output_collection(input_collection, output_collection)
 
-        write_corrected_tile(
+    save_gain_estimation_npz(
+        output_collection=output_collection,
+        channel=channel,
+        filter_name=filter_name,
+        level=level,
+        cell=cell,
+        grid=grid,
+        offsets_voxel=offsets_voxel,
+        log_fields=log_fields,
+        residual_scalars=residual_scalars,
+        pair_stats=pair_stats,
+        tile_names={tile: tile_records[tile]['name'] for tile in tile_records},
+    )
+
+    for tile in sorted(tile_records):
+        record = tile_records[tile]
+        print(f'\t\tprocessing tile {tile} Sh{record["sh"]} Rot{record["rot"]}')
+
+        src_root = zarr.open_group(str(record['path']), mode='r')
+        gain_map = level0_gain_map_for_tile(
+            src_root,
+            level,
+            offsets_voxel[tile],
+            log_fields[tile],
+            grid,
+            cell,
+            residual_scalars[tile],
+        )
+        print(
+            f'\t\ttile {tile} level 0 gain map: '
+            f'min={gain_map.min():.3f} median={np.median(gain_map):.3f} max={gain_map.max():.3f}'
+        )
+
+        write_corrected_tile_with_gain_map(
             record['path'],
             output_collection / record['name'],
-            corrected,
+            gain_map,
             overwrite,
         )
 
@@ -788,8 +1279,10 @@ def gain_correction_apply(args):
         ensure_path(args.output),
         args.channel,
         args.filter_name,
-        args.overlap,
-        args.projection_percentile,
+        args.estimation_level,
+        args.cell,
+        args.smooth_lambda,
+        args.shift_search,
         args.low_percentile,
         args.high_percentile,
         args.min_valid_fraction,
@@ -819,22 +1312,24 @@ def build_parser():
     basicpy_parser.add_argument('--overwrite', action='store_true', help='Overwrite existing output tile directories.')
     basicpy_parser.set_defaults(func=basicpy_apply)
 
-    gain_parser = subparsers.add_parser('gain-correction-apply', help='Run gain correction on a single channel/filter group.')
+    gain_parser = subparsers.add_parser('gain-correction-apply', help='Run two-stage (log-gain field + residual scalar) gain correction on a single channel/filter group.')
     gain_parser.add_argument('--input', '-i', required=True, type=Path, help='Input folder containing tile .ome.zarr directories.')
     gain_parser.add_argument('--output', '-o', required=True, type=Path, help='Output folder for gain-corrected tile .ome.zarr directories.')
     gain_parser.add_argument('--channel', required=True, help='Channel name to process.')
     gain_parser.add_argument('--filter', dest='filter_name', required=True, help='Filter name to process.')
-    gain_parser.add_argument('--overlap', type=float, default=None, help='Optional overlap override. Defaults to metadata overlap.')
-    gain_parser.add_argument('--projection-percentile', type=float, default=50.0, help='Percentile projection along Z used for gain estimation.')
+    gain_parser.add_argument('--estimation-level', default='2', help='Multiscale level used to estimate the gain fields. Defaults to 2, falling back to the highest common level when absent.')
+    gain_parser.add_argument('--cell', type=int, default=16, help='(z, y) cell size in estimation-level pixels for the gain field grid.')
+    gain_parser.add_argument('--smooth-lambda', type=float, default=0.5, help='Smoothness weight for the log-gain field least squares.')
+    gain_parser.add_argument('--shift-search', type=int, default=20, help='Residual shift search range in estimation-level pixels along each pair axis.')
     gain_parser.add_argument('--low-percentile', type=float, default=40.0, help='Lower percentile for overlap-mask thresholding.')
     gain_parser.add_argument('--high-percentile', type=float, default=98.0, help='Upper percentile for overlap-mask thresholding.')
     gain_parser.add_argument('--min-valid-fraction', type=float, default=0.10, help='Minimum valid overlap fraction.')
     gain_parser.add_argument('--min-ratio', type=float, default=0.5, help='Reject overlap ratios below this value.')
     gain_parser.add_argument('--max-ratio', type=float, default=2.0, help='Reject overlap ratios above this value.')
-    gain_parser.add_argument('--min-gain', type=float, default=0.75, help='Clip final gains below this value.')
-    gain_parser.add_argument('--max-gain', type=float, default=1.35, help='Clip final gains above this value.')
-    gain_parser.add_argument('--anchor-tile', type=int, default=0, help='Tile whose log-gain is weakly anchored to zero.')
-    gain_parser.add_argument('--anchor-weight', type=float, default=1000.0, help='Weight for the gain anchor constraint.')
+    gain_parser.add_argument('--min-gain', type=float, default=0.75, help='Clip residual scalar gains below this value.')
+    gain_parser.add_argument('--max-gain', type=float, default=1.35, help='Clip residual scalar gains above this value.')
+    gain_parser.add_argument('--anchor-tile', type=int, default=0, help='Tile whose log-gain field is anchored to zero and whose scalar gain is normalized to one.')
+    gain_parser.add_argument('--anchor-weight', type=float, default=1000.0, help='Weight for the gain field anchor constraint.')
     gain_parser.add_argument('--overwrite', action='store_true', help='Overwrite existing output tile directories.')
     gain_parser.set_defaults(func=gain_correction_apply)
 

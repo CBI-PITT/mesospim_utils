@@ -18,6 +18,26 @@
 - Objective-aware deconvolution configuration and CLI plumbing
 - Keeping agent documentation split cleanly between `AGENTS.md` and this file
 
+## Recent Change: Tile-Seam Correction With Hybrid Gains (Dataset Work)
+
+- Diagnosed pronounced BigStitcher fusion seams on as **intensity steps at tile boundaries**, not alignment errors: the dataset was acquired with both illumination sheets (tiles 0/1 Right Sh1, tiles 2/3 Left Sh0) plus drift; the mismatch is signal-dependent (ratios ~1.0 in background, 1.6–2.0 in bright sample, varying with y and z). Not a Fiji/settings regression (versions and macro settings identical to older single-sheet runs).
+- Built a manual per-tile gain workflow (level-2 previews first, then full resolution): estimated scalar gains (max-proj overlap ratios → least squares, clip [0.75, 1.35]) and per-tile (y,z) log-gain fields (per-cell robust ratios → sparse regularized LS with smoothness, anchor tile 0) from the TRUE stitched overlap intervals parsed from the BigStitcher XML (compose per-setup transforms WITHOUT the trailing calibration transform).
+- Chosen correction is a **hybrid**: field within rows + scalar between rows (`t1 = t0 * r01` max-proj vertical ratio; `t2 = t0 * R02(y,z)` field; `t3 = t1 * R13(y,z)` field). Scalar-only over-lifts backgrounds; a 2D field alone fails at the horizontal seam because the ~26 px vertical overlap is background-dominated (per-cell ratios ≈ 1.0) — do not use those ratios for row linking.
+- Acquisition-side long-term fix: normalize Left/Right sheet intensities or use one sheet per channel; the 26% drift between tiles within 6 min is worth checking. Pipeline-native alternative for future runs is `automated-method-slurm --gain-correction`, which now implements the two-stage field + scalar method (see the gain-correction section below).
+
+## Recent Change: Two-Stage Field + Scalar Gain Correction In The Pipeline
+
+- Replaced the scalar-only `--gain-correction` method in `mesospim_utils/preprocess.py` with the two-stage method (`01_estimate_gains.py` / `03_apply_fullres.py`), which were built and verified:
+  - Stage 1: per-tile (z, y) log-gain fields via sparse regularized LS (`scipy.sparse.linalg.lsqr`, atol/btol 1e-10, iter_lim 20000) over all vertical+horizontal neighbor pairs (generated generically from metadata `grid_size`); per-cell robust masked median ratios (40/98 percentiles) in CELL=16 px cells at a downsampled estimation level (default 2); smoothness lambda=0.5; anchor tile 0 pinned by ANCHOR_WEIGHT so its field is exactly 1.
+  - Stage 2: residual scalar gains from the maxip seam ratios of the field-corrected tiles (`least_squares`, normalized at tile 0, clipped [0.75, 1.35]); fields themselves are unclipped.
+- Tile offsets come from metadata `affine_voxel` translations (the same values the pipeline writes into the BigStitcher XML 'Translation to Regular Grid'), NOT from parsing a stitched XML: gain correction runs pre-stitching in the pipeline order (decon -> basicpy -> gain correction), so refined post-stitching registrations do not exist at that stage. Residual misalignment along each pair axis is compensated by masked zero-mean NCC shift search (default +/-20 px at the estimation level, `--shift-search`), ported from the reference scripts.
+- Overlap intervals are computed from the per-tile offsets (`overlap_interval`), replacing the old fixed-edge strip selection; this also picks up per-tile z offsets that the old method ignored.
+- Application: per-tile (z, y) gain map sampled at level 0 with shape-derived z/y divisors (reference-03 mapping); level 0 is written CHUNK-WISE via the new `write_corrected_tile_with_gain_map` (mirrors `write_corrected_tile` but bounds memory to per-chunk float32 instead of full-array), then multiscales are rebuilt via `create_multiscales` — same output pattern as basicpy/decon.
+- Per-group gains/fields are saved to `output_collection/.gains_<channel>_<filter>.npz` (log fields, grid, level-0 voxel offsets, pair NCC shifts/median cell ratios, residual scalars, tile names) for QC, mirroring the reference `estimated_gains.npz` artifacts.
+- CLI: `gain-correction-apply` gained `--estimation-level` (default 2, falls back to the highest common level), `--cell` (16), `--smooth-lambda` (0.5), `--shift-search` (20); obsolete `--overlap` and `--projection-percentile` were removed; percentile/ratio/gain-clip/anchor args kept. SLURM queue shape and group-level skip logic in `slurm.py` are unchanged (the queued command still passes only --input/--output/--channel/--filter).
+- Dead code removed from preprocess.py: `estimate_pairs`, `make_residual_function`, `solve_gains` (replaced by the new helpers). `robust_overlap_ratio` and `apply_gain_to_stack` are reused (the latter per chunk).
+- Validation on this machine (light only, per instruction): `py_compile` for preprocess.py and automated.py, `gain-correction-apply --help`, and a synthetic end-to-end check at `/tmp/opencode/gain_corr_test_synth.py` — a fake 2x2 tile OME-Zarr collection with known injected gains: the field LS recovers the correction gains exactly (median log field matches log(1/gain) to 4 decimals), residual scalars come out 1.0, corrected level-0 data matches the anchor pattern within 0.13% (99.9th percentile), and chunk-wise writing + multiscale rebuild + NPZ artifact all verified. The new method is NOT yet validated on a real dataset or a real SLURM run.
+
 ## Recent Work Snapshot
 
 - Strong signs of recent edits in:
@@ -42,7 +62,7 @@
 
 - Follow-up robustness fix for direct IMS export: the SLURM-launched `omezarr_to_ims.py` command in `mesospim_utils/automated.py` now derives the target env root and `PyImarisWriter` package location from `general.location_pyimariswriter_environment` itself, then exports `LD_LIBRARY_PATH` before starting the dedicated interpreter. This avoids relying on conda activation hooks, the submitter's `CONDA_PREFIX`, or the submitter's Python environment when IMS jobs are submitted from a different env.
 - The `--final-file-type ims` path now builds IMS directly from the fused montage OME-Zarr via `mesospim_utils/omezarr_to_ims.py` and no longer depends on intermediate TIFF extraction.
-- Added `general.location_pyimariswriter_environment` in config so the direct IMS conversion can run under `/h20/home/iana/.conda/envs/pyimariswriter/bin/python` instead of the standard mesospim_utils environment.
+- Added `general.location_pyimariswriter_environment` in config so the direct IMS conversion can run under `envs/pyimariswriter/bin/python` instead of the standard mesospim_utils environment.
 - The existing `--ims-resolution-level` option still controls the exported OME-Zarr multiscale level for both direct `ims` output and `tiff` output, with a default of `0`.
 - The `--final-file-type ims` path in `mesospim_utils/automated.py` no longer uses one bulk `extract-tiff-series` job.
 - Added `--ims-resolution-level` to `automated-method-slurm` and `big-stitcher-align`; default is `0`.
@@ -112,7 +132,6 @@
 
 - Fixed `modify_file_names_in_annotated_metadata()` in `mesospim_utils/metadata.py` so the default `.ome.zarr` rewrite is idempotent.
 - Before this fix, metadata entries that already ended in `.ome.zarr` were rewritten to `.ome.zarr.ome.zarr`, which produced invalid `<zgroup path="...">` entries in generated BigStitcher XML.
-- The failure was reproduced on `/h20/Acquire/MesoSPIM/dutta-p/4CL94_donotdelete/060826_movedtopublic/basicpy/gain_correction/MI_3_Mag4x_Ch488_Ch561_BASICPY_GCORR.ome.zarr.xml` and matched the user-reported BigStitcher `AllenOMEZarrProperties.getDataType(...)` NPE.
 - Regenerated that XML after the patch and confirmed the tile paths now end in a single `.ome.zarr` suffix.
 
 ## Recent Change: BigStitcher XML Rewrite Plumbing And Success Marker Guard
@@ -251,8 +270,8 @@
 - The SLURM dependency/log-format follow-up was syntax-checked here with `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/slurm.py`.
 - `python3 -m py_compile mesospim_utils/metadata.py mesospim_utils/bigstitcher.py mesospim_utils/automated.py` succeeded after the `.ome.zarr` normalization, BigStitcher success-marker guard, and backup-copy follow-up.
 - `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py mesospim_utils/omezarr.py mesospim_utils/bigstitcher.py` succeeded after adding `--final-file-type tiff` support to the automated BigStitcher workflow.
-- `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py mesospim_utils/constants.py mesospim_utils/omezarr_to_ims.py` should pass for the new direct IMS path, and `"/h20/home/iana/.conda/envs/pyimariswriter/bin/python" mesospim_utils/omezarr_to_ims.py --help` is the narrowest environment check for the dedicated converter.
-- `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py` succeeded after the direct IMS launcher was updated to export `LD_LIBRARY_PATH` from `location_pyimariswriter_environment`, and a shell-level check confirmed the derived paths resolve to `/h20/home/lab/miniconda3/envs/pyiw/lib` and `/h20/home/lab/miniconda3/envs/pyiw/lib/python3.10/site-packages/PyImarisWriter` without relying on the submitter environment.
+- `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py mesospim_utils/constants.py mesospim_utils/omezarr_to_ims.py` should pass for the new direct IMS path, and `"envs/pyimariswriter/bin/python" mesospim_utils/omezarr_to_ims.py --help` is the narrowest environment check for the dedicated converter.
+- `PYTHONPYCACHEPREFIX=/tmp/opencode/pycache python3 -m py_compile mesospim_utils/automated.py` succeeded after the direct IMS launcher was updated to export `LD_LIBRARY_PATH` from `location_pyimariswriter_environment`, and a shell-level check confirmed the derived paths resolve to `envs/pyiw/lib` and `envs/pyiw/lib/python3.10/site-packages/PyImarisWriter` without relying on the submitter environment.
 
 ## Open Questions
 
