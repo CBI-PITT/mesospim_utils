@@ -209,6 +209,7 @@ def get_bigstitcher_omezarr_alignment_marco(
         link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
         icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
         icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}",
+        enable_sharding_line=("enable_sharding \\\n" if BIGSTITCHER_ENABLE_SHARDING else ""),
         **_dog_intensity_kwargs()
     )
     if path_to_write_macro:
