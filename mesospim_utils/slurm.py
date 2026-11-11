@@ -528,6 +528,12 @@ def is_decon_completed_from_logs(log_dir: Path, input_file: Path) -> bool:
         try:
             content = log_file.read_text()
             if input_name in content or input_file_str in content:
+                # A run whose job died after the decon loop (e.g. at multiscale
+                # creation) still contains 'Deconvolution complete'; a
+                # traceback in the log means the run failed, so the file is
+                # not done and must be re-queued.
+                if 'Traceback (most recent call last)' in content:
+                    continue
                 if 'Deconvolution complete' in content or 'Total Time:' in content:
                     return True
         except (OSError, IOError):
