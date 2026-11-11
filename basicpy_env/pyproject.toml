@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "basicpy-env"
+version = "0.1.0"
+description = "BaSiCPy CUDA preprocessing environment for mesospim_utils"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "BaSiCPy==2.0.0",
+    "torch==2.11.0+cu128",
+    "torchvision==0.26.0+cu128",
+    "torch-dct",
+    "zarr==2.18.3",
+    "numpy==1.26.4",
+    "dask",
+    "scipy",
+    "tifffile",
+    "zarr_stores @ git+https://github.com/CBI-PITT/zarr_stores.git@6660f84dd",
+]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }

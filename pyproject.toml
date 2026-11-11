@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesospim_utils"
+description = "A python tool set for working with MesoSPIM data"
+readme = "README.md"
+license = { text = "BSD-3-Clause" }
+requires-python = ">=3.12"
+dynamic = ["version"]
+dependencies = [
+    "psutil",
+    "typer",
+    "PyYAML",
+    "matplotlib",
+    "packaging",
+    "colorama; sys_platform == 'win32'",
+    "numpy",
+    "scikit-image",
+    "tifffile",
+    "imagecodecs",
+    "natsort",
+    "torch",
+    "torchvision",
+    "zarr>=3.0.0",
+    "numcodecs",
+    "dask",
+    "SimpleITK",
+    "h5py",
+    "ome_zarr_multiscale_writer @ git+https://github.com/CBI-PITT/ome_zarr_multiscale_writer.git",
+]
+
+[project.optional-dependencies]
+psfmodels = [
+    "psfmodels @ git+https://github.com/CBI-PITT/PSFmodels.git",
+]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
