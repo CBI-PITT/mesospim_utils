@@ -524,19 +524,55 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
         from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
         if VERBOSE: print('Opening File as OmeZarrArray')
         input_omezarr = OmeZarrArray(file_location)
-        out_ome_zarr = input_omezarr.omezarr_like(out_location) # create output zarr structure like input to write all deconned data
-        if str(file_location.parent).endswith('.ome.zarr'):
-            zgroup_file = file_location.parent / '.zgroup'
-            zattrs_file = file_location.parent / '.zattrs'
-            print(f'{zgroup_file=}, {zattrs_file=}')
-            if zgroup_file.is_file():
-                shutil.copy2(zgroup_file, out_location.parent / '.zgroup')
-            if zattrs_file.is_file():
-                shutil.copy2(zattrs_file, out_location.parent / '.zattrs')
-
-        out_ome_zarr.mode = 'a'  # set to append mode to write data
         stack = input_omezarr.to_dask()
         stack = stack[start_index:stop_index]
+        # Write the decon output through the streaming writer driven by the
+        # omezarr config (constants.OMEZARR_*) instead of omezarr_like, which
+        # mirrors the source's format and would write 0.4/zarr v2 from a 0.4
+        # source. Chunk scheme and compressor match the converter's
+        # write_ome_zarr_multiscale defaults; ome_version selects 0.4 (zarr v2)
+        # or 0.5 (zarr v3 sharded), and shard_shape only applies to 0.5.
+        from ome_zarr_multiscale_writer.write import (Live3DPyramidWriter, PyramidSpec, ChunkScheme,
+            START_CHUNKS, END_CHUNKS, COMPRESSOR, COMPRESSION_LEVEL,
+            INGEST_QUEUE_SIZE, MAX_INFLIGHT_CHUNKS, MAX_WORKERS, ASYNC_CLOSE)
+        from ome_zarr_multiscale_writer.helpers import plan_levels, compute_xy_only_levels
+        from ome_zarr_multiscale_writer.zarr_tools import FlushPad
+        from zarr.codecs import BloscCodec, BloscShuffle
+        from constants import OMEZARR_OME_VERSION, OMEZARR_SHARD_SHAPE
+        z_est, y_size, x_size = stack.shape
+        xy_levels = compute_xy_only_levels((z_res, y_res, x_res))
+        spec = PyramidSpec(z_size_estimate=z_est, y=y_size, x=x_size,
+                           levels=plan_levels(z_est, y_size, x_size, xy_levels, min_dim=64))
+        out_ome_zarr = Live3DPyramidWriter(
+            spec,
+            voxel_size=(z_res, y_res, x_res),
+            path=str(out_location),
+            max_workers=MAX_WORKERS,
+            chunk_scheme=ChunkScheme(base=START_CHUNKS, target=END_CHUNKS),
+            compressor=BloscCodec(cname=COMPRESSOR, clevel=COMPRESSION_LEVEL, shuffle=BloscShuffle.bitshuffle),
+            shard_shape=OMEZARR_SHARD_SHAPE,
+            flush_pad=FlushPad.DUPLICATE_LAST,
+            ingest_queue_size=INGEST_QUEUE_SIZE,
+            max_inflight_chunks=MAX_INFLIGHT_CHUNKS,
+            async_close=ASYNC_CLOSE,
+            translation=(0.0, 0.0, 0.0),
+            ome_version=OMEZARR_OME_VERSION,
+        )
+        if str(file_location.parent).endswith('.ome.zarr'):
+            if str(OMEZARR_OME_VERSION) == '0.5':
+                # zarr v3 output: the container root needs the v3 group marker;
+                # copying the source's v2 .zgroup makes Fiji's ZarrV3KeyValueReader
+                # fail with "No container exists"
+                (out_location.parent / 'zarr.json').write_text(
+                    json.dumps({"zarr_format": 3, "node_type": "group", "attributes": {}}))
+            else:
+                zgroup_file = file_location.parent / '.zgroup'
+                zattrs_file = file_location.parent / '.zattrs'
+                print(f'{zgroup_file=}, {zattrs_file=}')
+                if zgroup_file.is_file():
+                    shutil.copy2(zgroup_file, out_location.parent / '.zgroup')
+                if zattrs_file.is_file():
+                    shutil.copy2(zattrs_file, out_location.parent / '.zattrs')
 
     assert 'stack' in locals(), 'Image file has not been loaded, perhaps it is an unsupported format'
     origional_shape = stack.shape
@@ -687,7 +723,8 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
                     tif.write(img[np.newaxis, ...], contiguous=False)
 
         elif str(file_location).endswith('.ome.zarr'):
-            out_ome_zarr[z_start:z_end] = to_decon
+            for plane in to_decon:
+                out_ome_zarr.push_slice(plane)
 
         first_chunk = False
         
@@ -702,8 +739,8 @@ def decon(file_location: Path, refractive_index: float=None, out_location: Path=
     if VERBOSE: print('Deconvolution complete')
 
     if str(file_location).endswith('.ome.zarr'):
-        if VERBOSE: print(f'Generating .ome.zarr multiscales: {out_location.name}')
-        out_ome_zarr.create_multiscales(async_close=False) # Blocking until all multiscales are created.
+        if VERBOSE: print(f'Finalizing .ome.zarr writer: {out_location.name}')
+        out_ome_zarr.close() # Finalize: truncates the z estimate, writes multiscales, closes the store.
 
         # Replicate bigstitcher xml with updated zarr group name
         if VERBOSE: print(f'Generating BigStitcher XML for .ome.zarr: {final_out_location.name}')
