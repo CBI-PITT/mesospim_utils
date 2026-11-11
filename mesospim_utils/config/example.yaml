@@ -1,8 +1,6 @@
 general:
-  location_module: '/h20/home/lab/src/mesospim_utils/mesospim_utils'
-  location_environment: '/path/to/mesospim_utils/.venv/bin/python' # uv-managed venv: uv sync in the mesospim_utils repo
-  location_basicpy_environment: '/path/to/mesospim_utils/basicpy_env/.venv/bin/python' # uv-managed venv: uv sync in basicpy_env/
-  location_pyimariswriter_environment: '/h20/home/lab/miniconda3/envs/pyiw/bin/python'
+  location_module: '/h20/home/lab/src/mesospim_utils/mesospim_utils' # interpreter paths derive from this: main tools run as `uv run --project <repo root> python -u <script>` (uv sync in the repo creates .venv); basicpy runs as `uv run --project <repo root>/basicpy_env python`
+  location_pyimariswriter_environment: '/h20/home/lab/miniconda3/envs/pyiw/bin/python' # conda env: PyImarisWriter cannot be uv-ified (Windows-only PyPI wheel, Linux .so with env-specific RPATH)
   metadata_filename: 'mesospim_metadata.json'
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'

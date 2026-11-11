@@ -29,7 +29,7 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
     '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
     import subprocess
 
-    from constants import ENV_PYTHON_LOC
+    from constants import UV_PYTHON_PREFIX
     from constants import DECON_SCRIPT, MAX_VRAM
 
     path = ensure_path(dir_loc)
@@ -152,7 +152,7 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
 
             commands += '\n\t'
             commands += '"'
-            commands += f'{ENV_PYTHON_LOC} -u {DECON_SCRIPT} decon'
+            commands += f'{UV_PYTHON_PREFIX} -u {DECON_SCRIPT} decon'
             commands += f' {p.as_posix()}'
             commands += f' --refractive-index {refractive_index}'
             commands += f'{f" --emission-wavelength {emission_wavelength}" if emission_wavelength else ""}'
@@ -314,7 +314,7 @@ def queue_preprocess_groups(
     after_slurm_jobs: list[int] = None,
     overwrite: bool = False,
 ):
-    from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL
+    from constants import UV_PYTHON_PREFIX, LOCATION_OF_MESOSPIM_UTILS_INSTALL
     from preprocess import discover_channel_filter_combinations_from_metadata, prepare_output_collection
 
     input_collection = ensure_path(input_collection)
@@ -336,7 +336,7 @@ def queue_preprocess_groups(
             print(f'Skipping completed {command_name} group: {channel} / {filt}')
             continue
 
-        cmd = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/preprocess.py {command_name}'
+        cmd = f'{UV_PYTHON_PREFIX} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/preprocess.py {command_name}'
         cmd += f' --input "{input_collection}"'
         cmd += f' --output "{output_collection}"'
         cmd += f' --channel "{channel}"'

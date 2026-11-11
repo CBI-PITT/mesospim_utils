@@ -7,7 +7,7 @@ from xml.etree import ElementTree as ET
 
 from numpy.f2py.auxfuncs import throw_error
 
-from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY, LOCATION_PYIMARISWRITER_ENV
+from constants import UV_PYTHON_PREFIX, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY, LOCATION_PYIMARISWRITER_ENV
 from constants import (
     BIGSTITCHER_LINK_RELATIVE,
     BIGSTITCHER_LINK_ABSOLUTE,
@@ -48,7 +48,7 @@ from bigstitcher import (does_dir_contain_bigstitcher_metadata,
 from omezarr import OmeZarrV2Multiscale
 
 
-mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
+mesospim_root_application = f'{UV_PYTHON_PREFIX} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
 
 app = typer.Typer()
 

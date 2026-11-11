@@ -27,7 +27,7 @@ import dask.array as da
 from psf import get_psf
 from metadata import collect_all_metadata, get_ch_entry_for_file_name, get_entry_for_file_name
 
-from constants import ENV_PYTHON_LOC
+from constants import UV_PYTHON_PREFIX
 from constants import DECON_SCRIPT as LOC_OF_THIS_SCRIPT
 from constants import VRAM_PER_VOXEL, MAX_VRAM
 from constants import DECON_DEFAULT_OBJECTIVE, DECON_OBJECTIVES
@@ -170,7 +170,7 @@ def decon_dir(dir_loc: str, refractive_index: float, objective: str=None, out_di
     for p in file_list:
         commands += '\n\t'
         commands += '"'
-        commands += f'{ENV_PYTHON_LOC} -u {LOC_OF_THIS_SCRIPT} decon'
+        commands += f'{UV_PYTHON_PREFIX} -u {LOC_OF_THIS_SCRIPT} decon'
         commands += f' {p.as_posix()}'
         commands += f' {refractive_index}'
         commands += f'{f" --objective {objective}" if objective else ""}'
@@ -196,7 +196,7 @@ def decon_dir(dir_loc: str, refractive_index: float, objective: str=None, out_di
             pass
 
         ims_auto_queue = f'\n\t"sbatch -p compute -n 1 --mem 5G -o {log_dir}/%A.log --dependency=afterok:$SLURM_JOB_ID -J ims_queue --kill-on-invalid-dep=yes --wrap=\''
-        ims_auto_queue += f'{ENV_PYTHON_LOC} -u {ims_conv_module_name} convert-ims-dir-mesospim-tiles-slurm-array '
+        ims_auto_queue += f'{UV_PYTHON_PREFIX} -u {ims_conv_module_name} convert-ims-dir-mesospim-tiles-slurm-array '
         ims_auto_queue += f'{out_dir} '
         ims_auto_queue += f'--file-type {out_file_type} '
         ims_auto_queue += f'--res {res[0]} {res[1]} {res[2]}\'"'

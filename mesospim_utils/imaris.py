@@ -31,7 +31,7 @@ from psf import get_psf
 from metadata import collect_all_metadata
 
 from utils import path_to_wine_mappings, rgb_to_hex
-from constants import LOCATION_OF_MESOSPIM_UTILS_INSTALL, ENV_PYTHON_LOC
+from constants import LOCATION_OF_MESOSPIM_UTILS_INSTALL, UV_PYTHON_PREFIX
 from constants import WINE_INSTALL_LOC, IMARIS_CONVERTER_LOC
 from constants import SLURM_PARAMETERS_IMARIS_CONVERTER
 from constants import IMS_CONVERTER_COMPRESSION_LEVEL
@@ -44,9 +44,9 @@ SLURM_RAM_MB = SLURM_PARAMETERS_IMARIS_CONVERTER.get('RAM_GB')
 LOC_OF_THIS_SCRIPT = LOCATION_OF_MESOSPIM_UTILS_INSTALL / 'imaris.py'
 
 # Append -u so unbuffered outputs scroll in realtime to slurm out files
-ENV_PYTHON_LOC = f'{ENV_PYTHON_LOC} -u'
+uv_python = f'{UV_PYTHON_PREFIX} -u'
 
-mesospim_root_application = f'{ENV_PYTHON_LOC} {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
+mesospim_root_application = f'{uv_python} {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
 
 app = typer.Typer()
 

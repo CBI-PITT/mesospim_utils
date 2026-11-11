@@ -12,7 +12,7 @@ import subprocess
 import numpy as np
 import zarr
 
-from constants import LOCATION_BASICPY_ENV, LOCATION_OF_MESOSPIM_UTILS_INSTALL
+from constants import BASICPY_PROJECT_DIR, LOCATION_OF_MESOSPIM_UTILS_INSTALL
 from metadata import collect_all_metadata, get_first_entry
 from utils import ensure_path
 
@@ -620,7 +620,8 @@ def process_basicpy_group(
             temp_output.unlink()
 
         cmd = [
-            str(LOCATION_BASICPY_ENV),
+            'uv', 'run', '--project', str(BASICPY_PROJECT_DIR),
+            'python',
             '-u',
             str(Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL) / 'basicpy_worker.py'),
             '--input', str(input_collection),
