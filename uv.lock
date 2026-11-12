@@ -1220,8 +1220,8 @@ wheels = [
 
 [[package]]
 name = "ome-zarr-multiscale-writer"
-version = "0.1.dev48+gdfa926563"
-source = { git = "https://github.com/CBI-PITT/ome_zarr_multiscale_writer.git#dfa926563a60d99282c3f9c825c6a921d7257fea" }
+version = "0.1.dev49+g15d647229"
+source = { git = "https://github.com/CBI-PITT/ome_zarr_multiscale_writer.git#15d647229ab26eb2174b095e573eb6cdaa6464f1" }
 dependencies = [
     { name = "dask" },
     { name = "ome-zarr-models" },
