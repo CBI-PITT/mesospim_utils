@@ -16,11 +16,24 @@ conda create -n mesospim_utils python=3.12 -y
 # Activate environment and install mesospim_utils
 conda activate mesospim_utils
 
-# If installing on linux / SLURM nodes that will do deconvolution:
-pip install -e ~/src/mesospim_utils psfmodels
+# If installing on linux / SLURM nodes that will do deconvolution (pulls in the optional psfmodels extra):
+pip install -e "~/src/mesospim_utils[psfmodels]"
 
 # If installing on systems that will be used only for metadata inspection or non-decon utilities:
 pip install -e ~/src/mesospim_utils
+```
+
+Notes:
+
+- `requirements.txt` contains only `-e .` - the editable install is the supported mode, because the CLI tools are run as scripts from the package tree (see below).
+- `psfmodels` ships as the optional extra `[psfmodels]` in `setup.cfg`; it is only needed on nodes that run CUDA deconvolution.
+
+Alternative with [uv](https://docs.astral.sh/uv/) (uses the repo's `uv.lock`):
+
+```bash
+cd ~/src/mesospim_utils
+uv sync
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory>
 ```
 
 
@@ -141,17 +154,73 @@ Dependencies:
 
 ```bash
  python <location_of_install>/mesospim_utils/mesospim_utils/automated.py --help
+ python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm --help
 ```
 
-```bash
-python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm --help
+###### **Options for `automated-method-slurm`:**
 
-# Kick off a fully automated processing of a dataset
+The only required argument is the directory location of the MesoSPIM data. Every other option is resolved from the metadata or the config file when not passed.
+
+| Option | Default | Description |
+|---|---|---|
+| `DIR_LOC` (positional) | required | Directory of the MesoSPIM dataset (acquisition directory for `.btf`, or the directory holding an OME-Zarr collection) |
+| `--file-type` | auto-detect | Input type: `.ome.zarr` or `.btf`; auto-detected from the directory contents when omitted |
+| `--final-file-type` | `omezarr` | Final output format: `omezarr`, `hdf5`, `ims`, `tiff` |
+| `--decon` / `--no-decon` | on | Run deconvolution. Proceeds only when a refractive index is available from metadata or `--refractive-index`; skipped entirely with `--no-decon` |
+| `--objective` | from metadata/config | Name of the objective profile (from `decon.objectives` in the config) used for PSF parameters. See objective precedence below |
+| `--refractive-index` | from metadata | Sample refractive index; a manually supplied value overrides the metadata |
+| `--iterations` | `20` | Deconvolution iterations |
+| `--frames-per-chunk` | auto | How many z-planes are deconvolved at once; best left automatic |
+| `--num-parallel` | config `slurm.decon.PARALLEL_JOBS` | How many tiles are deconvolved in parallel in the SLURM array |
+| `--basicpy` / `--no-basicpy` | off | Run BaSiCPy flat-field correction after deconvolution and before gain correction |
+| `--gain-correction` / `--no-gain-correction` | off | Run gain correction after deconvolution and BaSiCPy |
+| `--ims-resolution-level` | `0` | OME-Zarr multiscale level converted when `--final-file-type ims` or `tiff` |
+| `--supernice` | off | Submit all downstream SLURM jobs with an elevated nice value |
+
+Boolean options are enabled by passing the flag (e.g. `--basicpy`) and explicitly disabled with the `--no-` prefix (e.g. `--no-decon`).
+
+###### **Examples:**
+
+```bash
+# Deconvolve + stitch + fuse to OME-Zarr (the default; decon runs when a refractive index is in the metadata)
 python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory>
 
-# Run deconvolution followed by optional BaSiCPy and gain correction
+# Deconvolution + BaSiCPy + gain correction, then stitch/fuse
 python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --basicpy --gain-correction
 
+# Skip deconvolution entirely (metadata, stitching and fusion only)
+python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --no-decon
+
+# Trigger deconvolution when the metadata has no refractive index
+python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --refractive-index 1.561
+
+# Pick a specific objective profile for PSF generation
+python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --objective Nikon_A2_Plan_Apo_4x
+
+# Re-stitch an existing OME-Zarr collection (e.g. a deconved output)
+python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_omezarr_collection> --file-type .ome.zarr
+
+# Final output as Imaris .ims (requires ImarisFileConverter_wine and Wine)
+python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --final-file-type ims
+
+# Final output as a TIFF series
+python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --final-file-type tiff
+
+# Limit decon array concurrency to 8 tiles at a time
+python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --num-parallel 8
+```
+
+###### **Outputs (relative to `DIR_LOC`):**
+
+- `decon/<collection>.ome.zarr/` - deconvolved tile collection (when deconvolution runs)
+- `decon/<collection>_montage.ome.zarr/` - fused output (default `--final-file-type omezarr`); `tiff` and `ims` outputs are derived from this fused OME-Zarr
+- `logs_mesospim_utils/` - SLURM job logs; `BIGSTITCHER_SUCCESS: <montage name>` marks a completed alignment/fusion
+
+Re-running the chain on the same dataset skips work that is already complete: tiles with existing deconvolution or BaSiCPy outputs are skipped, and the BigStitcher XML/alignment stages run on the current collection.
+
+###### **Processing workflow:**
+
+```bash
 # Processing workflow:
 # 1) Metadata collection: mesospim metadata json files are generated or refreshed in the acquisition directory.
 # 2) If the input is `.btf`, tiles are first converted to OME-Zarr before any downstream processing.
@@ -173,10 +242,12 @@ If `--decon`, `--basicpy`, and `--gain-correction` are all enabled, execution or
 2. `--basicpy`
 3. `--gain-correction`
 
-Cluster resource defaults for the preprocessing stages are configured in `mesospim_utils/config/example.yaml`:
+Cluster resources for every stage are configured per stage in the `slurm:` section of the config file: `dependencies`, `omezarr`, `decon`, `basicpy`, `gain_correction`, `align`, `ims_convert`, and `bigstitcher` - each with `PARTITION`, `CPUS`, `JOB_LABEL`, `RAM_GB`, `GRES`, `PARALLEL_JOBS`, `NICE`, and `TIME_LIMIT` keys. Defaults live in `mesospim_utils/config/example.yaml`, e.g.:
 
-- `basicpy`: partition `ai`, `512 GB` RAM, `gpu:1`
-- `gain_correction`: partition `gpu`, `512 GB` RAM, no GPU request
+- `decon`: partition `gpu`, `1300 GB` RAM, `gpu:1`, 32 parallel array jobs
+- `basicpy`: partition `ai`, `512 GB` RAM, `gpu:1`, 8 parallel jobs
+- `gain_correction`: partition `gpu`, `512 GB` RAM, no GPU request, 8 parallel jobs
+- `bigstitcher`: partition `gpu,ai`, `1000 GB` RAM, 4 parallel jobs
 
 If deconvolution is enabled, objective parameters will be discovered from the MesoSPIM metadata if it includes the  `[OBJECTIVE PARAMETERS]`
 section. These metadata objective parameters are used by `automated-method-slurm` only when `--objective` is not passed.
@@ -187,14 +258,14 @@ The required objective metadata fields must match the canonical decon objective 
 deconvolution:
 
 - `name`
-- `na`
+- `numerical_aperture`
 - `objective_immersion_ri_design`
 - `objective_immersion_ri_actual`
-- `objective_working_distance_um`
+- `objective_working_distance_mm`
 - `coverslip_ri_design`
 - `coverslip_ri_actual`
-- `coverslip_thickness_actual_um`
-- `coverslip_thickness_design_um`
+- `coverslip_thickness_actual_mm`
+- `coverslip_thickness_design_mm`
 
 Objective precedence for deconvolution is:
 
@@ -285,3 +356,30 @@ slurm:
     'NICE': 0
     'TIME_LIMIT': '0-00:02:00' # Specify a time limit for the job. This can kill jobs that get stuck but short times can also increase priority
 ```
+
+The full `slurm:` section covers every stage (`dependencies`, `omezarr`, `decon`, `basicpy`, `gain_correction`, `align`, `ims_convert`, `bigstitcher`); see `mesospim_utils/config/example.yaml` for all defaults.
+
+###### **Format, stitching, and dev options:**
+
+These keys control what the automated method produces. The output format must be readable by the Fiji distribution used for alignment, so `omezarr.ome_version` and `fiji.distribution` should agree (see `example.yaml` for the full annotated set):
+
+```yaml
+fiji:
+  # 'stable': Fiji stable archive + pinned classic BigStitcher 2.5.3 (reads OME-Zarr v0.4 / zarr v2 only)
+  # 'latest': pinned Fiji-Latest archive build; BigStitcher 3.x (adds OME-Zarr v0.5 sharded / zarr v3 reading)
+  distribution: stable
+
+omezarr:
+  # OME-Zarr version for the raw-tile converter. Defaults to what the configured fiji.distribution
+  # can read ('latest' -> 0.5 sharded zarr v3, 'stable' -> 0.4 zarr v2); this key overrides.
+  ome_version: '0.5'
+  # Shard shape (z,y,x) for source tiles (0.5 only): each shard file holds this many voxels,
+  # ~8x fewer files than per-chunk writing. Ignored for 0.4.
+  shard_shape: [512, 512, 512]
+
+dev:
+  slurm_top_priority: false # If true, runs "scontrol top" to boost the priority of this run's pending jobs
+  # Only applies to jobs from the user running the pipeline; requires SLURM to allow users to change job priority.
+```
+
+BigStitcher alignment and fused-output parameters (link-filtering thresholds `link_relative`/`link_absolute`, ICP refinement, adaptive downsampling, fused-output sharding with `enable_sharding` and the `blocksize_*` keys) are configured in the `bigstitcher:` section; see `mesospim_utils/config/example.yaml` for the annotated defaults.
