@@ -4,37 +4,40 @@
 
 #### Installing:
 
+[uv](https://docs.astral.sh/uv/) manages the Python environment from the repo's `pyproject.toml` and `uv.lock`:
+
 ```bash
 # Clone the repo
 cd ~/src
 git clone https://github.com/CBI-PITT/mesospim_utils.git
 
-# Create a virtual environment
-# This assumes that you have miniconda or anaconda installed
-conda create -n mesospim_utils python=3.12 -y
-
-# Activate environment and install mesospim_utils
-conda activate mesospim_utils
+# Change into the repo and create the environment from uv.lock
+cd mesospim_utils
+uv sync
 
 # If installing on linux / SLURM nodes that will do deconvolution (pulls in the optional psfmodels extra):
-pip install -e "~/src/mesospim_utils[psfmodels]"
+uv sync --extra psfmodels
 
-# If installing on systems that will be used only for metadata inspection or non-decon utilities:
-pip install -e ~/src/mesospim_utils
+# Run any tool through the managed environment
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory>
+
+# Optional but recommended: pre-install Fiji with BigStitcher now
+# (otherwise this happens automatically on the first run that needs it)
+uv run python -u mesospim_utils/fiji.py
+
+# Optional: pre-install the BaSiCPy CUDA environment
+# (needed only for --basicpy / --gain-correction)
+uv sync --project basicpy_env
 ```
 
 Notes:
 
-- `requirements.txt` contains only `-e .` - the editable install is the supported mode, because the CLI tools are run as scripts from the package tree (see below).
-- `psfmodels` ships as the optional extra `[psfmodels]` in `setup.cfg`; it is only needed on nodes that run CUDA deconvolution.
-
-Alternative with [uv](https://docs.astral.sh/uv/) (uses the repo's `uv.lock`):
-
-```bash
-cd ~/src/mesospim_utils
-uv sync
-uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory>
-```
+- `uv sync` creates `.venv` in the repo root from `uv.lock`. There is no activate step: every command below runs through `uv run` from the repository root and uses that environment.
+- `psfmodels` ships as the optional extra in `pyproject.toml`; it is only needed on nodes that run CUDA deconvolution.
+- The BaSiCPy CUDA preprocessing environment is a separate uv sub-project at `basicpy_env/` with its own `pyproject.toml` and `uv.lock`; create it with `uv sync --project basicpy_env` before running with `--basicpy` or `--gain-correction`.
+- The main tools run as `uv run --project <repo root> python -u <script>`; the SLURM stages build this same command from `general.location_module` in the config file, so that key must point to `<repo root>/mesospim_utils`.
+- Fiji with BigStitcher is downloaded and installed automatically on the first run that needs it; the `fiji.py` command above pre-installs it at install time so the first run starts faster. The distribution follows the config key `fiji.distribution` (`stable` or `latest`); the install location defaults to `<repo root>/fiji-linux` and can be overridden with the `FIJI_ROOT` environment variable. Pass `--force` (`uv run python -u mesospim_utils/fiji.py --force`) to reinstall.
+- `requirements.txt` contains only `-e .` and is retained for pip-based development installs; `uv sync` is the documented path.
 
 
 
@@ -125,14 +128,14 @@ for ch in metadata_dict_stored_by_channel:
 ###### There is a command line tool that produces the metadata json:
 
 ```bash
-conda activate mesospim_utils
+# From the repository root
+cd <location_of_install>/mesospim_utils
 
-python <location_of_install>/mesospim_utils/mesospim_utils/metadata.py --help
+uv run python -u mesospim_utils/metadata.py --help
 
-python <location_of_install>/mesospim_utils/mesospim_utils/metadata.py <location_of_mesospim_acquisition_directory>
+uv run python -u mesospim_utils/metadata.py <location_of_mesospim_acquisition_directory>
 
 # The metadata json and annotated json will be saved into the acquisition directory
-
 ```
 
 
@@ -143,18 +146,21 @@ Dependencies:
 
 1) SLURM: Used to manage processing tasks
 2) CUDA-capable GPU nodes: Required only when deconvolution runs
-3) Fiji with BigStitcher: Used for alignment and fusion of OME-Zarr datasets
-4) ImarisFileConverter_wine: (https://github.com/CBI-PITT/ImarisFileConverter_wine), only needed when `--final-file-type ims`
-5) Wine: Only needed when `--final-file-type ims`
+3) Fiji with BigStitcher: Used for alignment and fusion of OME-Zarr datasets - downloaded and installed automatically on the first run if not present (see `mesospim_utils/fiji.py`)
+4) PyImarisWriter conda environment: runs the `.ims` conversion directly on Linux (`general.location_pyimariswriter_environment`; PyImarisWriter cannot be uv-ified, so this stays a conda environment)
+
+Wine and ImarisFileConverter_wine are no longer used by `automated-method-slurm`: the `.ims` conversion reads the fused OME-Zarr directly through PyImarisWriter. They are retained only for legacy workflows (`imaris.py`, `resample_ims.py`).
 
 ###### **Primary supported inputs for `automated-method-slurm`:**
 
 - MesoSPIM BigTIFF tile directories (`.btf`)
 - Existing BigStitcher OME-Zarr datasets referenced by `*.ome.zarr.xml`
 
+All commands below run from the repository root (`cd <location_of_install>/mesospim_utils`) through `uv run`:
+
 ```bash
- python <location_of_install>/mesospim_utils/mesospim_utils/automated.py --help
- python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm --help
+uv run python -u mesospim_utils/automated.py --help
+uv run python -u mesospim_utils/automated.py automated-method-slurm --help
 ```
 
 ###### **Options for `automated-method-slurm`:**
@@ -183,31 +189,31 @@ Boolean options are enabled by passing the flag (e.g. `--basicpy`) and explicitl
 
 ```bash
 # Deconvolve + stitch + fuse to OME-Zarr (the default; decon runs when a refractive index is in the metadata)
-python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory>
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory>
 
 # Deconvolution + BaSiCPy + gain correction, then stitch/fuse
-python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --basicpy --gain-correction
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --basicpy --gain-correction
 
 # Skip deconvolution entirely (metadata, stitching and fusion only)
-python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --no-decon
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --no-decon
 
 # Trigger deconvolution when the metadata has no refractive index
-python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --refractive-index 1.561
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --refractive-index 1.561
 
 # Pick a specific objective profile for PSF generation
-python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --objective Nikon_A2_Plan_Apo_4x
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --objective Nikon_A2_Plan_Apo_4x
 
 # Re-stitch an existing OME-Zarr collection (e.g. a deconved output)
-python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_omezarr_collection> --file-type .ome.zarr
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_omezarr_collection> --file-type .ome.zarr
 
-# Final output as Imaris .ims (requires ImarisFileConverter_wine and Wine)
-python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --final-file-type ims
+# Final output as Imaris .ims (converted directly from the fused OME-Zarr via PyImarisWriter in the conda env; no Wine)
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --final-file-type ims
 
 # Final output as a TIFF series
-python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --final-file-type tiff
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --final-file-type tiff
 
 # Limit decon array concurrency to 8 tiles at a time
-python <location_of_install>/mesospim_utils/mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --num-parallel 8
+uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --num-parallel 8
 ```
 
 ###### **Outputs (relative to `DIR_LOC`):**
@@ -234,7 +240,7 @@ Re-running the chain on the same dataset skips work that is already complete: ti
 
 When `--final-file-type tiff`, BigStitcher still fuses to a montage OME-Zarr first, then the fused dataset is extracted as a TIFF series and processing stops there.
 
-When `--final-file-type ims`, BigStitcher now fuses to a montage OME-Zarr first and then builds the final IMS directly from that fused OME-Zarr using the configured `general.location_pyimariswriter_environment` Python interpreter. TIFF extraction is only used for the `tiff` final-output path.
+When `--final-file-type ims`, BigStitcher now fuses to a montage OME-Zarr first and then builds the final IMS directly from that fused OME-Zarr using the configured `general.location_pyimariswriter_environment` Python interpreter. This conversion runs directly on Linux through PyImarisWriter. TIFF extraction is only used for the `tiff` final-output path.
 
 If `--decon`, `--basicpy`, and `--gain-correction` are all enabled, execution order is always:
 
@@ -294,33 +300,37 @@ At runtime, `mesospim_utils` loads `mesospim_utils/config/main.yaml` if present 
 
 SLURM parameters for each subprocess can be edited in the config file.
 
-If using only the metadata module, edit the general parameters: location_module, location_environment, emission_map, emission_to_rgb, username_pattern, 
+If using only the metadata module, edit the general parameters: location_module, emission_map, emission_to_rgb, username_pattern, and `location_pyimariswriter_environment` (only needed for `.ims` conversion).
 
 ```yaml
 general:
+  # Interpreter paths derive from this: main tools run as `uv run --project <repo root> python -u <script>`
+  # (uv sync in the repo creates .venv); basicpy runs as `uv run --project <repo root>/basicpy_env python`
   location_module: '<location_of_install>/mesospim_utils/mesospim_utils'
-  location_environment: '<python_install_location>/envs/mesospim_utils/bin/python'
-  location_pyimariswriter_environment: '<python_install_location>/envs/pyimariswriter/bin/python'
+  # conda env: PyImarisWriter cannot be uv-ified (Windows-only PyPI wheel, Linux .so with env-specific RPATH)
+  location_pyimariswriter_environment: '<python_install_location>/envs/pyiw/bin/python'
   metadata_filename: 'mesospim_metadata.json'
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'
   verbose: 1 # true/false or 0-2. 0=off, 1-2 are increasing levels of verbosity. true==1
   overide_stage_direction: true # true, don't use stage direction for stitch/resample
 
-  # Drive mappings for linux directories in WINDOWS OS.
-  # Retained for older Windows-based workflows; not used by the primary automated-method-slurm path.
+  # Legacy: retained for older Windows-based workflows; not used by the primary automated-method-slurm path
   windows_mappings: #linux_path:windows_mapped_drive_letter:
     '/<path_to_mount_1>': 'i:'
     '/<path_to_mount_2>': 'z:'
 
-  # Drive mappings for linux directories in WINE 
-  # This is used only when converting a final fused output to IMS.
+  # Legacy: retained for older Wine-based workflows; the current .ims conversion runs
+  # directly on Linux through PyImarisWriter and does not use Wine
   wine_mappings: #linux_path:wine_drive_letter:
     '/<path_to_mount_1>': 'h:'
     '/<path_to_mount_2>': 'f:'
 
   emission_map:
-    #Mapping common names to emission wavelengths, only used if wavelength is not explicitly stated in metadata file (e.g. 594/44)
+    #Mapping common names to emission wavelengths, only used if wavelength is not explicitly stated in metadata file
+    "emp": 405
+    "dapi": 450
+    "hoechst": 450
     "gfp": 525
     "yfp": 525
     "green": 525
@@ -328,11 +338,13 @@ general:
     "red": 595
     "cy5": 665
     "far_red": 665
+    "cy7": 790
 
   emission_to_rgb:
     # Mapping emission range to RGB colors
     # Keys are wavelength ranges in nm
-    # Values are [R,G,B]
+    # Values are (R,G,B)
+    'default': [ 0.5, 0.5, 0.5 ]
     '300-479': [ 0, 0, 1 ]
     '480-540': [ 0, 1, 0 ]
     '541-625': [ 1, 0, 0 ]
@@ -367,7 +379,7 @@ These keys control what the automated method produces. The output format must be
 fiji:
   # 'stable': Fiji stable archive + pinned classic BigStitcher 2.5.3 (reads OME-Zarr v0.4 / zarr v2 only)
   # 'latest': pinned Fiji-Latest archive build; BigStitcher 3.x (adds OME-Zarr v0.5 sharded / zarr v3 reading)
-  distribution: stable
+  distribution: latest
 
 omezarr:
   # OME-Zarr version for the raw-tile converter. Defaults to what the configured fiji.distribution
