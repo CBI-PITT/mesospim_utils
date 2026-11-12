@@ -122,9 +122,19 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
     else:
         PARALLEL_JOBS = num_parallel
 
+    def decon_output_exists(p: Path) -> bool:
+        if str(p).endswith('.ome.zarr'):
+            out_file_name = str(p.name).removesuffix('.ome.zarr') + out_file_type
+        else:
+            out_file_name = p.stem + out_file_type
+        out_tile = out_dir / out_file_name
+        return out_tile.is_dir() and any(out_tile.iterdir())
+
+    # Logs alone are not enough to skip: a prior run's decon output can be
+    # removed while its logs remain, so require the output tile to have content.
     files_not_done = [
         x for x in file_list 
-        if not is_decon_completed_from_logs(log_dir, x)
+        if not (is_decon_completed_from_logs(log_dir, x) and decon_output_exists(x))
     ]
 
     if files_not_done:
