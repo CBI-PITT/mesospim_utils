@@ -6,13 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "basicpy-env"
 version = "0.1.0"
 description = "BaSiCPy CUDA preprocessing environment for mesospim_utils"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.11,<3.12"
 dependencies = [
     "BaSiCPy==2.0.0",
     "torch==2.11.0+cu128",
     "torchvision==0.26.0+cu128",
     "torch-dct",
-    "zarr==2.18.3",
+    "zarr>=3",
     "numpy==1.26.4",
     "dask",
     "scipy",
