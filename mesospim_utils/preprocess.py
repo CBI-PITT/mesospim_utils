@@ -177,8 +177,9 @@ def get_folder_size(folder_path):
 
 def get_lowest_resolution_dataset_path(tile_path: Path) -> str:
     tile_path = ensure_path(tile_path)
-    tile_root = zarr.open_group(str(tile_path), mode='r', zarr_version=2)
-    multiscales = tile_root.attrs.get('multiscales')
+    # Tiles may be zarr v2 (raw input) or v3 (deconved output); auto-detect.
+    tile_root = zarr.open_group(str(tile_path), mode='r')
+    multiscales = _multiscales_from_group_attrs(dict(tile_root.attrs))
 
     if not multiscales:
         raise RuntimeError(f'No multiscales metadata found in tile {tile_path}')
@@ -196,9 +197,15 @@ def get_lowest_resolution_dataset_path(tile_path: Path) -> str:
 
 def is_lowest_resolution_dataset_compressed(tile_path: Path, dataset_path: str) -> bool:
     tile_path = ensure_path(tile_path)
-    tile_root = zarr.open_group(str(tile_path), mode='r', zarr_version=2)
+    # Tiles may be zarr v2 (raw input) or v3 (deconved output); auto-detect.
+    tile_root = zarr.open_group(str(tile_path), mode='r')
     dataset = tile_root[dataset_path]
-    return getattr(dataset, 'compressor', None) is not None
+    try:
+        return getattr(dataset, 'compressor', None) is not None
+    except TypeError:
+        # zarr v3 arrays expose codecs instead of a single compressor; any
+        # codec set (e.g. blosc/zstd) means the data is compressed
+        return len(getattr(dataset.metadata, 'codecs', None) or []) > 0
 
 
 def center_proximity_score(tile: int, rows: int, cols: int) -> float:
@@ -482,7 +489,14 @@ def prepare_output_collection(input_collection: Path, output_collection: Path):
     input_collection = ensure_path(input_collection)
     output_collection = ensure_path(output_collection)
     output_collection.mkdir(parents=True, exist_ok=True)
-    zarr.open_group(str(output_collection), mode='a', zarr_version=2)
+    # The corrected tiles mirror the input format via omezarr_like, so the
+    # container must match: v2 (.zgroup) or v3 (zarr.json group marker), or
+    # Fiji's ZarrV3KeyValueReader fails with "No container exists".
+    if (input_collection / '.zgroup').exists():
+        zarr.open_group(str(output_collection), mode='a', zarr_format=2)
+    else:
+        (output_collection / 'zarr.json').write_text(
+            json.dumps({"zarr_format": 3, "node_type": "group", "attributes": {}}))
 
     for name in ('.zgroup', '.zattrs'):
         src = input_collection / name
@@ -491,17 +505,34 @@ def prepare_output_collection(input_collection: Path, output_collection: Path):
             shutil.copy2(src, dst)
 
 
+def _multiscales_from_group_attrs(attrs: dict) -> list:
+    """Read the OME multiscales list from v2 (root) or v3 (nested under 'ome') attrs."""
+    multiscales = attrs.get('multiscales')
+    if multiscales is None:
+        ome = attrs.get('ome')
+        multiscales = ome.get('multiscales') if isinstance(ome, dict) else None
+    return multiscales
+
+
 def tile_output_has_multiscales(tile_path: Path) -> bool:
-    zattrs_path = ensure_path(tile_path) / '.zattrs'
-    if not zattrs_path.is_file():
-        return False
+    tile_path = ensure_path(tile_path)
+    zattrs_path = tile_path / '.zattrs'
+    if zattrs_path.is_file():
+        try:
+            zattrs = json.loads(zattrs_path.read_text())
+        except (OSError, IOError, json.JSONDecodeError):
+            return False
+    else:
+        # v3 tiles carry their metadata in zarr.json instead of .zattrs
+        zjson_path = tile_path / 'zarr.json'
+        if not zjson_path.is_file():
+            return False
+        try:
+            zattrs = json.loads(zjson_path.read_text()).get('attributes', {})
+        except (OSError, IOError, json.JSONDecodeError):
+            return False
 
-    try:
-        zattrs = json.loads(zattrs_path.read_text())
-    except (OSError, IOError, json.JSONDecodeError):
-        return False
-
-    multiscales = zattrs.get('multiscales')
+    multiscales = _multiscales_from_group_attrs(zattrs)
     if not multiscales:
         return False
 

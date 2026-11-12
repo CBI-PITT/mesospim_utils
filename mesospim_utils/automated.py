@@ -321,7 +321,7 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
     output_directory_for_omezarr_collection.mkdir(parents=True, exist_ok=True)
 
     # Create ome.zarr group to store all converted btf files in the collection
-    zarr.open_group(output_directory_for_omezarr_collection, mode="a", zarr_version=2)
+    zarr.open_group(output_directory_for_omezarr_collection, mode="a", zarr_format=2)
 
     print(f'Extracting metadata from {dir_loc}')
     metadata_by_channel = collect_all_metadata(dir_loc)
