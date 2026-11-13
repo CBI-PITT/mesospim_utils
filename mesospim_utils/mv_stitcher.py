@@ -330,21 +330,14 @@ def build_fusion_cache_slurm(collection_dir: Path, cache_dir: Path, dir_loc: Pat
     # Same sacct-independent wait as fuse_tiles_slurm: scheduler CLIs
     # (sacct/squeue) can be unreachable from nodes without a slurm config
     # source, so poll the done markers themselves - they are the
-    # authoritative, sacct-independent completion signal. The array's own
-    # time limit bounds a stuck task; the wait timeout adds a margin to it.
-    time_limit = SLURM_PARAMETERS_FOR_RECHUNK_WORKERS.get('TIME_LIMIT')
-    try:
-        hours, minutes, seconds = (int(part) for part in str(time_limit).split(':'))
-        wait_timeout_s = hours * 3600 + minutes * 60 + seconds + 3600
-    except (ValueError, AttributeError):
-        wait_timeout_s = 6 * 3600
-    wait_started = time.time()
+    # authoritative, sacct-independent completion signal.
+    # No wait timeout by design: the driver waits indefinitely. A stuck task
+    # is recoverable by killing and requeueing the array - rechunk workers are
+    # idempotent (done-marker skip on requeue).
     while True:
         missing = [i for i in range(len(work_items)) if not (staging_dir / 'done' / f'task_{i}').is_file()]
         if not missing:
             break
-        if time.time() - wait_started > wait_timeout_s:
-            raise RuntimeError(f'Rechunk worker array job {job_number} did not complete tasks {missing} within {wait_timeout_s} seconds; check worker logs in {log_dir}')
         time.sleep(30)
 
     print('All rechunk worker tasks completed; writing tile metadata and cache markers')
@@ -838,22 +831,13 @@ def slurm_pairwise_executor(msims, edges, register_kwargs, dir_loc, reg_channel_
     # Same sacct-independent wait as the rechunk and fusion drivers: poll the
     # done markers themselves - they are the authoritative completion signal.
     # Each done marker holds the pickled pairwise result for its task.
-    time_limit = SLURM_PARAMETERS_FOR_REGISTRATION_WORKERS.get('TIME_LIMIT')
-    try:
-        hours, minutes, seconds = (int(part) for part in str(time_limit).split(':'))
-        wait_timeout_s = hours * 3600 + minutes * 60 + seconds + 3600
-    except (ValueError, AttributeError):
-        wait_timeout_s = 6 * 3600
-    wait_started = time.time()
+    # No wait timeout by design: the driver waits indefinitely. A stuck task
+    # is recoverable by killing and requeueing the array - registration
+    # workers are idempotent (done-marker skip on requeue).
     while True:
         missing = [i for i in range(len(work)) if not (staging_dir / 'done' / f'task_{i}').is_file()]
         if not missing:
             break
-        if time.time() - wait_started > wait_timeout_s:
-            raise RuntimeError(
-                f'Registration worker array job {job_number} did not complete tasks '
-                f'{missing} within {wait_timeout_s} seconds; check worker logs in {log_dir}'
-            )
         time.sleep(30)
 
     print('All registration worker tasks completed; collecting pairwise results')
@@ -1076,12 +1060,24 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
     contiguous block range per array task, staged as fuse_chunk.pkl plus
     tasks.json under <dir_loc>/mvstitcher_slurm_fusion, and submitted as ONE
     SLURM array via slurm.submit_array. Each task applies the partial to its
-    block partition and writes a done marker. After the array completes, this
-    driver verifies all done markers (the sacct-independent correctness
-    signal), writes the downsampled pyramid levels and OME-Zarr metadata
-    in-process with threaded dask batches (matching fusion.fuse's post-loop
-    behavior), and removes the staging directory. dir_loc anchors the staging
-    directory, the SLURM logs, and the submission username.
+    block partition, skipping blocks whose output chunk file already exists,
+    and writes a done marker. After the array completes, this driver verifies
+    all done markers (the sacct-independent correctness signal), writes the
+    downsampled pyramid levels and OME-Zarr metadata in-process with threaded
+    dask batches (matching fusion.fuse's post-loop behavior), and removes the
+    staging directory. dir_loc anchors the staging directory, the SLURM logs,
+    and the submission username.
+
+    An interrupted fusion resumes: when the staging payload and a partial
+    level-0 array from a previous run exist, the array is attached instead of
+    recreated, stale done markers for tasks with missing chunks are cleared,
+    and the workers fuse only the missing blocks.
+
+    The montage arrays are created with zarr's array.write_empty_chunks
+    enabled so all-zero blocks (the no-tile-coverage corners of the union
+    volume) are written to disk instead of being left as implicit fill_value
+    chunks. This keeps the store file-complete for the workers' chunk
+    existence checks and for any validation that enumerates chunk files.
     '''
     import itertools
     import math
@@ -1089,6 +1085,7 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
     import time
 
     import dask.array as da
+    import zarr
     from numcodecs import get_codec
 
     from multiview_stitcher import fusion, misc_utils, ngff_utils
@@ -1128,12 +1125,6 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
         for msim in msims
     ]
 
-    # prepare_block_fusion's overwrite only replaces <montage>/0, so stale
-    # pyramid levels from a previous run would survive here and be reused by
-    # the overwrite=False pyramid write below.
-    if fused_output_path.exists():
-        shutil.rmtree(fused_output_path)
-
     store_url = str(fused_output_path / '0')
 
     output_chunksize = {
@@ -1167,11 +1158,63 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
         'output_stack_properties': scale0_osp,
     }
 
-    block_fusion_info = fusion.prepare_block_fusion(
-        store_url,
-        fuse_kwargs=per_chunk_fuse_kwargs,
-        zarr_array_creation_kwargs=zarr_array_creation_kwargs,
+    staging_dir = dir_loc / SLURM_FUSION_STAGING_DIR_NAME
+    sdims = list(scale0_osp['shape'].keys())
+    nsdims = [d for d in selected_level_sims[0].dims if d not in sdims]
+    expected_shape = tuple(
+        [len(selected_level_sims[0].coords[d]) for d in nsdims]
+        + [int(scale0_osp['shape'][d]) for d in sdims]
     )
+    expected_chunks = tuple(
+        [1] * len(nsdims) + [int(output_chunksize[d]) for d in sdims]
+    )
+
+    resume = (
+        (staging_dir / 'tasks.json').is_file()
+        and (staging_dir / 'fuse_chunk.pkl').is_file()
+        and (fused_output_path / '0').is_dir()
+    )
+    if resume:
+        try:
+            with zarr.config.set({'array.write_empty_chunks': True}):
+                existing = zarr.open_array(store_url, mode='r')
+            if tuple(existing.shape) != expected_shape or tuple(existing.chunks) != expected_chunks:
+                print(
+                    f'Existing montage geometry {existing.shape}/{existing.chunks} does not match '
+                    f'the current output geometry {expected_shape}/{expected_chunks}; restarting fusion from scratch'
+                )
+                resume = False
+        except Exception as exc:
+            print(f'Could not attach to the existing montage ({exc}); restarting fusion from scratch')
+            resume = False
+
+    if resume:
+        print('Existing fusion staging and partial montage found; resuming fusion (already-written chunks are skipped)')
+    else:
+        # prepare_block_fusion's overwrite only replaces <montage>/0, so stale
+        # pyramid levels from a previous run would survive here and be reused
+        # by the overwrite=False pyramid write below.
+        if fused_output_path.exists():
+            shutil.rmtree(fused_output_path)
+
+    # All-zero blocks (no tile coverage) must be written to disk, not left as
+    # implicit fill_value chunks: the config is read when the array is created
+    # or attached, and the created/attached array object pickles that behavior
+    # into the worker payload.
+    with zarr.config.set({'array.write_empty_chunks': True}):
+        if resume:
+            block_fusion_info = fusion.prepare_block_fusion(
+                store_url,
+                fuse_kwargs=per_chunk_fuse_kwargs,
+                create_output=False,
+                overwrite=False,
+            )
+        else:
+            block_fusion_info = fusion.prepare_block_fusion(
+                store_url,
+                fuse_kwargs=per_chunk_fuse_kwargs,
+                zarr_array_creation_kwargs=zarr_array_creation_kwargs,
+            )
     fuse_chunk = block_fusion_info['func']
     nblocks = block_fusion_info['nblocks']
     osp = block_fusion_info['output_stack_properties']
@@ -1197,14 +1240,28 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
 
     # Staging must exist before submit_array: format_sbatch_wrap redirects
     # array logs to the parent dir when the log_location dir does not exist.
-    staging_dir = dir_loc / SLURM_FUSION_STAGING_DIR_NAME
-    if staging_dir.exists():
+    if not resume and staging_dir.exists():
         shutil.rmtree(staging_dir)
-    staging_dir.mkdir(parents=True)
+    staging_dir.mkdir(parents=True, exist_ok=True)
     with open(staging_dir / 'fuse_chunk.pkl', 'wb') as f:
         pickle.dump(fuse_chunk, f)
     with open(staging_dir / 'tasks.json', 'w') as f:
-        json.dump({'n_tasks': n_tasks, 'blocks': tasks}, f)
+        json.dump({'n_tasks': n_tasks, 'blocks': tasks, 'store_url': store_url}, f)
+
+    if resume:
+        # Done markers from the interrupted run are only trustworthy for tasks
+        # whose block chunks are all present; clear the rest so the wait below
+        # reflects actual chunk completeness.
+        cleared = 0
+        for i in range(n_tasks):
+            marker = staging_dir / 'done' / f'task_{i}'
+            if not marker.is_file():
+                continue
+            if any(not _fusion_chunk_file_exists(store_url, block_id) for block_id in tasks[i]):
+                marker.unlink()
+                cleared += 1
+        if cleared:
+            print(f'Cleared {cleared} stale done markers for tasks with missing block chunks')
 
     worker_command = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/mv_stitcher.py fuse-worker'
     commands = [f'{worker_command} --staging-dir "{staging_dir}" --task-index {i}' for i in range(n_tasks)]
@@ -1228,39 +1285,86 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
     print(f'Waiting for fusion worker array job {job_number} (logs: {log_dir})')
     # Scheduler CLIs (sacct/squeue) can be unreachable from nodes without a
     # slurm config source, so poll the done markers themselves - they are the
-    # authoritative, sacct-independent completion signal. The array's own
-    # time limit bounds a stuck task; the wait timeout adds a margin to it.
-    time_limit = SLURM_PARAMETERS_FOR_MULTIVIEW_STITCHER_WORKERS.get('TIME_LIMIT')
-    try:
-        hours, minutes, seconds = (int(part) for part in str(time_limit).split(':'))
-        wait_timeout_s = hours * 3600 + minutes * 60 + seconds + 3600
-    except (ValueError, AttributeError):
-        wait_timeout_s = 12 * 3600
-    wait_started = time.time()
+    # authoritative, sacct-independent completion signal.
+    # No wait timeout by design: the driver waits indefinitely, however long
+    # the cluster queue and per-task fusion take. A stuck task is recoverable
+    # by killing and requeueing the array - workers are idempotent (done
+    # markers plus per-block chunk skip on requeue), and a finished partial
+    # fusion can be finished with the finalize-fusion command.
     while True:
         missing = [i for i in range(n_tasks) if not (staging_dir / 'done' / f'task_{i}').is_file()]
         if not missing:
             break
-        if time.time() - wait_started > wait_timeout_s:
-            raise RuntimeError(f'Fusion worker array job {job_number} did not complete tasks {missing} within {wait_timeout_s} seconds; check worker logs in {log_dir}')
         time.sleep(30)
 
     print('All fusion worker tasks completed; writing pyramid and OME-Zarr metadata')
-    # Post-loop block copied from the fork's fusion.fuse (fusion/_core.py),
-    # with the pyramid and metadata written in the driver.
-    fusion_transform_key = REGISTERED_TRANSFORM_KEY
+    with zarr.config.set({'array.write_empty_chunks': True}):
+        fused = _build_fused_sim(
+            store_url=store_url,
+            dims=list(selected_level_sims[0].dims),
+            c_coords=selected_level_sims[0].coords['c'].values,
+            t_coords=selected_level_sims[0].coords['t'].values,
+            spacing=osp['spacing'],
+            origin=osp['origin'],
+            time_transform_source=selected_level_sims[0],
+        )
+        _write_fusion_pyramid(
+            fused_output_path=fused_output_path,
+            fused=fused,
+            zarr_array_creation_kwargs=zarr_array_creation_kwargs,
+        )
+
+    shutil.rmtree(staging_dir, ignore_errors=True)
+    print(f'Fusion via SLURM workers completed: {fused_output_path}')
+
+    return store_url
+
+
+def _build_fused_sim(store_url: str, dims, c_coords, t_coords, spacing: dict, origin: dict, time_transform_source=None):
+    '''
+    Build the fused spatial image from the level-0 zarr array. When
+    time_transform_source is given, its NGFF time transform is copied onto the
+    fused image before the pyramid write reads it.
+    '''
+    import dask.array as da
+
+    from multiview_stitcher import ngff_utils
+    from multiview_stitcher import spatial_image_utils as si_utils
+
     fused = si_utils.get_sim_from_array(
         array=da.from_zarr(store_url),
-        dims=list(selected_level_sims[0].dims),
-        transform_key=fusion_transform_key,
-        scale=osp['spacing'],
-        translation=osp['origin'],
-        c_coords=selected_level_sims[0].coords['c'].values,
-        t_coords=selected_level_sims[0].coords['t'].values,
+        dims=list(dims),
+        transform_key=REGISTERED_TRANSFORM_KEY,
+        scale=spacing,
+        translation=origin,
+        c_coords=c_coords,
+        t_coords=t_coords,
     )
+    if time_transform_source is not None:
+        ngff_utils.copy_ngff_time_transform(time_transform_source, fused)
+    return fused
 
-    # Before the write below, which reads it off the sim.
-    ngff_utils.copy_ngff_time_transform(selected_level_sims[0], fused)
+
+def _write_fusion_pyramid(fused_output_path: Path, fused, zarr_array_creation_kwargs: dict):
+    '''
+    Write the downsampled pyramid levels plus the OME-Zarr group metadata
+    (multiscales, omero) for an already-built fused spatial image, in-process
+    with threaded dask batches.
+
+    Derived pyramid levels (1..N) left over from an earlier attempt are
+    removed first: the fork's overwrite=False write path treats any existing
+    level as complete and downsamples from it, so a partial level from an
+    interrupted run would silently propagate into the coarser levels. Level 0
+    is the source of truth; the pyramid is always rebuilt from it.
+    '''
+    from multiview_stitcher import misc_utils, ngff_utils
+
+    from constants import MVS_FUSION_BATCH_SIZE
+
+    for child in sorted(fused_output_path.iterdir()):
+        if child.is_dir() and child.name.isdigit() and child.name != '0':
+            shutil.rmtree(child)
+            print(f'Removed stale derived pyramid level: {child}')
 
     ngff_utils.write_sim_to_ome_zarr(
         fused,
@@ -1273,10 +1377,6 @@ def fuse_tiles_slurm(dir_loc: Path, msims: list, fused_output_path: Path):
         zarr_array_creation_kwargs=zarr_array_creation_kwargs,
         ngff_version='0.4',
     )
-
-    shutil.rmtree(staging_dir, ignore_errors=True)
-    print(f'Fusion via SLURM workers completed: {fused_output_path}')
-
     return fused
 
 
@@ -1414,13 +1514,45 @@ def stitch_and_fuse(dir_loc: Path, fused_file_type: str = 'omezarr', supernice: 
     stitch_and_fuse_collection(dir_loc, fused_file_type=fused_file_type)
 
 
+def _fusion_chunk_file_path(store_url: str, block_id) -> Path:
+    '''
+    Map one fusion block id onto its level-0 zarr chunk file. The fusion block
+    grid is identical to the output array's chunk grid, so each block id is
+    one chunk index.
+    '''
+    return Path(store_url).joinpath(*(str(int(i)) for i in block_id))
+
+
+def _fusion_chunk_file_exists(store_url: str, block_id) -> bool:
+    path = _fusion_chunk_file_path(store_url, block_id)
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _fusion_store_url_from_partial(fuse_chunk) -> str:
+    '''
+    Derive the level-0 store path from a pickled fuse_chunk partial. Used for
+    staged payloads written before store_url was added to tasks.json.
+    '''
+    arr = fuse_chunk.keywords['output_zarr_array']
+    store = getattr(arr, 'store', None)
+    root = getattr(store, 'root', None)
+    if root is None:
+        raise ValueError('Could not derive the montage store path from the staged fusion payload')
+    return str(root)
+
+
 @app.command()
 def fuse_worker(staging_dir: Path = typer.Option(...), task_index: int = None):
     '''
     Fuse one partition of the montage output chunks (executed as one task of
     a SLURM array). Loads the pickled fuse_chunk partial and tasks.json written
-    by fuse_tiles_slurm, fuses every block id assigned to this task sequentially,
-    and writes a done marker. task_index defaults to $SLURM_ARRAY_TASK_ID.
+    by fuse_tiles_slurm, fuses every block id assigned to this task whose
+    output chunk file is not already on disk (skipping already-written chunks
+    makes requeues and resumed fusions cheap), and writes a done marker.
+    task_index defaults to $SLURM_ARRAY_TASK_ID.
     '''
     # typer.Option(...) makes --staging-dir a required OPTION: fuse_tiles_slurm
     # invokes this command as 'fuse-worker --staging-dir <dir> --task-index <i>'.
@@ -1437,24 +1569,240 @@ def fuse_worker(staging_dir: Path = typer.Option(...), task_index: int = None):
     with open(staging_dir / 'fuse_chunk.pkl', 'rb') as f:
         fuse_chunk = pickle.load(f)
     with open(staging_dir / 'tasks.json') as f:
-        tasks = json.load(f)['blocks']
+        payload = json.load(f)
+    tasks = payload['blocks']
+    store_url = payload.get('store_url')
+    if store_url is None:
+        store_url = _fusion_store_url_from_partial(fuse_chunk)
 
     done_marker = staging_dir / 'done' / f'task_{task_index}'
     done_marker.parent.mkdir(parents=True, exist_ok=True)
-    if done_marker.is_file():
-        print(f'Task {task_index} done marker already present, skipping (idempotent requeue)')
-        return
 
     block_ids = tasks[task_index]
-    n_blocks = len(block_ids)
-    print(f'Fusing {n_blocks} blocks for task {task_index}')
-
-    for i, block_id in enumerate(block_ids):
-        print(f'Fusing block {i + 1}/{n_blocks} (block_id={block_id})', flush=True)
-        fuse_chunk(tuple(block_id))
+    pending = [b for b in block_ids if not _fusion_chunk_file_exists(store_url, b)]
+    if not pending:
+        print(f'Task {task_index}: all {len(block_ids)} block chunks already present, skipping (idempotent requeue / resumed fusion)')
+    else:
+        if len(pending) < len(block_ids):
+            print(f'Task {task_index}: {len(pending)} of {len(block_ids)} block chunks missing, fusing those only')
+        else:
+            print(f'Fusing {len(pending)} blocks for task {task_index}')
+        for i, block_id in enumerate(pending):
+            print(f'Fusing block {i + 1}/{len(pending)} (block_id={block_id})', flush=True)
+            fuse_chunk(tuple(block_id))
 
     done_marker.write_text('ok')
     print(f'{FUSE_WORKER_TASK_DONE_MARKER} {task_index}')
+
+
+@app.command()
+def finalize_fusion(
+    dir_loc: Path,
+    refuse: bool = typer.Option(False, '--refuse', help='Re-fuse missing blocks via the staged fuse_chunk payload instead of zero-filling them. Slower, but always correct.'),
+):
+    '''
+    Finish a fusion whose SLURM worker array completed but whose driver died
+    before the post-fusion step: repair missing level-0 chunks, write the
+    downsampled pyramid levels and OME-Zarr metadata, print the
+    MULTIVIEW_STITCHER success marker, and remove the fusion staging
+    directory.
+
+    Missing level-0 chunks are zero-filled by default. That is correct when
+    the missing chunks are the all-zero, no-tile-coverage corners of the union
+    volume: zarr (write_empty_chunks=False) skips writing chunks whose content
+    is all fill value, so those blocks complete without a chunk file. The
+    staged fusion payload is used to verify the fusion array actually
+    finished; use --refuse to recompute missing chunks with real fused content
+    instead of assuming they are all-zero.
+    '''
+    import itertools
+    import math
+    import pickle
+
+    import numpy as np
+    import zarr
+    from numcodecs import get_codec
+
+    from multiview_stitcher import ngff_utils
+
+    from constants import MVS_MONTAGE_COMPRESSOR
+    from bigstitcher import get_bigstitcher_fused_output_path
+    from slurm import get_slurm_log_location
+    from utils import ensure_path
+
+    dir_loc = ensure_path(dir_loc)
+    fused_output_path = ensure_path(get_bigstitcher_fused_output_path(dir_loc, format='omezarr'))
+    store_url = str(fused_output_path / '0')
+
+    if not (fused_output_path / '0').is_dir():
+        raise FileNotFoundError(f'No fused level-0 array found at {store_url}; nothing to finalize')
+
+    staging_dir = dir_loc / SLURM_FUSION_STAGING_DIR_NAME
+    have_payload = (staging_dir / 'tasks.json').is_file() and (staging_dir / 'fuse_chunk.pkl').is_file()
+
+    fuse_chunk = None
+    n_tasks = None
+    if have_payload:
+        with open(staging_dir / 'fuse_chunk.pkl', 'rb') as f:
+            fuse_chunk = pickle.load(f)
+        with open(staging_dir / 'tasks.json') as f:
+            payload = json.load(f)
+        n_tasks = int(payload.get('n_tasks', 0))
+        # The finalize path assumes the worker array finished; a missing done
+        # marker means the fusion is still incomplete and should be resumed by
+        # re-running the pipeline instead of finalized here.
+        missing_markers = [i for i in range(n_tasks) if not (staging_dir / 'done' / f'task_{i}').is_file()]
+        if missing_markers:
+            raise RuntimeError(
+                f'Fusion staging at {staging_dir} has {len(missing_markers)} unfinished tasks '
+                f'({missing_markers[:10]}{"..." if len(missing_markers) > 10 else ""}); '
+                f're-run the pipeline to resume the fusion instead of finalizing it'
+            )
+
+    with zarr.config.set({'array.write_empty_chunks': True}):
+        arr = zarr.open_array(store_url, mode='r+')
+
+    chunks_per_dim = [int(np.ceil(s / c)) for s, c in zip(arr.shape, arr.chunks)]
+    all_block_ids = [list(b) for b in itertools.product(*(range(n) for n in chunks_per_dim))]
+    missing = [b for b in all_block_ids if not _fusion_chunk_file_exists(store_url, b)]
+    print(f'Level-0 array {arr.shape}/{arr.chunks}: {len(all_block_ids) - len(missing)}/{len(all_block_ids)} chunks present, {len(missing)} missing')
+
+    if missing and refuse and not have_payload:
+        raise RuntimeError(
+            f'{len(missing)} chunks are missing but no staged fusion payload was found at {staging_dir}; '
+            f're-run the pipeline to re-fuse them'
+        )
+
+    if missing and have_payload and refuse:
+        print(f'Re-fusing {len(missing)} missing blocks via the staged fuse_chunk payload')
+        for i, block_id in enumerate(missing):
+            print(f'Re-fusing block {i + 1}/{len(missing)} (block_id={block_id})', flush=True)
+            fuse_chunk(tuple(block_id))
+    elif missing:
+        print(f'Zero-filling {len(missing)} missing chunks (assuming no-tile-coverage, all-zero blocks)')
+        with zarr.config.set({'array.write_empty_chunks': True}):
+            for i, block_id in enumerate(missing):
+                starts = [min(int(b) * c, s) for b, c, s in zip(block_id, arr.chunks, arr.shape)]
+                stops = [min((int(b) + 1) * c, s) for b, c, s in zip(block_id, arr.chunks, arr.shape)]
+                region = tuple(slice(a, b) for a, b in zip(starts, stops))
+                arr[region] = np.zeros([b - a for a, b in zip(starts, stops)], dtype=arr.dtype)
+                if (i + 1) % 50 == 0 or i + 1 == len(missing):
+                    print(f'  zero-filled {i + 1}/{len(missing)} chunks', flush=True)
+
+    still_missing = [b for b in all_block_ids if not _fusion_chunk_file_exists(store_url, b)]
+    if still_missing:
+        raise RuntimeError(f'{len(still_missing)} level-0 chunks are still missing after repair; check worker logs')
+    print(f'Level-0 array complete: all {len(all_block_ids)} chunks present')
+
+    stray_v3_metadata = fused_output_path / 'zarr.json'
+    if stray_v3_metadata.is_file():
+        stray_v3_metadata.unlink()
+        print(f'Removed stray zarr v3 group metadata: {stray_v3_metadata}')
+
+    print('Writing pyramid and OME-Zarr metadata')
+    zarr_array_creation_kwargs = {}
+    if MVS_MONTAGE_COMPRESSOR:
+        zarr_array_creation_kwargs['compressor'] = get_codec(dict(MVS_MONTAGE_COMPRESSOR))
+    zarr_array_creation_kwargs = ngff_utils.update_zarr_array_creation_kwargs_for_ngff_version(
+        '0.4', zarr_array_creation_kwargs
+    )
+
+    if have_payload:
+        images = fuse_chunk.keywords['fuse_kwargs']['images']
+        osp = fuse_chunk.keywords['output_stack_properties']
+        fused = _build_fused_sim(
+            store_url=store_url,
+            dims=list(images[0].dims),
+            c_coords=images[0].coords['c'].values,
+            t_coords=images[0].coords['t'].values,
+            spacing=osp['spacing'],
+            origin=osp['origin'],
+            time_transform_source=images[0],
+        )
+    else:
+        # The staged payload is gone (e.g. a previous finalize attempt already
+        # removed it). Recover the fused geometry from the existing multiscales
+        # metadata: level 0's scale/translation carry the spacing/origin and the
+        # omero channels carry the c coordinates. The original metadata carries
+        # no separate time transform, so none is copied here.
+        attrs_path = fused_output_path / '.zattrs'
+        try:
+            attrs = json.loads(attrs_path.read_text())
+            ms = attrs['multiscales'][0]
+            level0 = next(d for d in ms['datasets'] if d['path'] == '0')
+            transforms = {t['type']: t for t in level0['coordinateTransformations']}
+            dims = [ax['name'] for ax in ms['axes']]
+            sdims = [ax['name'] for ax in ms['axes'] if ax['type'] == 'space']
+            spacing = {d: float(v) for d, v in zip(dims, transforms['scale']['scale']) if d in sdims}
+            origin = {d: float(v) for d, v in zip(dims, transforms['translation']['translation']) if d in sdims}
+            c_coords = [c['label'] for c in attrs['omero']['channels']]
+            t_coords = [0]
+        except (OSError, ValueError, KeyError, StopIteration) as exc:
+            raise RuntimeError(
+                f'No staged fusion payload at {staging_dir} and no readable multiscales '
+                f'metadata at {attrs_path} ({exc}); cannot rebuild the pyramid'
+            ) from exc
+        print('No staged fusion payload; rebuilding the pyramid from the existing multiscales metadata')
+        fused = _build_fused_sim(
+            store_url=store_url,
+            dims=dims,
+            c_coords=c_coords,
+            t_coords=t_coords,
+            spacing=spacing,
+            origin=origin,
+        )
+
+    # _write_fusion_pyramid removes stale derived levels first and rebuilds the
+    # pyramid from level 0, so a partially written pyramid from an interrupted
+    # attempt is repaired here rather than trusted. A rebuild that already
+    # finished (every level's chunk-file count matches its grid and the group
+    # metadata is present) is not redone: the shared filesystem intermittently
+    # EIOs on metadata renames, so the finalize may need a retry after a full
+    # rebuild and should then only finish the marker and cleanup steps.
+    def _pyramid_complete() -> bool:
+        attrs_path = fused_output_path / '.zattrs'
+        if not attrs_path.is_file():
+            return False
+        try:
+            attrs = json.loads(attrs_path.read_text())
+            ms = attrs['multiscales'][0]
+            if 'omero' not in attrs:
+                return False
+            for ds in ms['datasets']:
+                level_dir = fused_output_path / ds['path']
+                zarray = json.loads((level_dir / '.zarray').read_text())
+                expected = 1
+                for s, c in zip(zarray['shape'], zarray['chunks']):
+                    expected *= math.ceil(s / c)
+                actual = sum(1 for p in level_dir.rglob('*') if p.is_file() and p.name[0].isdigit())
+                if actual != expected:
+                    return False
+            return True
+        except (OSError, ValueError, KeyError):
+            return False
+
+    if _pyramid_complete():
+        print('Pyramid and OME-Zarr metadata already complete; skipping the rebuild')
+    else:
+        with zarr.config.set({'array.write_empty_chunks': True}):
+            _write_fusion_pyramid(
+                fused_output_path=fused_output_path,
+                fused=fused,
+                zarr_array_creation_kwargs=zarr_array_creation_kwargs,
+            )
+
+    shutil.rmtree(staging_dir, ignore_errors=True)
+
+    # Record the success marker where the skip gate looks for it: the manual
+    # finalize has no SLURM log of its own.
+    log_dir = get_slurm_log_location(dir_loc)
+    marker_log = log_dir / 'finalize_fusion_multiview_stitcher.log'
+    marker_log.parent.mkdir(parents=True, exist_ok=True)
+    with open(marker_log, 'a') as f:
+        f.write(f'{MULTIVIEW_STITCHER_SUCCESS_MARKER} {fused_output_path.name}\n')
+
+    print(f'{MULTIVIEW_STITCHER_SUCCESS_MARKER} {fused_output_path.name}')
+    print(f'Fusion finalized: {fused_output_path}')
 
 
 @app.command()
