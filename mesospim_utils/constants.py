@@ -228,6 +228,16 @@ BIGSTITCHER_SELF_CALIBRATION_CORRECTION = bool(BIGSTITCHER.get('self_calibration
 # 'Enable_sharding' checkbox in the OME-Zarr v3 & Sharding Options section).
 BIGSTITCHER_ENABLE_SHARDING = bool(BIGSTITCHER.get('enable_sharding', False))
 
+# Chromatic aberration correction: after tile alignment the inter-channel shift is
+# measured by phase correlation on the deconved tiles and applied as per-channel
+# translations to the stitched XML before fusion. Measured shifts above
+# chromatic_max_shift_um are rejected; tile pairs below chromatic_quality_threshold
+# are skipped.
+BIGSTITCHER_CHROMATIC_CORRECTION = bool(BIGSTITCHER.get('chromatic_correction', False))
+BIGSTITCHER_CHROMATIC_REFERENCE_CHANNEL = int(BIGSTITCHER.get('chromatic_reference_channel', 0))
+BIGSTITCHER_CHROMATIC_QUALITY_THRESHOLD = float(BIGSTITCHER.get('chromatic_quality_threshold', 0.6))
+BIGSTITCHER_CHROMATIC_MAX_SHIFT_UM = float(BIGSTITCHER.get('chromatic_max_shift_um', 20.0))
+
 FIJI_INSTALL_LOCATION = BIGSTITCHER.get('fiji_install_folder')
 if FIJI_INSTALL_LOCATION:
     FIJI_INSTALL_LOCATION = Path(FIJI_INSTALL_LOCATION)

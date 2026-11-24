@@ -232,6 +232,18 @@ bigstitcher:
   # Self-calibration guard: warn (or rescale the fused voxel size) when the fitted grid scale differs from 1 by more than the threshold
   self_calibration_threshold_pct: 2.0
   self_calibration_correction: true # rescales the fused voxel size when the fitted grid scale differs from 1 by more than self_calibration_threshold_pct
+  # Chromatic aberration correction: the align macro sends how_to_treat_channels=compare so
+  # every (tile, channel) view is registered individually and the global optimizer absorbs the
+  # inter-channel (chromatic) offset into per-view transforms natively (validated on alder:
+  # equal to the external measurement where signal is good, better at weak field edges).
+  # Single-channel datasets are unaffected (compare vs group are identical there). Set false
+  # to keep the grouped-channel behavior with no chromatic correction. The standalone
+  # mesospim_utils/chromatic.py CLI remains available to measure fused residuals or re-correct
+  # a stitched XML without re-aligning.
+  chromatic_correction: true
+  chromatic_reference_channel: 0 # unused by the native compare path; kept for chromatic.py
+  chromatic_quality_threshold: 0.6 # unused by the native compare path; kept for chromatic.py
+  chromatic_max_shift_um: 20.0 # unused by the native compare path; kept for chromatic.py
   # Fused-output chunking: blocksize = the storage chunk (inner chunk in the sharded
   # zarr). Small z-chunks keep plane-wise reads cheap (napari, MAX projections, .ims
   # resampling all read the fused volume plane by plane); x/y sizes trade request

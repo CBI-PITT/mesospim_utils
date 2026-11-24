@@ -47,6 +47,7 @@ BIGSTITCHER_DOG_MIN_INTENSITY,
 BIGSTITCHER_DOG_MAX_INTENSITY,
 BIGSTITCHER_SELF_CALIBRATION_THRESHOLD_PCT,
 BIGSTITCHER_SELF_CALIBRATION_CORRECTION,
+BIGSTITCHER_CHROMATIC_CORRECTION,
 BIGSTITCHER_ENABLE_SHARDING,
 OMEZARR_OME_VERSION
 )
@@ -212,6 +213,10 @@ def get_bigstitcher_omezarr_alignment_marco(
         enable_sharding_line=("enable_sharding \\\n" if BIGSTITCHER_ENABLE_SHARDING else ""),
         **_dog_intensity_kwargs()
     )
+    if BIGSTITCHER_CHROMATIC_CORRECTION:
+        # compare grouping lets the global optimizer absorb the inter-channel
+        # (chromatic) offset into per-(tile, channel) transforms
+        macro = macro.replace('how_to_treat_channels=group', 'how_to_treat_channels=compare')
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:
             f.write(macro)
@@ -268,6 +273,8 @@ def get_bigstitcher_hdf5_alignment_marco(
         icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}",
         **_dog_intensity_kwargs()
     )
+    if BIGSTITCHER_CHROMATIC_CORRECTION:
+        macro = macro.replace('how_to_treat_channels=group', 'how_to_treat_channels=compare')
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:
             f.write(macro)
@@ -616,6 +623,8 @@ def get_bigstitcher_align_only_macro(
         enable_sharding_line=("enable_sharding \\\n" if BIGSTITCHER_ENABLE_SHARDING else ""),
         **_dog_intensity_kwargs()
     )
+    if BIGSTITCHER_CHROMATIC_CORRECTION:
+        macro = macro.replace('how_to_treat_channels=group', 'how_to_treat_channels=compare')
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:
             f.write(macro)

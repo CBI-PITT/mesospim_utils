@@ -13,6 +13,7 @@ from constants import (
     BIGSTITCHER_LINK_ABSOLUTE,
     BIGSTITCHER_ICP_MAXIMUM_ERROR,
     BIGSTITCHER_ICP_LAMBDA,
+    BIGSTITCHER_CHROMATIC_CORRECTION,
 )
 from metadata import (
     collect_all_metadata,
@@ -472,10 +473,14 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
         # count as success when BigStitcher refuses to create it
         cmd += f' && [ "{fused_out_dir_or_file}" -nt "{macro_file}" ]'
         cmd += f' && printf "BIGSTITCHER_SUCCESS: {Path(fused_out_dir_or_file).name}\\n"'
+        if BIGSTITCHER_CHROMATIC_CORRECTION and len(metadata_by_channel) > 1:
+            log_suffix = 'align_fuse_bigstitcher_chromatic'
+            print(f'BigStitcher align with native chromatic correction (compare channels, {len(metadata_by_channel)} channels) then fuse')
+        else:
+            log_suffix = 'align_fuse_bigstitcher'
 
-        job_number = None
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'align_fuse_bigstitcher')
+                                after_slurm_jobs=None, username=username, log_suffix=log_suffix)
         print(f'BigStitcher process number: {job_number}')
 
     if stages == 'align':
