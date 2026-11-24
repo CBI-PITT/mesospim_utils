@@ -197,8 +197,8 @@ slurm:
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
 fiji:
   # 'stable': Fiji stable archive + pinned classic BigStitcher 2.5.3 (reads OME-Zarr v0.4 / zarr v2 only)
-  # 'latest': pinned Fiji-Latest archive build; BigStitcher 3.x + new N5 stack ship with it (adds OME-Zarr v0.5 sharded / zarr v3 reading)
-  distribution: stable
+  # 'latest': Fiji-Latest archive + BigStitcher 3.x from update sites (adds OME-Zarr v0.5 sharded / zarr v3 reading)
+  distribution: latest
 
 # Raw-tile OME-Zarr converter (raw BTF -> source zarr, used before decon and stitching)
 omezarr:
@@ -224,7 +224,7 @@ bigstitcher:
   downsample_in_z: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
   # Adaptive overlap-driven downsampling target (px); used when downsample_in_x/y is 'overlap'
   min_overlap_strip_px: 150
-  downsample_refinement: '8/8/4' # 'automated' # Controls the downsampling factor in X/Y/Z for the refinement step in BigStitcher. Suggest 8/8/4 or 4/4/2 for large datasets.
+  downsample_refinement: 'automated' # Controls the downsampling factor in X/Y/Z for the refinement step in BigStitcher. Suggest 8/8/4 or 4/4/2 for large datasets.
   # DoG detection intensity gating; macro keys verified against BigStitcher 3.0.8. 'off' preserves prior behavior
   dog_intensity_mode: 'off' # 'off' | 'common' (use_same_min_&_max_intensity_for_all_views=true) | 'fixed' (explicit values below)
   dog_min_intensity: 0.0
