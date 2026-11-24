@@ -1,6 +1,6 @@
 general:
   location_module: '/h20/home/lab/src/mesospim_utils/mesospim_utils' # interpreter paths derive from this: main tools run as `uv run --project <repo root> python -u <script>` (uv sync in the repo creates .venv); basicpy runs as `uv run --project <repo root>/basicpy_env python`
-  location_pyimariswriter_environment: '/h20/home/lab/miniconda3/envs/pyiw/bin/python' # conda env: PyImarisWriter cannot be uv-ified (Windows-only PyPI wheel, Linux .so with env-specific RPATH)
+  location_pyimariswriter_environment: '/h20/home/lab/miniconda3/envs/pyiw/bin/python' # conda env supplying the PyImarisWriter wrapper and Linux .so; the converter runs under the project uv Python
   metadata_filename: 'mesospim_metadata.json'
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'

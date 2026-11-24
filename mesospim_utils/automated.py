@@ -65,9 +65,10 @@ def get_pyimariswriter_root_application() -> str:
 
     cmd = f'PYIW_PYTHON={shell_double_quote(pyimaris_python)}; '
     cmd += 'PYIW_ENV_ROOT="$(dirname \"$(dirname \"$PYIW_PYTHON\")\")"; '
-    cmd += 'PYIW_SITE_PACKAGES="$($PYIW_PYTHON -c "import sysconfig; print(sysconfig.get_paths()[\\"purelib\\"])")"; '
+    cmd += 'PYIW_SITE_PACKAGES="$("$PYIW_PYTHON" -c "import sysconfig; print(sysconfig.get_paths()[\\"purelib\\"])")"; '
     cmd += 'export LD_LIBRARY_PATH="$PYIW_SITE_PACKAGES/PyImarisWriter:$PYIW_ENV_ROOT/lib:${LD_LIBRARY_PATH:-}"; '
-    cmd += f'$PYIW_PYTHON -u {shell_double_quote(converter_script)}'
+    cmd += 'export MESOSPIM_PYIW_SITE_PACKAGES="$PYIW_SITE_PACKAGES"; '
+    cmd += f'{UV_PYTHON_PREFIX} -u {shell_double_quote(converter_script)}'
     return cmd
 
 

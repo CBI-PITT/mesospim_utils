@@ -338,7 +338,11 @@ def is_bigstitcher_log_successful(log_dir: Path, fused_output_path: Path=None) -
         re.IGNORECASE,
     )
 
-    for log_file in sorted(log_dir.glob('*_align_fuse_bigstitcher.log')):
+    log_files = sorted([
+        *log_dir.glob('*_align_fuse_bigstitcher.log'),
+        *log_dir.glob('*_align_fuse_bigstitcher_chromatic.log'),
+    ])
+    for log_file in log_files:
         try:
             content = log_file.read_text(errors='ignore')
         except (OSError, IOError):
@@ -486,13 +490,17 @@ def is_bigstitcher_omezarr_scale_metadata_complete(source_xml_or_dir: Path, fuse
         omezarr_xml = ensure_path(omezarr_xml)
 
     target_zattr_path = fused_omezarr_path / '.zattrs'
-    if not target_zattr_path.is_file():
-        return False
+    zarr_v3 = not target_zattr_path.is_file()
+    if zarr_v3:
+        target_zattr_path = fused_omezarr_path / 'zarr.json'
+        if not target_zattr_path.is_file():
+            return False
 
     try:
         scales_list_zyx, _, _ = determine_sampling_factors_for_bigstitcher(omezarr_xml)
         target_zattr = json.loads(target_zattr_path.read_text())
-        datasets = target_zattr.get('multiscales', [])[0].get('datasets', [])
+        ome_metadata = target_zattr.get('attributes', {}).get('ome', {}) if zarr_v3 else target_zattr
+        datasets = ome_metadata.get('multiscales', [])[0].get('datasets', [])
     except Exception:
         return False
 
