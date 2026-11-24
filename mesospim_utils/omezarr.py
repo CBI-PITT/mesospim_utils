@@ -15,6 +15,7 @@ import tifffile
 from ome_zarr_multiscale_writer.write import write_ome_zarr_multiscale
 from ome_zarr_multiscale_writer.zarr_reader import OmeZarrArray
 from mesospim_btf import mesospim_btf_helper
+from constants import OMEZARR_OME_VERSION, OMEZARR_SHARD_SHAPE
 
 
 # INIT typer cmdline interface
@@ -59,24 +60,27 @@ def convert_mesospim_btf_to_omezarr(
         output_omezarr_path: str,
         voxel_size: Optional[Tuple[float, float, float]] = (1,1,1),
         translation: Optional[Tuple[float, float, float]] = (0,0,0),
-        ome_version: str="0.4",
+        ome_version: str=OMEZARR_OME_VERSION,
         generate_multiscales: bool = True,
         start_chunks: Optional[Tuple[int, int, int]] = (256,256,256),
         end_chunks: Optional[Tuple[int, int, int]] = (256,256,256),
         compressor:str = "zstd",
         compression_level:int = 5,
         max_workers: Optional[int] = 8,
+        shard_shape: Optional[Tuple[int, int, int]] = OMEZARR_SHARD_SHAPE,
 
 ) -> None:
     """
-    Convert a mesoSPIM BTF dataset to an OME-Zarr v2 multiscale dataset.
+    Convert a mesoSPIM BTF dataset to an OME-Zarr multiscale dataset.
+    Defaults to sharded OME-Zarr 0.5 (zarr v3) when the configured fiji.distribution
+    is 'latest'; 0.4 (zarr v2) for 'stable'. shard_shape only applies to 0.5.
 
     Parameters
     ----------
     mesospim_btf_path :
         Path to the input mesoSPIM BTF dataset.
     output_omezarr_path :
-        Path where the output OME-Zarr v2 dataset will be saved.
+        Path where the output OME-Zarr dataset will be saved.
     """
 
     data = mesospim_btf_helper(mesospim_btf_path)
@@ -93,7 +97,8 @@ def convert_mesospim_btf_to_omezarr(
         end_chunks=end_chunks,
         compressor=compressor,
         compression_level=compression_level,
-        max_workers=max_workers
+        max_workers=max_workers,
+        shard_shape=shard_shape,
     )
 
 
@@ -198,22 +203,32 @@ class OmeZarrV2Multiscale:
         """
         open_kwargs = dict(open_kwargs or {})
 
-        # Use zarr v3 API but explicitly tell it we're opening a v2 group.
-        # See zarr v3 issue about opening v2 stores with zarr_format=2. :contentReference[oaicite:0]{index=0}
-        self.root = zarr.open_group(
-            store=store,
-            mode="r",
-            path=group_path or None,
-            zarr_format=2,
-            **open_kwargs,
-        )
+        # v2 sources carry multiscales in .zattrs; sharded OME-Zarr 0.5 sources are
+        # zarr v3 groups with multiscales under attributes.ome in zarr.json.
+        # Try v2 first for backward compatibility, then auto-detect v3.
+        try:
+            self.root = zarr.open_group(
+                store=store,
+                mode="r",
+                path=group_path or None,
+                zarr_format=2,
+                **open_kwargs,
+            )
+        except Exception:
+            self.root = zarr.open_group(
+                store=store,
+                mode="r",
+                path=group_path or None,
+                **open_kwargs,
+            )
+            attrs = dict(self.root.attrs)
+            self._multiscales = attrs.get("ome", {}).get("multiscales", [])
+        else:
+            attrs = dict(self.root.attrs)
+            self._multiscales = attrs.get("multiscales", [])
 
-        attrs = dict(self.root.attrs)
-
-        if "multiscales" not in attrs:
-            raise ValueError("Group has no 'multiscales' attribute; not an OME-Zarr multiscale.")
-
-        self._multiscales = attrs["multiscales"]
+        if not self._multiscales:
+            raise ValueError("Group has no multiscales metadata; not an OME-Zarr multiscale.")
         if not self._multiscales:
             raise ValueError("OME-Zarr 'multiscales' attribute is empty.")
 

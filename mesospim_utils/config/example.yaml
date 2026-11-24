@@ -1,8 +1,6 @@
 general:
-  location_module: '/h20/home/lab/src/mesospim_utils/mesospim_utils'
-  location_environment: '/h20/home/lab/miniconda3/envs/mesospim_utils/bin/python'
-  location_basicpy_environment: '/h20/home/lab/miniconda3/envs/basicpy-cuda/bin/python'
-  location_pyimariswriter_environment: '/h20/home/lab/miniconda3/envs/pyiw/bin/python'
+  location_module: '/h20/home/lab/src/mesospim_utils/mesospim_utils' # interpreter paths derive from this: main tools run as `uv run --project <repo root> python -u <script>` (uv sync in the repo creates .venv); basicpy runs as `uv run --project <repo root>/basicpy_env python`
+  location_pyimariswriter_environment: '/h20/home/lab/miniconda3/envs/pyiw/bin/python' # conda env supplying the PyImarisWriter wrapper and Linux .so; the converter runs under the project uv Python
   metadata_filename: 'mesospim_metadata.json'
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'
@@ -124,7 +122,7 @@ slurm:
     # Should take less than 1 minute to run
     'PARTITION': 'compute,gpu' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 1
-    'JOB_LABEL': 'ms_depends'
+    'JOB_LABEL': 'depends'
     'RAM_GB': 4
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 1
@@ -134,7 +132,7 @@ slurm:
     # Deconvolution tasks require a CUDA GPU
     'PARTITION': 'gpu' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 1
-    'JOB_LABEL': 'ms_decon'
+    'JOB_LABEL': 'decon'
     'RAM_GB': 1300 # Acts of max RAM allocation based on how it is implemented in rl.py
     'GRES': 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1", or shard:4, or None
     'PARALLEL_JOBS': 32 # In a slurm array, how many jobs will run in parallel
@@ -143,7 +141,7 @@ slurm:
   basicpy:
     'PARTITION': 'ai'
     'CPUS': 1
-    'JOB_LABEL': 'ms_basicpy'
+    'JOB_LABEL': 'basicpy'
     'RAM_GB': 512
     'GRES': 'gpu:1'
     'PARALLEL_JOBS': 8
@@ -152,7 +150,7 @@ slurm:
   gain_correction:
     'PARTITION': 'gpu'
     'CPUS': 1
-    'JOB_LABEL': 'ms_gaincorr'
+    'JOB_LABEL': 'gaincorr'
     'RAM_GB': 512
     'GRES':
     'PARALLEL_JOBS': 8
@@ -162,7 +160,7 @@ slurm:
     # MeosSPIM built in alignment tool *align_py.py  ** NOT imaris stitcher **
     'PARTITION': 'compute,gpu' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 24
-    'JOB_LABEL': 'ms_align'
+    'JOB_LABEL': 'align'
     'RAM_GB': 64
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 1
@@ -172,7 +170,7 @@ slurm:
     # WINE-based ImarisConverter for converting MesoSPIM data to ims ** This is not ImarisStitcher **
     'PARTITION': 'compute' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 24
-    'JOB_LABEL': 'ms_ims_conv'
+    'JOB_LABEL': 'ims_conv'
     'RAM_GB': 64
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 20
@@ -182,7 +180,7 @@ slurm:
     # OME-Zarr conversion, uses ome_zarr_multiscale_writer
     'PARTITION': 'compute' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 24
-    'JOB_LABEL': 'dev_omezarr'
+    'JOB_LABEL': 'omezarr'
     'RAM_GB': 64
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 20
@@ -191,24 +189,80 @@ slurm:
   bigstitcher:
     'PARTITION': 'gpu,ai' #multiple partitions can be specified with comma separation part1,par2'
     'CPUS': 56
-    'JOB_LABEL': 'ms_bigstitcher'
+    'JOB_LABEL': 'bigstitcher'
     'RAM_GB': 1000
     'GRES':
     'PARALLEL_JOBS': 4
     'NICE': 0
     'TIME_LIMIT': # Specify a time limit for the job. This can kill jobs that get stuck but small times can also increase priority
+fiji:
+  # 'stable': Fiji stable archive + pinned classic BigStitcher 2.5.3 (reads OME-Zarr v0.4 / zarr v2 only)
+  # 'latest': Fiji-Latest archive + BigStitcher 3.x from update sites (adds OME-Zarr v0.5 sharded / zarr v3 reading)
+  distribution: latest
+
+# Raw-tile OME-Zarr converter (raw BTF -> source zarr, used before decon and stitching)
+omezarr:
+  # OME-Zarr version for the converter. Defaults to what the configured fiji.distribution
+  # can read ('latest' -> 0.5 sharded zarr v3, 'stable' -> 0.4 zarr v2); this key overrides.
+  ome_version: '0.5'
+  # Shard shape (z,y,x) for the source tiles: each shard file holds this many voxels
+  # (~8x fewer files than per-chunk writing). Only applies to 0.5 / zarr v3; ignored for 0.4.
+  shard_shape: [512, 512, 512]
+
 bigstitcher:
   fiji_install_folder: "" # If empty "", will use Fiji installed with mesospim_utils
-  downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
-  downsample_in_y: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
+  # Stage 1 global optimization link filtering thresholds (px)
+  # Tuned by the auto-tune search on delima (winner lr7.0/la5.0, 68.0/100 vs 54.0 for 2.5/3.5):
+  # link_absolute 5.0 is the dominant axis - cuts dropped links to 0-2 at every relative value
+  link_relative: 7.0
+  link_absolute: 5.0
+  # Stage 2 ICP refinement
+  icp_maximum_error: 5
+  icp_lambda: 0.10
+  downsample_in_x: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher. 'overlap' computes the largest lateral downsample keeping the overlap strip >= min_overlap_strip_px
+  downsample_in_y: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher. 'overlap' computes it from the metadata overlap
   downsample_in_z: 'automated' #4 # Controls the downsampling factor in X for Alignment in BigStitcher
-  downsample_refinement: '8/8/4' # 'automated' # Controls the downsampling factor in X/Y/Z for the refinement step in BigStitcher. Suggest 8/8/4 or 4/4/2 for large datasets.
+  # Adaptive overlap-driven downsampling target (px); used when downsample_in_x/y is 'overlap'
+  min_overlap_strip_px: 150
+  downsample_refinement: 'automated' # Controls the downsampling factor in X/Y/Z for the refinement step in BigStitcher. Suggest 8/8/4 or 4/4/2 for large datasets.
+  # DoG detection intensity gating; macro keys verified against BigStitcher 3.0.8. 'off' preserves prior behavior
+  dog_intensity_mode: 'off' # 'off' | 'common' (use_same_min_&_max_intensity_for_all_views=true) | 'fixed' (explicit values below)
+  dog_min_intensity: 0.0
+  dog_max_intensity: 65535.0
+  # Self-calibration guard: warn (or rescale the fused voxel size) when the fitted grid scale differs from 1 by more than the threshold
+  self_calibration_threshold_pct: 2.0
+  self_calibration_correction: true # rescales the fused voxel size when the fitted grid scale differs from 1 by more than self_calibration_threshold_pct
+  # Chromatic aberration correction: the align macro sends how_to_treat_channels=compare so
+  # every (tile, channel) view is registered individually and the global optimizer absorbs the
+  # inter-channel (chromatic) offset into per-view transforms natively (validated on alder:
+  # equal to the external measurement where signal is good, better at weak field edges).
+  # Single-channel datasets are unaffected (compare vs group are identical there). Set false
+  # to keep the grouped-channel behavior with no chromatic correction. The standalone
+  # mesospim_utils/chromatic.py CLI remains available to measure fused residuals or re-correct
+  # a stitched XML without re-aligning.
+  chromatic_correction: true
+  chromatic_reference_channel: 0 # unused by the native compare path; kept for chromatic.py
+  chromatic_quality_threshold: 0.6 # unused by the native compare path; kept for chromatic.py
+  chromatic_max_shift_um: 20.0 # unused by the native compare path; kept for chromatic.py
+  # Fused-output chunking: blocksize = the storage chunk (inner chunk in the sharded
+  # zarr). Small z-chunks keep plane-wise reads cheap (napari, MAX projections, .ims
+  # resampling all read the fused volume plane by plane); x/y sizes trade request
+  # count vs per-request overhead.
+  # blocksize_factor = how many chunks are fused and written at once (the compute
+  # block). With sharding enabled, each compute block becomes one shard file, so
+  # shard size = blocksize * blocksize_factor per axis (here 256x256x16 * 2/2/32 =
+  # 512x512x512 voxels, ~256 MB). Larger factors give fewer, larger shards - better
+  # write throughput on beegfs but more RAM per block; 512^3 is the measured sweet spot.
   blocksize_x: 256
   blocksize_y: 256
-  blocksize_z: 256
+  blocksize_z: 16
   blocksize_factor_x: 2
   blocksize_factor_y: 2
-  blocksize_factor_z: 2
+  blocksize_factor_z: 32
+  # Sharded OME-Zarr v0.5 fused output: writes each compute block as one shard file
+  # (~8x fewer files than per-chunk writing). Macro key verified against the
+  # multiview-reconstruction 9.0.12 dialog.
+  enable_sharding: true
   subsampling_factors: 'automated' # "{{1,1,1}, {2,2,2}, {4,4,4}, {8,8,8}, {16,16,16}, {32,32,32}}"
   ram_fraction: 0.95 # 0-1, Fraction of allocated RAM to allocate to bigstitcher Java heap
 

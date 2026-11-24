@@ -15,6 +15,7 @@ import os
 import shutil
 import json
 import re
+from datetime import datetime
 
 # Installed Package imports
 import zarr
@@ -22,6 +23,7 @@ import zarr
 # Local imports
 from metadata import collect_all_metadata, get_first_entry, get_number_of_sheets, get_rotations, modify_file_names_in_annotated_metadata
 from utils import ensure_path
+from bigstitcher_scoring import score_from_xml, dominant_scale_offset
 
 from constants import (
 DOWNSAMPLE_IN_X,
@@ -34,16 +36,129 @@ BLOCKSIZE_Z,
 BLOCKSIZE_FACTOR_X,
 BLOCKSIZE_FACTOR_Y,
 BLOCKSIZE_FACTOR_Z,
-SUBSAMPLING_FACTORS
+SUBSAMPLING_FACTORS,
+BIGSTITCHER_LINK_RELATIVE,
+BIGSTITCHER_LINK_ABSOLUTE,
+BIGSTITCHER_ICP_MAXIMUM_ERROR,
+BIGSTITCHER_ICP_LAMBDA,
+BIGSTITCHER_MIN_OVERLAP_STRIP_PX,
+BIGSTITCHER_DOG_INTENSITY_MODE,
+BIGSTITCHER_DOG_MIN_INTENSITY,
+BIGSTITCHER_DOG_MAX_INTENSITY,
+BIGSTITCHER_SELF_CALIBRATION_THRESHOLD_PCT,
+BIGSTITCHER_SELF_CALIBRATION_CORRECTION,
+BIGSTITCHER_CHROMATIC_CORRECTION,
+BIGSTITCHER_ENABLE_SHARDING,
+OMEZARR_OME_VERSION
 )
 
 from bigstitcher_macro_templates import (
     BIGSTITCHER_ALIGN_OMEZARR_OUT,
-    BIGSTITCHER_ALIGN_HDF5_OUT
+    BIGSTITCHER_ALIGN_HDF5_OUT,
+    BIGSTITCHER_ALIGN_ONLY_OUT,
+    BIGSTITCHER_FUSE_ONLY_OMEZARR_OUT,
+    BIGSTITCHER_FUSE_ONLY_HDF5_OUT
 )
 
 # INIT typer cmdline interface
 app = typer.Typer()
+
+
+def _dog_intensity_kwargs():
+    '''Macro kwargs for the DoG detection intensity gating, from config.
+
+    ``dog_intensity_first``/``dog_intensity_sub`` fill the two placeholder
+    sites of every detection stage; the trailing spaces matter because the
+    template joins lines with single spaces, so empty values keep the macro
+    byte-identical to the ungated one. Macro keys verified against the
+    installed BigStitcher 3.0.8 / multiview-reconstruction 9.0.12 dialogs and
+    upstream DifferenceOfGUI.java.
+    '''
+    mode = str(BIGSTITCHER_DOG_INTENSITY_MODE).lower()
+    if mode == 'fixed':
+        first = 'set_minimal_and_maximal_intensity=true '
+        sub = f'minimal_intensity={BIGSTITCHER_DOG_MIN_INTENSITY:g} maximal_intensity={BIGSTITCHER_DOG_MAX_INTENSITY:g} '
+    elif mode == 'common':
+        first = ''
+        sub = 'use_same_min_&_max_intensity_for_all_views=true '
+    else:
+        first = ''
+        sub = ''
+    return {
+        'dog_intensity_first': first,
+        'dog_intensity_sub': sub,
+        'dog_intensity_mode': mode,
+        'dog_min_intensity': f'{BIGSTITCHER_DOG_MIN_INTENSITY:g}',
+        'dog_max_intensity': f'{BIGSTITCHER_DOG_MAX_INTENSITY:g}',
+    }
+
+
+def _resolve_overlap_downsampling(input_omezarr_xml_path: Path):
+    '''Adaptive STAGE 1 downsampling from the metadata overlap.
+
+    strip_px = tile_px * overlap / downsample; choose the largest lateral
+    downsample keeping the strip >= min_strip_px. z is never downsampled for
+    alignment. Reads the annotated metadata JSON next to the XML (overlap,
+    tile_shape).
+    '''
+    xml_path = ensure_path(input_omezarr_xml_path)
+    metadata_path = xml_path.parent / 'mesospim_annotated_metadata.json'
+    if not metadata_path.exists():
+        raise FileNotFoundError(f'annotated metadata not found for adaptive overlap downsampling: {metadata_path}')
+    metadata = json.loads(metadata_path.read_text())
+    entry = get_first_entry(metadata)
+    overlap = float(entry.get('overlap'))
+    tile_shape = entry.get('tile_shape')
+    if not tile_shape or len(tile_shape) < 3 or overlap <= 0:
+        raise ValueError(f'cannot resolve overlap downsampling from metadata: overlap={overlap}, tile_shape={tile_shape}')
+
+    tile_px = float(tile_shape[-1])
+    downsample = 1
+    while (tile_px * overlap / (downsample * 2)) >= BIGSTITCHER_MIN_OVERLAP_STRIP_PX:
+        downsample *= 2
+    print(f'adaptive overlap downsampling: tile {tile_px:g}px, overlap {overlap:g} -> {downsample}x (strip {tile_px * overlap / downsample:g}px >= {BIGSTITCHER_MIN_OVERLAP_STRIP_PX:g}px)')
+    return downsample, downsample, 1
+
+
+def _resolve_automated_sampling(
+    input_omezarr_xml_path: Path,
+    downsample_in_x: str,
+    downsample_in_y: str,
+    downsample_in_z: str,
+    subsampling_factors: str,
+    downsample_refinement: str,
+):
+    automated_downsample = any([x.lower() == 'automated' for x in [downsample_in_x, downsample_in_y, downsample_in_z]])
+    overlap_downsample = any([str(x).lower() == 'overlap' for x in [downsample_in_x, downsample_in_y, downsample_in_z]])
+    automated_subsampling = subsampling_factors.lower() == 'automated'
+    automated_refinement_sampling = downsample_refinement.lower() == 'automated'
+
+    if overlap_downsample:
+        downsample_in_x, downsample_in_y, downsample_in_z = _resolve_overlap_downsampling(input_omezarr_xml_path)
+
+    if (automated_downsample or automated_subsampling or automated_refinement_sampling) and not overlap_downsample:
+        _, scale_factors_list_zyx, subsampling_str = determine_sampling_factors_for_bigstitcher(input_omezarr_xml_path)
+        sampling_num_max_idx = len(scale_factors_list_zyx) - 1
+
+    if automated_subsampling:
+        subsampling_factors = subsampling_str
+
+    if automated_downsample:
+        scale_for_downsample_zyx = scale_factors_list_zyx[2 if sampling_num_max_idx >= 2 else sampling_num_max_idx]  # 3rd downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
+        downsample_in_x = scale_for_downsample_zyx[2]
+        downsample_in_y = scale_for_downsample_zyx[1]
+        downsample_in_z = scale_for_downsample_zyx[0]
+
+    if automated_refinement_sampling:
+        # Setup 3 stage refinement for channel alignment
+        # Start on level 5 (~16x in xy, if it exists) for initial coarse alignment, then level 4 for medium refinement, then level 3 for fine refinement
+        starting_level = 4 if sampling_num_max_idx >= 4 else sampling_num_max_idx
+        starting_level += 1
+        downsample_refinement = list(reversed(scale_factors_list_zyx[starting_level-3:starting_level]))  # 5th downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
+        # downsample_refinement list of tuples lowest res to highest res [(8,8,4),(4,4,2),(2,2,1)]
+        print(f'{downsample_refinement=}')
+
+    return downsample_in_x, downsample_in_y, downsample_in_z, subsampling_factors, downsample_refinement
 
 
 def get_bigstitcher_omezarr_alignment_marco(
@@ -68,31 +183,8 @@ def get_bigstitcher_omezarr_alignment_marco(
     If given path_to_write_macro, also write the macro to that path
     '''
 
-    automated_downsample = any([x.lower() == 'automated' for x in [downsample_in_x, downsample_in_y, downsample_in_z]])
-    automated_subsampling = subsampling_factors.lower() == 'automated'
-    automated_refinement_sampling = downsample_refinement.lower() == 'automated'
-
-    if automated_downsample or automated_subsampling or automated_refinement_sampling:
-        _, scale_factors_list_zyx, subsampling_str = determine_sampling_factors_for_bigstitcher(input_omezarr_xml_path)
-        sampling_num_max_idx = len(scale_factors_list_zyx) - 1
-
-    if automated_subsampling:
-        subsampling_factors = subsampling_str
-
-    if automated_downsample:
-        scale_for_downsample_zyx = scale_factors_list_zyx[2 if sampling_num_max_idx >= 2 else sampling_num_max_idx]  # 3rd downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
-        downsample_in_x = scale_for_downsample_zyx[2]
-        downsample_in_y = scale_for_downsample_zyx[1]
-        downsample_in_z = scale_for_downsample_zyx[0]
-
-    if automated_refinement_sampling:
-        # Setup 3 stage refinement for channel alignment
-        # Start on level 5 (~16x in xy, if it exists) for initial coarse alignment, then level 4 for medium refinement, then level 3 for fine refinement
-        starting_level = 4 if sampling_num_max_idx >= 4 else sampling_num_max_idx
-        starting_level += 1
-        downsample_refinement = list(reversed(scale_factors_list_zyx[starting_level-3:starting_level]))  # 5th downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
-        # downsample_refinement list of tuples lowest res to highest res [(8,8,4),(4,4,2),(2,2,1)]
-        print(f'{downsample_refinement=}')
+    downsample_in_x, downsample_in_y, downsample_in_z, subsampling_factors, downsample_refinement = _resolve_automated_sampling(
+        input_omezarr_xml_path, downsample_in_x, downsample_in_y, downsample_in_z, subsampling_factors, downsample_refinement)
 
 
     macro = BIGSTITCHER_ALIGN_OMEZARR_OUT.format(
@@ -113,8 +205,18 @@ def get_bigstitcher_omezarr_alignment_marco(
         downsample_refinement[1][2], # Second y
         downsample_refinement[1][0], # Second z
         downsample_refinement[2][2], # Third y
-        downsample_refinement[2][0]  # Third z
+        downsample_refinement[2][0], # Third z
+        link_relative=f"{BIGSTITCHER_LINK_RELATIVE:.3f}",
+        link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
+        icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
+        icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}",
+        enable_sharding_line=("enable_sharding \\\n" if BIGSTITCHER_ENABLE_SHARDING else ""),
+        **_dog_intensity_kwargs()
     )
+    if BIGSTITCHER_CHROMATIC_CORRECTION:
+        # compare grouping lets the global optimizer absorb the inter-channel
+        # (chromatic) offset into per-(tile, channel) transforms
+        macro = macro.replace('how_to_treat_channels=group', 'how_to_treat_channels=compare')
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:
             f.write(macro)
@@ -142,32 +244,8 @@ def get_bigstitcher_hdf5_alignment_marco(
     If given path_to_write_macro, also write the macro to that path
     '''
 
-    automated_downsample = any([x.lower() == 'automated' for x in [downsample_in_x, downsample_in_y, downsample_in_z]])
-    automated_subsampling = subsampling_factors.lower() == 'automated'
-    automated_refinement_sampling = downsample_refinement.lower() == 'automated'
-
-    if automated_downsample or automated_subsampling or automated_refinement_sampling:
-        _, scale_factors_list_zyx, subsampling_str = determine_sampling_factors_for_bigstitcher(input_omezarr_xml_path)
-        sampling_num_max_idx = len(scale_factors_list_zyx) - 1
-
-    if automated_subsampling:
-        subsampling_factors = subsampling_str
-
-    if automated_downsample:
-        scale_for_downsample_zyx = scale_factors_list_zyx[2 if sampling_num_max_idx>=2 else sampling_num_max_idx]  # 3rd downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
-        downsample_in_x = scale_for_downsample_zyx[2]
-        downsample_in_y = scale_for_downsample_zyx[1]
-        downsample_in_z = scale_for_downsample_zyx[0]
-
-    if automated_refinement_sampling:
-        # Setup 3 stage refinement for channel alignment
-        # Start on level 5 (~16x in xy, if it exists) for initial coarse alignment, then level 4 for medium refinement, then level 3 for fine refinement
-        starting_level = 4 if sampling_num_max_idx >= 4 else sampling_num_max_idx
-        starting_level += 1
-        downsample_refinement = list(reversed(scale_factors_list_zyx[
-                                                  starting_level - 3:starting_level]))  # 5th downsample factor (1,1,1),(2,2,1),(4,4,2),(8,8,4)
-        # downsample_refinement list of tuples lowest res to highest res [(8,8,4),(4,4,2),(2,2,1)]
-        print(f'{downsample_refinement=}')
+    downsample_in_x, downsample_in_y, downsample_in_z, subsampling_factors, downsample_refinement = _resolve_automated_sampling(
+        input_omezarr_xml_path, downsample_in_x, downsample_in_y, downsample_in_z, subsampling_factors, downsample_refinement)
 
 
     macro = BIGSTITCHER_ALIGN_HDF5_OUT.format(
@@ -188,8 +266,15 @@ def get_bigstitcher_hdf5_alignment_marco(
         downsample_refinement[1][2],  # Second y
         downsample_refinement[1][0],  # Second z
         downsample_refinement[2][2],  # Third y
-        downsample_refinement[2][0]  # Third z
+        downsample_refinement[2][0],  # Third z
+        link_relative=f"{BIGSTITCHER_LINK_RELATIVE:.3f}",
+        link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
+        icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
+        icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}",
+        **_dog_intensity_kwargs()
     )
+    if BIGSTITCHER_CHROMATIC_CORRECTION:
+        macro = macro.replace('how_to_treat_channels=group', 'how_to_treat_channels=compare')
     if path_to_write_macro:
         with open(path_to_write_macro, 'w') as f:
             f.write(macro)
@@ -253,7 +338,11 @@ def is_bigstitcher_log_successful(log_dir: Path, fused_output_path: Path=None) -
         re.IGNORECASE,
     )
 
-    for log_file in sorted(log_dir.glob('*_align_fuse_bigstitcher.log')):
+    log_files = sorted([
+        *log_dir.glob('*_align_fuse_bigstitcher.log'),
+        *log_dir.glob('*_align_fuse_bigstitcher_chromatic.log'),
+    ])
+    for log_file in log_files:
         try:
             content = log_file.read_text(errors='ignore')
         except (OSError, IOError):
@@ -401,13 +490,17 @@ def is_bigstitcher_omezarr_scale_metadata_complete(source_xml_or_dir: Path, fuse
         omezarr_xml = ensure_path(omezarr_xml)
 
     target_zattr_path = fused_omezarr_path / '.zattrs'
-    if not target_zattr_path.is_file():
-        return False
+    zarr_v3 = not target_zattr_path.is_file()
+    if zarr_v3:
+        target_zattr_path = fused_omezarr_path / 'zarr.json'
+        if not target_zattr_path.is_file():
+            return False
 
     try:
         scales_list_zyx, _, _ = determine_sampling_factors_for_bigstitcher(omezarr_xml)
         target_zattr = json.loads(target_zattr_path.read_text())
-        datasets = target_zattr.get('multiscales', [])[0].get('datasets', [])
+        ome_metadata = target_zattr.get('attributes', {}).get('ome', {}) if zarr_v3 else target_zattr
+        datasets = ome_metadata.get('multiscales', [])[0].get('datasets', [])
     except Exception:
         return False
 
@@ -498,7 +591,144 @@ def should_skip_bigstitcher_run(dir_loc: Path, fused_file_type: str, final_file_
     return False, ''
 
 @app.command()
-def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr'):
+def get_bigstitcher_align_only_macro(
+    input_omezarr_xml_path: Path,
+    path_to_write_macro: Path=None,
+    downsample_in_x: str=DOWNSAMPLE_IN_X,
+    downsample_in_y: str=DOWNSAMPLE_IN_Y,
+    downsample_in_z: str=DOWNSAMPLE_IN_Z,
+    downsample_refinement: str=DOWNSAMPLE_REFINEMENT
+):
+    '''
+    Generate BigStitcher macro for STAGE 1 (pairwise shifts + global optimization) and
+    STAGE 2 (interest point detection + ICP refinement) only, without fusion. The
+    registrations are written into the input XML; fusion runs separately with
+    get_bigstitcher_omezarr_fuse_only_macro / get_bigstitcher_hdf5_fuse_only_macro.
+    '''
+
+    downsample_in_x, downsample_in_y, downsample_in_z, _, downsample_refinement = _resolve_automated_sampling(
+        input_omezarr_xml_path, downsample_in_x, downsample_in_y, downsample_in_z, 'not_automated', downsample_refinement)
+
+    macro = BIGSTITCHER_ALIGN_ONLY_OUT.format(
+        ensure_path(input_omezarr_xml_path).as_posix(),
+        downsample_in_x,
+        downsample_in_y,
+        downsample_in_z,
+        None,  # fused output path (unused in align-only)
+        None, None, None,  # block sizes (unused)
+        None, None, None,  # block factors (unused)
+        None,  # subsampling factors (unused)
+        downsample_refinement[0][2], # First y
+        downsample_refinement[0][0], # First z
+        downsample_refinement[1][2], # Second y
+        downsample_refinement[1][0], # Second z
+        downsample_refinement[2][2], # Third y
+        downsample_refinement[2][0], # Third z
+        link_relative=f"{BIGSTITCHER_LINK_RELATIVE:.3f}",
+        link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
+        icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
+        icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}",
+        enable_sharding_line=("enable_sharding \\\n" if BIGSTITCHER_ENABLE_SHARDING else ""),
+        **_dog_intensity_kwargs()
+    )
+    if BIGSTITCHER_CHROMATIC_CORRECTION:
+        macro = macro.replace('how_to_treat_channels=group', 'how_to_treat_channels=compare')
+    if path_to_write_macro:
+        with open(path_to_write_macro, 'w') as f:
+            f.write(macro)
+    return macro
+
+
+def get_bigstitcher_omezarr_fuse_only_macro(
+    input_omezarr_xml_path: Path,
+    output_omezarr_path: Path,
+    path_to_write_macro: Path=None,
+    block_size_x: int=BLOCKSIZE_X,
+    block_size_y: int=BLOCKSIZE_Y,
+    block_size_z: int=BLOCKSIZE_Z,
+    block_size_factor_x: int=BLOCKSIZE_FACTOR_X,
+    block_size_factor_y: int=BLOCKSIZE_FACTOR_Y,
+    block_size_factor_z: int=BLOCKSIZE_FACTOR_Z,
+    subsampling_factors: str=SUBSAMPLING_FACTORS
+):
+    '''
+    Generate BigStitcher macro for STAGE 3 (OME-Zarr fusion) only. The input XML must
+    already carry the stitched registrations from an align-only run.
+    '''
+
+    _, _, _, subsampling_factors, _ = _resolve_automated_sampling(
+        input_omezarr_xml_path, 'not_automated', 'not_automated', 'not_automated', subsampling_factors, 'not_automated')
+
+    macro = BIGSTITCHER_FUSE_ONLY_OMEZARR_OUT.format(
+        ensure_path(input_omezarr_xml_path).as_posix(),
+        None, None, None,  # downsample x/y/z (unused in fuse-only)
+        ensure_path(output_omezarr_path).as_posix(),
+        block_size_x,
+        block_size_y,
+        block_size_z,
+        block_size_factor_x,
+        block_size_factor_y,
+        block_size_factor_z,
+        subsampling_factors,
+        None, None, None, None, None, None,  # refinement y/z (unused)
+        link_relative=f"{BIGSTITCHER_LINK_RELATIVE:.3f}",
+        link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
+        icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
+        icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}",
+        enable_sharding_line=("enable_sharding \\\n" if BIGSTITCHER_ENABLE_SHARDING else ""),
+        **_dog_intensity_kwargs()
+    )
+    if path_to_write_macro:
+        with open(path_to_write_macro, 'w') as f:
+            f.write(macro)
+    return macro
+
+
+def get_bigstitcher_hdf5_fuse_only_macro(
+    input_omezarr_xml_path: Path,
+    output_omezarr_path: Path,
+    path_to_write_macro: Path=None,
+    block_size_x: int=BLOCKSIZE_X,
+    block_size_y: int=BLOCKSIZE_Y,
+    block_size_z: int=BLOCKSIZE_Z,
+    block_size_factor_x: int=BLOCKSIZE_FACTOR_X,
+    block_size_factor_y: int=BLOCKSIZE_FACTOR_Y,
+    block_size_factor_z: int=BLOCKSIZE_FACTOR_Z,
+    subsampling_factors: str=SUBSAMPLING_FACTORS
+):
+    '''
+    Generate BigStitcher macro for STAGE 3 (HDF5 fusion) only. The input XML must
+    already carry the stitched registrations from an align-only run.
+    '''
+
+    _, _, _, subsampling_factors, _ = _resolve_automated_sampling(
+        input_omezarr_xml_path, 'not_automated', 'not_automated', 'not_automated', subsampling_factors, 'not_automated')
+
+    macro = BIGSTITCHER_FUSE_ONLY_HDF5_OUT.format(
+        ensure_path(input_omezarr_xml_path).as_posix(),
+        None, None, None,  # downsample x/y/z (unused in fuse-only)
+        ensure_path(output_omezarr_path).as_posix(),
+        block_size_x,
+        block_size_y,
+        block_size_z,
+        block_size_factor_x,
+        block_size_factor_y,
+        block_size_factor_z,
+        subsampling_factors,
+        None, None, None, None, None, None,  # refinement y/z (unused)
+        link_relative=f"{BIGSTITCHER_LINK_RELATIVE:.3f}",
+        link_absolute=f"{BIGSTITCHER_LINK_ABSOLUTE:.3f}",
+        icp_maximum_error=str(BIGSTITCHER_ICP_MAXIMUM_ERROR),
+        icp_lambda=f"{BIGSTITCHER_ICP_LAMBDA:.2f}",
+        **_dog_intensity_kwargs()
+    )
+    if path_to_write_macro:
+        with open(path_to_write_macro, 'w') as f:
+            f.write(macro)
+    return macro
+
+
+def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr', stages: str='align+fuse'):
     '''
     Takes path where bigstitcher metadata xml and
     makes a bigsitcher dir, backup of xml file,
@@ -516,15 +746,13 @@ def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr'):
     bigstitcher_dir = path / 'bigstitcher'
     bigstitcher_dir.mkdir(parents=True, exist_ok=True)
     backup_xml = bigstitcher_dir / (omezarr_xml.name + '.backup')
-
-    if backup_xml.exists() and not os.access(backup_xml, os.W_OK):
-        backup_index = 1
-        while True:
-            candidate_backup = bigstitcher_dir / f'{omezarr_xml.name}.backup.{backup_index}'
-            if not candidate_backup.exists():
-                backup_xml = candidate_backup
-                break
-            backup_index += 1
+    if backup_xml.exists():
+        # The first .backup is the true original (pre-any-alignment) and is
+        # write-once: each align run re-saves the stitched XML over the source
+        # path (mvrecon's .xml~N rotation), so a later run's source XML may be
+        # a stitched state. Repeated runs keep their pre-run state under
+        # timestamped backups; the original is never overwritten.
+        backup_xml = bigstitcher_dir / f'{omezarr_xml.name}.backup.{datetime.now().strftime("%Y%m%d-%H%M%S")}'
 
     shutil.copyfile(omezarr_xml, backup_xml)
 
@@ -532,10 +760,23 @@ def make_bigstitcher_slurm_dir_and_macro(path: Path, format: str='omezarr'):
     fused_out_dir_or_file = get_bigstitcher_fused_output_path(path, format=format)
 
     # Writes macro file
-    if format == 'omezarr':
-        _ = get_bigstitcher_omezarr_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
-    elif format == 'hdf5':
-        _ = get_bigstitcher_hdf5_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
+    if stages == 'align+fuse':
+        macro_file = bigstitcher_dir / 'macro.ijm'
+        if format == 'omezarr':
+            _ = get_bigstitcher_omezarr_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
+        elif format == 'hdf5':
+            _ = get_bigstitcher_hdf5_alignment_marco(omezarr_xml, fused_out_dir_or_file, macro_file)
+    elif stages == 'align':
+        macro_file = bigstitcher_dir / 'macro_align.ijm'
+        _ = get_bigstitcher_align_only_macro(omezarr_xml, macro_file)
+    elif stages == 'fuse':
+        macro_file = bigstitcher_dir / 'macro_fuse.ijm'
+        if format == 'omezarr':
+            _ = get_bigstitcher_omezarr_fuse_only_macro(omezarr_xml, fused_out_dir_or_file, macro_file)
+        elif format == 'hdf5':
+            _ = get_bigstitcher_hdf5_fuse_only_macro(omezarr_xml, fused_out_dir_or_file, macro_file)
+    else:
+        raise ValueError(f'Unsupported BigStitcher stages: {stages} (use align+fuse, align, or fuse)')
 
     return bigstitcher_dir, fused_out_dir_or_file, macro_file
 
@@ -577,8 +818,12 @@ def list_mesospim_ome_zarr_zattrs(path_to_mesospim_omezarr:Path):
     '''
     path_to_mesospim_omezarr = ensure_path(path_to_mesospim_omezarr)
     tile_dir_list = list_mesospim_ome_zarr_tile_dirs(path_to_mesospim_omezarr)
+    # v2 sources carry .zattrs; sharded OME-Zarr 0.5 sources carry zarr.json
     zattrs_list = [x / '.zattrs' for x in tile_dir_list]
     zattrs_list = [x for x in zattrs_list if x.is_file()]
+    if not zattrs_list:
+        zattrs_list = [x / 'zarr.json' for x in tile_dir_list]
+        zattrs_list = [x for x in zattrs_list if x.is_file()]
     return zattrs_list
 
 @app.command()
@@ -592,7 +837,10 @@ def determine_sampling_factors_for_bigstitcher(omezarr_xml_path: Path) -> tuple[
     zattrs_list = list_mesospim_ome_zarr_zattrs(zarr_dir)
     zattr_file = zattrs_list[0]
     zattr_data = json.loads(zattr_file.read_text())
-    multiscales_dict = zattr_data.get('multiscales',[])[0]
+    # v2: multiscales at the top level; v3: nested under attributes.ome
+    multiscales_dict = zattr_data.get('multiscales') or \
+        zattr_data.get('attributes', {}).get('ome', {}).get('multiscales', [])
+    multiscales_dict = (multiscales_dict or [{}])[0]
     datasets_list = multiscales_dict.get('datasets',[])
 
     # Extract a list of scales for each multiscale
@@ -662,19 +910,125 @@ def adjust_scale_in_bigstitcher_produced_ome_zarr(omezarr_xml_or_acquisition_pat
         omezarr_xml = ensure_path(omezarr_xml)
 
     scales_list_zyx, _, _ = determine_sampling_factors_for_bigstitcher(omezarr_xml)
+    # zarr v2 stores OME multiscales in .zattrs; zarr v3 (mvrecon >= 9) stores
+    # them in the root zarr.json under attributes.ome
     target_zattr_path = omezarr_produced_by_bigstitcher_path / '.zattrs'
-    target_zattr = json.loads(target_zattr_path.read_text())
+    v3_root_json = None
+    if not target_zattr_path.exists():
+        v3_root_json = omezarr_produced_by_bigstitcher_path / 'zarr.json'
+        if not v3_root_json.exists():
+            raise FileNotFoundError(f'no .zattrs or zarr.json under {omezarr_produced_by_bigstitcher_path}')
+        target_zattr = json.loads(v3_root_json.read_text())
+    else:
+        target_zattr = json.loads(target_zattr_path.read_text())
     print(f'{target_zattr=}')
 
-    for dataset in target_zattr.get('multiscales',[])[0].get('datasets',[]):
+    # v2: multiscales at the top level; v3: nested under attributes.ome
+    multiscales = target_zattr.get('multiscales')
+    if multiscales is None:
+        multiscales = target_zattr.get('attributes', {}).get('ome', {}).get('multiscales', [])
+    for dataset in multiscales[0].get('datasets',[]) if multiscales else []:
         idx = dataset.get('path')
         idx = int(idx)
         dataset['coordinateTransformations'][0]['scale'] = [1,1] + scales_list_zyx[idx]
 
     print(f'{target_zattr=}')
 
-    with open(target_zattr_path, "w") as json_file:
+    if v3_root_json is not None:
+        with open(v3_root_json, "w") as json_file:
+            json.dump(target_zattr, json_file, indent=4)
+    else:
+        with open(target_zattr_path, "w") as json_file:
+            json.dump(target_zattr, json_file, indent=4)
+
+
+def apply_self_calibration_guard(stitched_xml_or_acquisition_path: Path, fused_omezarr_path: Path):
+    '''Self-calibration guard: compare the stitched XML's fitted grid scale
+    against 1.0 and rescale the fused output voxel size when the zoom/ETL
+    miscalibration exceeds the configured threshold.
+
+    The fitted scale s = measured content step / metadata step, so the true
+    pixel size is nominal_px / s; the fused output's scale array (um per px)
+    is divided by s per fitted axis. Always prints the measured offset; the
+    correction itself only runs when BIGSTITCHER_SELF_CALIBRATION_CORRECTION
+    is true. Nothing happens when no axis has a resolvable fit.
+    '''
+    stitched_xml_or_acquisition_path = ensure_path(stitched_xml_or_acquisition_path)
+    if stitched_xml_or_acquisition_path.is_dir():
+        stitched_xml_path = does_dir_contain_bigstitcher_metadata(stitched_xml_or_acquisition_path)
+        if stitched_xml_path is None:
+            print(f'SELF-CALIBRATION GUARD: no bigstitcher xml under {stitched_xml_or_acquisition_path}')
+            return
+    else:
+        stitched_xml_path = stitched_xml_or_acquisition_path
+    fused_omezarr_path = ensure_path(fused_omezarr_path)
+    try:
+        xml_metrics = score_from_xml(stitched_xml_path)
+    except (ValueError, ET.ParseError) as exc:
+        print(f'SELF-CALIBRATION GUARD: could not score {stitched_xml_path}: {type(exc).__name__}: {exc}')
+        return
+
+    offsets = {axis: a.get('scale_offset_pct') for axis, a in xml_metrics['axes'].items()
+               if isinstance(a, dict) and a.get('scale_offset_pct') is not None}
+    if not offsets:
+        print('SELF-CALIBRATION GUARD: no axis with a resolvable grid fit, nothing to check')
+        return
+
+    for axis, offset in offsets.items():
+        print(f'SELF-CALIBRATION GUARD: fitted grid scale offset {axis}: {offset:+.2f}% (threshold {BIGSTITCHER_SELF_CALIBRATION_THRESHOLD_PCT:g}%)')
+
+    axes_to_correct = {axis: offset for axis, offset in offsets.items()
+                       if abs(offset) > BIGSTITCHER_SELF_CALIBRATION_THRESHOLD_PCT}
+    if not axes_to_correct:
+        return
+
+    if abs(max(axes_to_correct.values(), key=abs)) > 10.0:
+        print(f'SELF-CALIBRATION GUARD WARNING: grid miscalibration exceeds 10% ({max(axes_to_correct.values(), key=abs):+.2f}%) - '
+              'the stitched registration is likely unreliable; recalibrate the zoom/ETL pixel size before trusting this volume')
+
+    if not BIGSTITCHER_SELF_CALIBRATION_CORRECTION:
+        print(f'SELF-CALIBRATION GUARD WARNING: grid miscalibration {max(axes_to_correct.values(), key=abs):+.2f}% > '
+              f'{BIGSTITCHER_SELF_CALIBRATION_THRESHOLD_PCT:g}% - fused volumes are produced at the NOMINAL pixel size; '
+              'physical measurements from them are systematically mis-scaled. Enable bigstitcher.self_calibration_correction '
+              'to rescale the fused output voxel size, or recalibrate the zoom/ETL lookup')
+        return
+
+    target_zattr_path = fused_omezarr_path / '.zattrs'
+    zarr_v3 = False
+    if not target_zattr_path.exists():
+        target_zattr_path = fused_omezarr_path / 'zarr.json'
+        zarr_v3 = True
+    if not target_zattr_path.exists():
+        print(f'SELF-CALIBRATION GUARD WARNING: no .zattrs or zarr.json under {fused_omezarr_path}, cannot correct voxel size')
+        return
+
+    target_zattr = json.loads(target_zattr_path.read_text())
+    # Zarr v2 .zattrs carries multiscales/axes at the top level; Zarr v3
+    # zarr.json nests both under attributes.ome (the OME multiscales metadata)
+    ome = target_zattr.get('attributes', {}).get('ome', {}) if zarr_v3 else target_zattr
+    multiscales_list = ome.get('multiscales', [])
+    if not multiscales_list:
+        print(f'SELF-CALIBRATION GUARD WARNING: no multiscales metadata in {target_zattr_path}, cannot correct voxel size')
+        return
+    scales = multiscales_list[0]
+    # axes are strings (v2 zattrs) or dicts with a name key (v3 zarr.json)
+    axis_names = [str(a.get('name') if isinstance(a, dict) else a).lower() for a in scales.get('axes', [])]
+    corrected = 0
+    for dataset in scales.get('datasets', []):
+        transform = dataset.get('coordinateTransformations', [{}])[0]
+        scale = transform.get('scale')
+        if not scale:
+            continue
+        for axis, offset in axes_to_correct.items():
+            if axis in axis_names:
+                idx = axis_names.index(axis)
+                if idx < len(scale) and scale[idx] != 0:
+                    scale[idx] = scale[idx] / (1.0 + offset / 100.0)
+                    corrected += 1
+    with open(target_zattr_path, 'w') as json_file:
         json.dump(target_zattr, json_file, indent=4)
+    print(f'SELF-CALIBRATION GUARD: corrected fused output voxel size by the fitted grid scale '
+          f'({corrected} axis entries across {len(scales.get("datasets", []))} datasets) in {target_zattr_path}')
 
 
 from xml.etree import ElementTree as ET
@@ -829,6 +1183,10 @@ def mesospim_metadata_to_bigstitcher_xml(
     imageloader = ET.SubElement(sequence_description, 'ImageLoader')
     imageloader.set('format', 'bdv.multimg.zarr')
     imageloader.set('version', '3.0')
+    # The declared zarr version must match the converter's output: sharded
+    # OME-Zarr 0.5 sources are zarr v3 groups (zarr.json, no .zattrs) - the
+    # bdv.multimg.zarr loader reads null multiscales if the XML says ZarrV2.
+    imageloader.set('zarr.version', 'ZarrV3' if OMEZARR_OME_VERSION == '0.5' else 'ZarrV2')
 
     # spimdata/SequenceDescription/ViewSetups:
     viewsetups = ET.SubElement(sequence_description, 'ViewSetups')
@@ -1039,6 +1397,15 @@ def mesospim_metadata_to_bigstitcher_xml(
         xml_declaration=True
     )
     print(f'Completed writing bigstitcher xml to {output_xml_path}')
+
+
+@app.command()
+def apply_self_calibration_guard_cli(
+    stitched_xml_or_acquisition_path: Path = typer.Argument(..., help='Stitched bigstitcher xml or the acquisition/scan directory holding it'),
+    fused_omezarr_path: Path = typer.Argument(..., help='Fused montage OME-Zarr whose voxel size gets rescaled when correcting'),
+):
+    '''Warn on (or correct) the zoom/ETL pixel-size miscalibration measured from the stitched XML'''
+    apply_self_calibration_guard(stitched_xml_or_acquisition_path, fused_omezarr_path)
 
 
 @app.command()

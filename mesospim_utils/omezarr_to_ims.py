@@ -4,8 +4,27 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
 import argparse
+import ctypes
 import math
+import os
+import sys
 import time
+
+# PyImarisWriter's Linux wrapper is pure Python, but its native library lives in
+# the separate conda environment. Load that library before NumPy/Zarr so its
+# C++ dependencies are resolved from the PyImarisWriter environment.
+pyiw_site_packages = os.environ.get('MESOSPIM_PYIW_SITE_PACKAGES')
+if pyiw_site_packages:
+    library = Path(pyiw_site_packages) / 'PyImarisWriter' / 'libbpImarisWriter96.so'
+    if not library.is_file():
+        raise FileNotFoundError(f'PyImarisWriter library not found: {library}')
+    try:
+        ctypes.CDLL(str(library))
+    except OSError as error:
+        raise RuntimeError(f'Could not load PyImarisWriter library {library}: {error}') from error
+    # Append, rather than prepend: the reader must use this interpreter's Zarr 3,
+    # not the Zarr 2 installed alongside PyImarisWriter.
+    sys.path.append(pyiw_site_packages)
 
 import numpy as np
 import zarr
@@ -126,6 +145,12 @@ def omezarr_to_ims_multichannel_parallel(
     working_path = output_path.with_suffix('.ims.part')
     if working_path.exists():
         working_path.unlink()
+
+    if (input_path / 'zarr.json').is_file() and int(zarr.__version__.split('.')[0]) < 3:
+        raise RuntimeError(
+            f'{input_path} is Zarr v3, but this interpreter has Zarr {zarr.__version__}. '
+            'Use the automated IMS launcher with a Zarr 3-capable Python environment.'
+        )
 
     root = zarr.open_group(str(input_path), mode='r')
     source = root[str(level)]

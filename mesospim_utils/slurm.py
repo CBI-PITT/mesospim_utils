@@ -29,7 +29,7 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
     '''3D deconvolution of all files in a directory using the richardson-lucy method [executed on SLURM]'''
     import subprocess
 
-    from constants import ENV_PYTHON_LOC
+    from constants import UV_PYTHON_PREFIX
     from constants import DECON_SCRIPT, MAX_VRAM
 
     path = ensure_path(dir_loc)
@@ -122,9 +122,19 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
     else:
         PARALLEL_JOBS = num_parallel
 
+    def decon_output_exists(p: Path) -> bool:
+        if str(p).endswith('.ome.zarr'):
+            out_file_name = str(p.name).removesuffix('.ome.zarr') + out_file_type
+        else:
+            out_file_name = p.stem + out_file_type
+        out_tile = out_dir / out_file_name
+        return out_tile.is_dir() and any(out_tile.iterdir())
+
+    # Logs alone are not enough to skip: a prior run's decon output can be
+    # removed while its logs remain, so require the output tile to have content.
     files_not_done = [
         x for x in file_list 
-        if not is_decon_completed_from_logs(log_dir, x)
+        if not (is_decon_completed_from_logs(log_dir, x) and decon_output_exists(x))
     ]
 
     if files_not_done:
@@ -152,7 +162,7 @@ def decon_dir(dir_loc: str, refractive_index: float, emission_wavelength: int=No
 
             commands += '\n\t'
             commands += '"'
-            commands += f'{ENV_PYTHON_LOC} -u {DECON_SCRIPT} decon'
+            commands += f'{UV_PYTHON_PREFIX} -u {DECON_SCRIPT} decon'
             commands += f' {p.as_posix()}'
             commands += f' --refractive-index {refractive_index}'
             commands += f'{f" --emission-wavelength {emission_wavelength}" if emission_wavelength else ""}'
@@ -314,7 +324,7 @@ def queue_preprocess_groups(
     after_slurm_jobs: list[int] = None,
     overwrite: bool = False,
 ):
-    from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL
+    from constants import UV_PYTHON_PREFIX, LOCATION_OF_MESOSPIM_UTILS_INSTALL
     from preprocess import discover_channel_filter_combinations_from_metadata, prepare_output_collection
 
     input_collection = ensure_path(input_collection)
@@ -336,7 +346,7 @@ def queue_preprocess_groups(
             print(f'Skipping completed {command_name} group: {channel} / {filt}')
             continue
 
-        cmd = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/preprocess.py {command_name}'
+        cmd = f'{UV_PYTHON_PREFIX} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}/preprocess.py {command_name}'
         cmd += f' --input "{input_collection}"'
         cmd += f' --output "{output_collection}"'
         cmd += f' --channel "{channel}"'
@@ -528,6 +538,12 @@ def is_decon_completed_from_logs(log_dir: Path, input_file: Path) -> bool:
         try:
             content = log_file.read_text()
             if input_name in content or input_file_str in content:
+                # A run whose job died after the decon loop (e.g. at multiscale
+                # creation) still contains 'Deconvolution complete'; a
+                # traceback in the log means the run failed, so the file is
+                # not done and must be re-queued.
+                if 'Traceback (most recent call last)' in content:
+                    continue
                 if 'Deconvolution complete' in content or 'Total Time:' in content:
                     return True
         except (OSError, IOError):
@@ -660,7 +676,7 @@ def format_sbatch_wrap(slurm_parameters_dictionary: str, log_location:Path, arra
     GENERIC_slurm_parameters_dictionary = {
         PARTITION: 'compute,gpu', #multiple partitions can be specified with comma separation part1,par2
         CPUS: 24,
-        JOB_LABEL: 'ims_conv',
+        JOB_LABEL: 'dev_ims_conv',
         RAM_GB: 64,
         GRES: None, # Specific exactly as it would be in slurm eg. "gpu:1" or None
         PARALLEL_JOBS: 8,

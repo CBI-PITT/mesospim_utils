@@ -33,9 +33,10 @@ general = config.get('general')
 slurm = config.get('slurm')
 
 LOCATION_OF_MESOSPIM_UTILS_INSTALL = general.get('location_module')
-ENV_PYTHON_LOC = general.get('location_environment')
-LOCATION_BASICPY_ENV = general.get('location_basicpy_environment', ENV_PYTHON_LOC)
-LOCATION_PYIMARISWRITER_ENV = general.get('location_pyimariswriter_environment', ENV_PYTHON_LOC)
+REPO_ROOT = Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL).parent
+UV_PYTHON_PREFIX = f'uv run --project {REPO_ROOT} python'
+BASICPY_PROJECT_DIR = REPO_ROOT / 'basicpy_env'
+LOCATION_PYIMARISWRITER_ENV = general.get('location_pyimariswriter_environment')
 METADATA_FILENAME = general.get('metadata_filename')
 METADATA_ANNOTATED_FILENAME = general.get('metadata_annotated_filename')
 MONTAGE_NAME = general.get('montage_name')
@@ -101,7 +102,7 @@ SLURM_PARAMETERS_DECON = slurm.get('decon')
 SLURM_PARAMETERS_BASICPY = slurm.get('basicpy', {
     'PARTITION': 'ai',
     'CPUS': 1,
-    'JOB_LABEL': 'ms_basicpy',
+    'JOB_LABEL': 'dev_basicpy',
     'RAM_GB': 512,
     'GRES': 'gpu:1',
     'PARALLEL_JOBS': 8,
@@ -111,7 +112,7 @@ SLURM_PARAMETERS_BASICPY = slurm.get('basicpy', {
 SLURM_PARAMETERS_GAIN_CORRECTION = slurm.get('gain_correction', {
     'PARTITION': 'gpu',
     'CPUS': 1,
-    'JOB_LABEL': 'ms_gaincorr',
+    'JOB_LABEL': 'dev_gaincorr',
     'RAM_GB': 512,
     'GRES': None,
     'PARALLEL_JOBS': 8,
@@ -161,8 +162,6 @@ IMS_STITCHER_COMPRESSION_LEVEL = imaris_stitcher.get('compression_level')
 
 ### Format constants ###  DO NOT CHANGE
 LOCATION_OF_MESOSPIM_UTILS_INSTALL = Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL)
-ENV_PYTHON_LOC = Path(ENV_PYTHON_LOC)
-LOCATION_BASICPY_ENV = Path(LOCATION_BASICPY_ENV)
 LOCATION_PYIMARISWRITER_ENV = Path(LOCATION_PYIMARISWRITER_ENV)
 WINE_INSTALL_LOC = Path(WINE_INSTALL_LOC)
 IMARIS_CONVERTER_LOC = Path(IMARIS_CONVERTER_LOC)
@@ -172,12 +171,83 @@ IMARIS_CONVERTER_LOC = Path(IMARIS_CONVERTER_LOC)
 ########################################################################################################################
 BIGSTITCHER = config.get('bigstitcher')
 
+FIJI = config.get('fiji', {})
+# 'stable': Fiji stable archive + pinned classic BigStitcher 2.5.3 (OME-Zarr v0.4 / zarr v2 reading)
+# 'latest': pinned Fiji-Latest archive build; BigStitcher 3.x + new N5 stack ship with it (adds OME-Zarr v0.5 sharded / zarr v3 reading)
+FIJI_DISTRIBUTION = FIJI.get('distribution', 'stable')
+
+# OME-Zarr raw-tile converter (omezarr.py / ome_zarr_multiscale_writer): the source
+# version defaults to what the configured fiji.distribution can read ('latest' ->
+# 0.5 sharded zarr v3, 'stable' -> 0.4 zarr v2); an explicit ome_version key overrides.
+OMEZARR = config.get('omezarr', {})
+OMEZARR_OME_VERSION = OMEZARR.get('ome_version', '0.5' if FIJI_DISTRIBUTION == 'latest' else '0.4')
+# Shard shape (z,y,x) for the source tiles: each shard file holds this many voxels
+# (~8x fewer files than per-chunk writing). Only applies to 0.5 / zarr v3.
+OMEZARR_SHARD_SHAPE = OMEZARR.get('shard_shape')
+
+# BigStitcher alignment knobs, mapped to the macro placeholders {link_relative},
+# {link_absolute}, {icp_maximum_error}, {icp_lambda}. Defaults are the values
+# previously hardcoded in the macro templates; bigstitcher.py formats relative/
+# absolute with 3 decimals and lambda with 2 so the generated macros stay
+# byte-identical to the pre-parameterization output.
+BIGSTITCHER_LINK_RELATIVE = float(BIGSTITCHER.get('link_relative', 2.5))
+BIGSTITCHER_LINK_ABSOLUTE = float(BIGSTITCHER.get('link_absolute', 3.5))
+BIGSTITCHER_ICP_MAXIMUM_ERROR = int(BIGSTITCHER.get('icp_maximum_error', 5))
+BIGSTITCHER_ICP_LAMBDA = float(BIGSTITCHER.get('icp_lambda', 0.10))
+
+# Adaptive STAGE 1 downsampling from the metadata overlap: 'overlap' as a
+# downsample_in_x/y/z value computes the largest lateral downsample keeping the
+# overlap strip >= BIGSTITCHER_MIN_OVERLAP_STRIP_PX (10% overlap, 3000px tiles
+# -> 2x/2x/1x). Numeric values keep the fixed per-axis behavior; 'automated'
+# keeps the multiscale-derived behavior.
+BIGSTITCHER_MIN_OVERLAP_STRIP_PX = float(BIGSTITCHER.get('min_overlap_strip_px', 150))
+
+# DoG detection intensity gating (macro keys verified against the installed
+# BigStitcher 3.0.8 / multiview-reconstruction 9.0.12 dialogs and upstream
+# DifferenceOfGUI.java): 'off' sends nothing (prior behavior), 'common' sends
+# use_same_min_&_max_intensity_for_all_views=true so the DoG threshold is
+# comparable across views, 'fixed' sends set_minimal_and_maximal_intensity=true
+# with explicit minimal/maximal values.
+BIGSTITCHER_DOG_INTENSITY_MODE = BIGSTITCHER.get('dog_intensity_mode', 'off')
+BIGSTITCHER_DOG_MIN_INTENSITY = float(BIGSTITCHER.get('dog_min_intensity', 0.0))
+BIGSTITCHER_DOG_MAX_INTENSITY = float(BIGSTITCHER.get('dog_max_intensity', 65535.0))
+
+# Self-calibration guard: after fusion, the stitched XML's fitted grid scale
+# estimates the zoom/ETL pixel-size miscalibration; when |s - 1| exceeds
+# BIGSTITCHER_SELF_CALIBRATION_THRESHOLD_PCT the pipeline warns loudly and,
+# when BIGSTITCHER_SELF_CALIBRATION_CORRECTION is true, rescales the fused
+# output voxel size by 1/s (true px = nominal px / s).
+BIGSTITCHER_SELF_CALIBRATION_THRESHOLD_PCT = float(BIGSTITCHER.get('self_calibration_threshold_pct', 2.0))
+BIGSTITCHER_SELF_CALIBRATION_CORRECTION = bool(BIGSTITCHER.get('self_calibration_correction', False))
+
+# Sharded OME-Zarr v0.5 fused output: the N5-API export groups the compute
+# blocks (blocksize * blocksize_factor per axis, e.g. 256^3 * 2 = 512^3 voxels)
+# into one shard file each, cutting the per-chunk file count by ~8x. Shard size
+# is a multiple of block size and defined by the compute block size factor
+# (macro keys verified against the multiview-reconstruction 9.0.12 dialog:
+# 'Enable_sharding' checkbox in the OME-Zarr v3 & Sharding Options section).
+BIGSTITCHER_ENABLE_SHARDING = bool(BIGSTITCHER.get('enable_sharding', False))
+
+# Chromatic aberration correction: after tile alignment the inter-channel shift is
+# measured by phase correlation on the deconved tiles and applied as per-channel
+# translations to the stitched XML before fusion. Measured shifts above
+# chromatic_max_shift_um are rejected; tile pairs below chromatic_quality_threshold
+# are skipped.
+BIGSTITCHER_CHROMATIC_CORRECTION = bool(BIGSTITCHER.get('chromatic_correction', False))
+BIGSTITCHER_CHROMATIC_REFERENCE_CHANNEL = int(BIGSTITCHER.get('chromatic_reference_channel', 0))
+BIGSTITCHER_CHROMATIC_QUALITY_THRESHOLD = float(BIGSTITCHER.get('chromatic_quality_threshold', 0.6))
+BIGSTITCHER_CHROMATIC_MAX_SHIFT_UM = float(BIGSTITCHER.get('chromatic_max_shift_um', 20.0))
+
 FIJI_INSTALL_LOCATION = BIGSTITCHER.get('fiji_install_folder')
 if FIJI_INSTALL_LOCATION:
     FIJI_INSTALL_LOCATION = Path(FIJI_INSTALL_LOCATION)
 else:
     FIJI_INSTALL_LOCATION = Path(__file__).resolve().parent.parent / 'fiji-linux' / 'Fiji.app'
 FIJI_EXECUTABLE = FIJI_INSTALL_LOCATION / "ImageJ-linux64"
+if not FIJI_EXECUTABLE.exists() and (FIJI_INSTALL_LOCATION / "fiji-linux-x64").exists():
+    # The Fiji-Latest distribution launches via the jaunch-based
+    # fiji-linux-x64 launcher; the stable archive ships ImageJ-linux64.
+    FIJI_EXECUTABLE = FIJI_INSTALL_LOCATION / "fiji-linux-x64"
 
 DOWNSAMPLE_IN_X = str(BIGSTITCHER.get('downsample_in_x'))
 DOWNSAMPLE_IN_Y = str(BIGSTITCHER.get('downsample_in_y'))

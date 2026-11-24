@@ -113,7 +113,11 @@ if ram_bs:
 # ram_bs_formatting = f' -Xmx{ram_bs}g --' if ram_bs is not None else ''
 ram_bs_formatting = f' --mem {ram_bs}G --' if ram_bs is not None else ''
 
-BIGSTITCHER_ALIGN_TEMPLATE = f'{FIJI_EXECUTABLE}{ram_bs_formatting} --headless -batch "{'{}'}"'
+# SLURM compute nodes have no X11 stack: the jaunch-based fiji-linux-x64
+# launcher shows a splash screen that needs X11 and dies with
+# NoClassDefFoundError sun.awt.X11.XToolkit before BigStitcher starts.
+# Forcing java.awt.headless=true fixes it; harmless for ImageJ-linux64.
+BIGSTITCHER_ALIGN_TEMPLATE = f'_JAVA_OPTIONS=-Djava.awt.headless=true {FIJI_EXECUTABLE}{ram_bs_formatting} --headless -batch "{'{}'}"'
 
 
 

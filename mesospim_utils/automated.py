@@ -3,10 +3,18 @@ from pathlib import Path
 from typing import Annotated
 import subprocess
 import shutil
+from xml.etree import ElementTree as ET
 
 from numpy.f2py.auxfuncs import throw_error
 
-from constants import ENV_PYTHON_LOC, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY, LOCATION_PYIMARISWRITER_ENV
+from constants import UV_PYTHON_PREFIX, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY, LOCATION_PYIMARISWRITER_ENV
+from constants import (
+    BIGSTITCHER_LINK_RELATIVE,
+    BIGSTITCHER_LINK_ABSOLUTE,
+    BIGSTITCHER_ICP_MAXIMUM_ERROR,
+    BIGSTITCHER_ICP_LAMBDA,
+    BIGSTITCHER_CHROMATIC_CORRECTION,
+)
 from metadata import (
     collect_all_metadata,
     get_first_entry,
@@ -29,6 +37,7 @@ from bigstitcher import (does_dir_contain_bigstitcher_metadata,
                          get_bigstitcher_omezarr_alignment_marco,
                          make_bigstitcher_slurm_dir_and_macro,
                          adjust_scale_in_bigstitcher_produced_ome_zarr,
+                         apply_self_calibration_guard,
                          get_ome_zarr_directory_from_xml,
                          get_reference_multiscale_tile_path,
                          get_bigstitcher_fused_output_path,
@@ -40,7 +49,7 @@ from bigstitcher import (does_dir_contain_bigstitcher_metadata,
 from omezarr import OmeZarrV2Multiscale
 
 
-mesospim_root_application = f'{ENV_PYTHON_LOC} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
+mesospim_root_application = f'{UV_PYTHON_PREFIX} -u {LOCATION_OF_MESOSPIM_UTILS_INSTALL}'
 
 app = typer.Typer()
 
@@ -56,9 +65,10 @@ def get_pyimariswriter_root_application() -> str:
 
     cmd = f'PYIW_PYTHON={shell_double_quote(pyimaris_python)}; '
     cmd += 'PYIW_ENV_ROOT="$(dirname \"$(dirname \"$PYIW_PYTHON\")\")"; '
-    cmd += 'PYIW_SITE_PACKAGES="$($PYIW_PYTHON -c "import sysconfig; print(sysconfig.get_paths()[\\"purelib\\"])")"; '
+    cmd += 'PYIW_SITE_PACKAGES="$("$PYIW_PYTHON" -c "import sysconfig; print(sysconfig.get_paths()[\\"purelib\\"])")"; '
     cmd += 'export LD_LIBRARY_PATH="$PYIW_SITE_PACKAGES/PyImarisWriter:$PYIW_ENV_ROOT/lib:${LD_LIBRARY_PATH:-}"; '
-    cmd += f'$PYIW_PYTHON -u {shell_double_quote(converter_script)}'
+    cmd += 'export MESOSPIM_PYIW_SITE_PACKAGES="$PYIW_SITE_PACKAGES"; '
+    cmd += f'{UV_PYTHON_PREFIX} -u {shell_double_quote(converter_script)}'
     return cmd
 
 
@@ -313,7 +323,7 @@ def convert_btf_tiles_to_omezarr_slurm_array(dir_loc: Path, file_type: str='.btf
     output_directory_for_omezarr_collection.mkdir(parents=True, exist_ok=True)
 
     # Create ome.zarr group to store all converted btf files in the collection
-    zarr.open_group(output_directory_for_omezarr_collection, mode="a", zarr_version=2)
+    zarr.open_group(output_directory_for_omezarr_collection, mode="a", zarr_format=2)
 
     print(f'Extracting metadata from {dir_loc}')
     metadata_by_channel = collect_all_metadata(dir_loc)
@@ -400,7 +410,7 @@ def get_intermediate_file_type_for_bigstitcher_alignment(final_file_type: str):
 
 
 @app.command()
-def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file_type: str='omezarr', ims_resolution_level: int=0, supernice: bool=False):
+def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file_type: str='omezarr', ims_resolution_level: int=0, supernice: bool=False, stages: str='align+fuse'):
 
     if supernice:
         set_super_nice()
@@ -440,22 +450,49 @@ def big_stitcher_align(dir_loc: Path, fused_file_type: str='omezarr', final_file
     if skip_bigstitcher:
         print(f'Skipping BigStitcher rerun: {skip_reason}')
         job_number = None
+    elif stages == 'align':
+        bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type, stages=stages)
+        cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
+        cmd += f' && printf "BIGSTITCHER_ALIGN_SUCCESS: {Path(macro_file).name}\\n"'
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
+                                after_slurm_jobs=None, username=username, log_suffix=f'align_only_bigstitcher')
+        print(f'BigStitcher align-only process number: {job_number}')
+    elif stages == 'fuse':
+        bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type, stages=stages)
+        cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
+        # -nt (not just -e): a stale container from a previous run must not
+        # count as success when BigStitcher refuses to create it
+        cmd += f' && [ "{fused_out_dir_or_file}" -nt "{macro_file}" ]'
+        cmd += f' && printf "BIGSTITCHER_SUCCESS: {Path(fused_out_dir_or_file).name}\\n"'
+        job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
+                                after_slurm_jobs=None, username=username, log_suffix=f'fuse_only_bigstitcher')
+        print(f'BigStitcher fuse-only process number: {job_number}')
     else:
         bigstitcher_dir, fused_out_dir_or_file, macro_file = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type)
         cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
-        cmd += f' && [ -e "{fused_out_dir_or_file}" ]'
+        # -nt (not just -e): a stale container from a previous run must not
+        # count as success when BigStitcher refuses to create it
+        cmd += f' && [ "{fused_out_dir_or_file}" -nt "{macro_file}" ]'
         cmd += f' && printf "BIGSTITCHER_SUCCESS: {Path(fused_out_dir_or_file).name}\\n"'
+        if BIGSTITCHER_CHROMATIC_CORRECTION and len(metadata_by_channel) > 1:
+            log_suffix = 'align_fuse_bigstitcher_chromatic'
+            print(f'BigStitcher align with native chromatic correction (compare channels, {len(metadata_by_channel)} channels) then fuse')
+        else:
+            log_suffix = 'align_fuse_bigstitcher'
 
-        job_number = None
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir,
-                                after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'align_fuse_bigstitcher')
+                                after_slurm_jobs=None, username=username, log_suffix=log_suffix)
         print(f'BigStitcher process number: {job_number}')
+
+    if stages == 'align':
+        return
 
     if final_file_type.lower() == 'omezarr' and not final_file_type.lower() == 'ims':
         if skip_bigstitcher:
             return
         cmd = f'{mesospim_root_application}/bigstitcher.py adjust-scale-in-bigstitcher-produced-ome-zarr'
         cmd += f' "{dir_loc}" "{fused_out_dir_or_file}"'
+        cmd += f' && {mesospim_root_application}/bigstitcher.py apply-self-calibration-guard-cli "{dir_loc}" "{fused_out_dir_or_file}"'
         job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
                                 after_slurm_jobs=[job_number] if job_number else None, username=username, log_suffix=f'fix_bigstitcher_omezarr_metadata')
         print(f'BigStitcher Fix OME-Zarr Metadata Scale: {job_number}')
@@ -643,6 +680,191 @@ def ims_conv_then_align(dir_loc: Path, metadata_dir: Path, file_type: str='.tif'
     job_number = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir, after_slurm_jobs=[job_number], username=username)
     print(f'Dependency process number: {job_number}')
 
+
+
+@app.command()
+def big_stitcher_search(
+    dir_loc: Path,
+    fused_file_type: str = typer.Option('omezarr', help='Fused output format'),
+    link_relative: str = typer.Option(None, help='Comma list of STAGE 1 relative link thresholds to search (default: config value plus 5.0 and 7.0)'),
+    link_absolute: str = typer.Option(None, help='Comma list of STAGE 1 absolute link thresholds to search (default: config value plus 5.0)'),
+    fuse: bool = typer.Option(True, help='Submit one fuse-only run with the winner after scoring'),
+    dry_run: bool = typer.Option(False, help='Print the candidate list and commands without submitting'),
+):
+    '''Phase 3 search driver: coarse grid of align-only SLURM runs, then one
+    scoring step that picks the winner and fuses once.
+
+    Candidates run as a SLURM dependency chain (each align-only run overwrites
+    the stitched XML registrations, so parallel runs would clobber each
+    other). Every candidate copies the stitched XML to a per-candidate
+    snapshot right after its run, and the final scoring step grades all
+    candidates with the Phase 1 scorer, restores the winner's snapshot, and
+    optionally submits exactly one fuse-only run.
+    '''
+    dir_loc = ensure_path(dir_loc)
+    from constants import SLURM_PARAMETERS_FOR_BIGSTITCHER, SLURM_PARAMETERS_FOR_DEPENDENCIES
+    from string_templates import BIGSTITCHER_ALIGN_TEMPLATE
+    import bigstitcher as bs
+
+    slurm_log_dir = get_slurm_log_location(dir_loc)
+    stitched_xml = does_dir_contain_bigstitcher_metadata(dir_loc)
+    if stitched_xml is None:
+        raise FileNotFoundError(f'no bigstitcher xml under {dir_loc}')
+    stitched_xml = ensure_path(stitched_xml)
+
+    # candidate grid: config baseline plus the relaxed presets from the
+    # analysis doc, overridden by explicit comma lists
+    def _csv(value, default):
+        if value:
+            return [float(x) for x in str(value).split(',')]
+        return default
+
+    rel_values = _csv(link_relative, [BIGSTITCHER_LINK_RELATIVE, 5.0, 7.0])
+    abs_values = _csv(link_absolute, [BIGSTITCHER_LINK_ABSOLUTE, 5.0])
+    candidates = [(rel, ab) for rel in rel_values for ab in abs_values]
+    print(f'search candidates ({len(candidates)}): ' + ', '.join(f'(rel {r}, abs {a})' for r, a in candidates))
+    search_dir = dir_loc / 'bigstitcher'
+    search_dir.mkdir(parents=True, exist_ok=True)
+
+    prev_job = None
+    for i, (rel, ab) in enumerate(candidates):
+        tag = f'lr{rel:g}_la{ab:g}'
+        # patch the module-level constants so the generated macro carries the
+        # candidate values (the getters read them at call time)
+        bs.BIGSTITCHER_LINK_RELATIVE = rel
+        bs.BIGSTITCHER_LINK_ABSOLUTE = ab
+        bs.BIGSTITCHER_ICP_MAXIMUM_ERROR = BIGSTITCHER_ICP_MAXIMUM_ERROR
+        bs.BIGSTITCHER_ICP_LAMBDA = BIGSTITCHER_ICP_LAMBDA
+        bigstitcher_dir, _, base_macro = make_bigstitcher_slurm_dir_and_macro(dir_loc, format=fused_file_type, stages='align')
+        macro_file = search_dir / f'macro_align_{tag}.ijm'
+        shutil.copyfile(base_macro, macro_file)
+        snapshot = search_dir / f'snapshot_{tag}.xml'
+
+        cmd = BIGSTITCHER_ALIGN_TEMPLATE.format(macro_file)
+        cmd += f' && printf "BIGSTITCHER_ALIGN_SUCCESS: {macro_file.name}\\n"'
+        cmd += f' && cp "{stitched_xml}" "{snapshot}"'
+        if dry_run:
+            print(f'[{tag}] would submit: {cmd}')
+            continue
+        job = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_BIGSTITCHER, slurm_log_dir, after_slurm_jobs=[prev_job] if prev_job else None,
+                         username="", log_suffix=f'search_{tag}_align_only_bigstitcher')
+        print(f'[{tag}] align-only job: {job}')
+        prev_job = job
+
+    if dry_run:
+        print('dry run: nothing submitted')
+        return
+
+    # final chained step: score every candidate, restore the winner, fuse once
+    cmd = f'{mesospim_root_application}/automated.py big-stitcher-search-score'
+    cmd += f' "{dir_loc}"'
+    if fuse:
+        cmd += ' --fuse'
+    score_job = wrap_slurm(cmd, SLURM_PARAMETERS_FOR_DEPENDENCIES, slurm_log_dir,
+                           after_slurm_jobs=[prev_job] if prev_job else None, username="",
+                           log_suffix='search_scoring')
+    print(f'scoring step job: {score_job} (runs after the last candidate)')
+    print(f'{len(candidates)} align-only runs + exactly one fusion queued')
+
+
+@app.command()
+def big_stitcher_search_score(
+    dir_loc: Path,
+    fuse: bool = typer.Option(True, help='Submit one fuse-only run with the winner after scoring'),
+):
+    '''Score the align-only search runs, restore the winner's registrations,
+    and optionally submit one fuse-only run. Runs after the search chain.
+    '''
+    from bigstitcher_scoring import parse_align_log, score_from_xml, alignment_quality_score, recommend_params
+    import bigstitcher as bs
+
+    dir_loc = ensure_path(dir_loc)
+    slurm_log_dir = get_slurm_log_location(dir_loc)
+    stitched_xml = does_dir_contain_bigstitcher_metadata(dir_loc)
+    if stitched_xml is None:
+        raise FileNotFoundError(f'no bigstitcher xml under {dir_loc}')
+    stitched_xml = ensure_path(stitched_xml)
+    search_dir = dir_loc / 'bigstitcher'
+
+    logs = sorted(slurm_log_dir.glob('*search_*_align_only_bigstitcher.log'), key=lambda p: p.stat().st_mtime)
+    if not logs:
+        raise FileNotFoundError(f'no search align-only logs under {slurm_log_dir}')
+
+    results_by_tag = {}
+    for log_path in logs:  # sorted by mtime: the latest log per tag wins
+        metrics = parse_align_log(log_path)
+        params = metrics.get('params') or {}
+        if 'link_relative' not in params or 'link_absolute' not in params:
+            print(f'skipping {log_path.name}: no BIGSTITCHER_PARAMS line')
+            continue
+        rel = float(params['link_relative'])
+        ab = float(params['link_absolute'])
+        tag = f'lr{rel:g}_la{ab:g}'
+        snapshot = search_dir / f'snapshot_{tag}.xml'
+        xml_metrics = None
+        xml_error = None
+        if snapshot.exists():
+            try:
+                xml_metrics = score_from_xml(snapshot)
+            except (ValueError, ET.ParseError) as exc:
+                xml_error = f'{type(exc).__name__}: {exc}'
+        elif not snapshot.exists():
+            xml_error = f'snapshot not found: {snapshot.name}'
+        score, components = alignment_quality_score(metrics, xml_metrics)
+        recs = recommend_params(metrics, xml_metrics)
+        results_by_tag[tag] = {
+            'tag': tag, 'rel': rel, 'abs': ab, 'log': log_path,
+            'metrics': metrics, 'xml_metrics': xml_metrics, 'xml_error': xml_error,
+            'score': score, 'components': components, 'recommendations': recs,
+        }
+
+    results = list(results_by_tag.values())
+    if not results:
+        raise RuntimeError('no scoreable search runs found')
+
+    print(f'=== search results ({len(results)} candidates) ===')
+    for r in sorted(results, key=lambda x: x['score'], reverse=True):
+        m = r['metrics']
+        xs = r['xml_metrics']
+        err = lambda v: 'n/a' if v is None else f'{v:.2f}px'
+        print(f"[{r['tag']}] SCORE {r['score']:.1f}/100  first-round {err(m['first_round_avg_error'])}  "
+              f"final {err(m['final_avg_error'])}  dropped {m['dropped_links']}  added {m['added_strong_links']}")
+        if xs is not None:
+            from bigstitcher_scoring import dominant_scale_offset, dominant_residual_px
+            s = dominant_scale_offset(xs)
+            sc = dominant_residual_px(xs)
+            print(f"    grid fit: scale offset {'n/a' if s is None else f'{s:+.2f}%'}  "
+                  f"residual scatter {'n/a' if sc is None else f'{sc:.2f}px'}")
+        elif r['xml_error']:
+            print(f"    grid fit: unavailable ({r['xml_error']})")
+        for rec in r['recommendations']:
+            print(f"    -> {rec}")
+
+    def _scoreable(r):
+        m = r['metrics']
+        return (m.get('first_round_avg_error') is not None or m.get('final_avg_error') is not None
+                or bool(m.get('dropped_links')) or bool(m.get('added_strong_links')))
+    # a candidate with no scoreable metrics (e.g. a single-tile dataset) would
+    # win vacuously at the neutral score of 100 - prefer real measurements
+    winner = max(results, key=lambda x: (_scoreable(x), x['score']))
+    if not _scoreable(winner):
+        print('WARNING: no candidate produced scoreable metrics (no error lines, no links) - '
+              'the dataset may have too few tiles for a search')
+    print(f"WINNER: [{winner['tag']}] score {winner['score']:.1f}/100")
+
+    snapshot = search_dir / f"snapshot_{winner['tag']}.xml"
+    if snapshot.exists():
+        shutil.copyfile(snapshot, stitched_xml)
+        print(f'restored winner registrations from {snapshot.name} into {stitched_xml.name}')
+    else:
+        print(f'WARNING: winner snapshot {snapshot.name} not found; the fused output would use the LAST candidate\'s registrations')
+        if fuse:
+            print('skipping fusion: restore the winner snapshot manually or re-run the winning candidate first')
+            fuse = False
+
+    if fuse:
+        print('submitting one fuse-only run with the winner registrations')
+        big_stitcher_align(dir_loc, fused_file_type='omezarr', final_file_type='omezarr', stages='fuse')
 
 
 if __name__ == "__main__":

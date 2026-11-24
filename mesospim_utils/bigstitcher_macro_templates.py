@@ -95,6 +95,9 @@ BIGSTITCHER_ALIGN_OMEZARR_OUT = '''
 // This is a ImageJ macro file for running BigStitcher alignment
 // It can be run headlessly in Fiji with BigStitcher installed
 
+print("");
+print("BIGSTITCHER_PARAMS: link_relative={link_relative} link_absolute={link_absolute} icp_maximum_error={icp_maximum_error} icp_lambda={icp_lambda} dog_intensity_mode={dog_intensity_mode} dog_min_intensity={dog_min_intensity} dog_max_intensity={dog_max_intensity}");
+
 // --------------------------------------------------------------------
 // STAGE 1: Tile alignment using channels=[Average Channels]
 // --------------------------------------------------------------------
@@ -142,8 +145,8 @@ process_channel=[All channels] \
 process_illumination=[All illuminations] \
 process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
-relative=2.500 \
-absolute=3.500 \
+relative={link_relative} \
+absolute={link_absolute} \
 global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
 show_expert_grouping_options \
 how_to_treat_timepoints=[treat individually] \
@@ -176,11 +179,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={12}x \
 downsample_z={13}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -198,11 +201,11 @@ process_timepoint=[All Timepoints] \
 icp_refinement_type=[Expert ...] \
 global_optimization_strategy=[Two-Round: Handle unconnected tiles, remove wrong links RELAXED (5.0x / 7.0px)] \
 interest_points=beads \
-icp_maximum_error=5 \
+icp_maximum_error={icp_maximum_error} \
 transformation=Rigid \
 regularize_model \
 model_to_regularize_with=Rigid \
-lambda=0.10 \
+lambda={icp_lambda} \
 group_channels=[Do not group] \
 group_tiles");
 
@@ -222,11 +225,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={14}x \
 downsample_z={15}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -244,11 +247,11 @@ process_timepoint=[All Timepoints] \
 icp_refinement_type=[Expert ...] \
 global_optimization_strategy=[Two-Round: Handle unconnected tiles, remove wrong links RELAXED (5.0x / 7.0px)] \
 interest_points=beads \
-icp_maximum_error=5 \
+icp_maximum_error={icp_maximum_error} \
 transformation=Rigid \
 regularize_model \
 model_to_regularize_with=Rigid \
-lambda=0.10 \
+lambda={icp_lambda} \
 group_channels=[Do not group] \
 group_tiles");
 
@@ -268,11 +271,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={16}x \
 downsample_z={17}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -290,11 +293,11 @@ process_timepoint=[All Timepoints] \
 icp_refinement_type=[Expert ...] \
 global_optimization_strategy=[Two-Round: Handle unconnected tiles, remove wrong links RELAXED (5.0x / 7.0px)] \
 interest_points=beads \
-icp_maximum_error=5 \
+icp_maximum_error={icp_maximum_error} \
 transformation=Rigid \
 regularize_model \
 model_to_regularize_with=Rigid \
-lambda=0.10 \
+lambda={icp_lambda} \
 group_channels=[Do not group] \
 group_tiles");
 
@@ -338,7 +341,7 @@ create_multi-resolution \
 store \
 zarr_dataset_path='{4}' \
 show_advanced_block_size_options \
-block_size_x={5} \
+{enable_sharding_line}block_size_x={5} \
 block_size_y={6} \
 block_size_z={7} \
 block_size_factor_x={8} \
@@ -356,6 +359,9 @@ call("java.lang.System.exit", "0");
 BIGSTITCHER_ALIGN_HDF5_OUT = '''
 // This is a ImageJ macro file for running BigStitcher alignment
 // It can be run headlessly in Fiji with BigStitcher installed
+
+print("");
+print("BIGSTITCHER_PARAMS: link_relative={link_relative} link_absolute={link_absolute} icp_maximum_error={icp_maximum_error} icp_lambda={icp_lambda} dog_intensity_mode={dog_intensity_mode} dog_min_intensity={dog_min_intensity} dog_max_intensity={dog_max_intensity}");
 
 // --------------------------------------------------------------------
 // STAGE 1: Tile alignment using channels=[Average Channels]
@@ -404,8 +410,8 @@ process_channel=[All channels] \
 process_illumination=[All illuminations] \
 process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
-relative=2.500 \
-absolute=3.500 \
+relative={link_relative} \
+absolute={link_absolute} \
 global_optimization_strategy=[Two-Round using Metadata to align unconnected Tiles and iterative dropping of bad links] \
 show_expert_grouping_options \
 how_to_treat_timepoints=[treat individually] \
@@ -438,11 +444,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={12}x \
 downsample_z={13}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -460,11 +466,11 @@ process_timepoint=[All Timepoints] \
 icp_refinement_type=[Expert ...] \
 global_optimization_strategy=[Two-Round: Handle unconnected tiles, remove wrong links RELAXED (5.0x / 7.0px)] \
 interest_points=beads \
-icp_maximum_error=5 \
+icp_maximum_error={icp_maximum_error} \
 transformation=Rigid \
 regularize_model \
 model_to_regularize_with=Rigid \
-lambda=0.10 \
+lambda={icp_lambda} \
 group_channels=[Do not group] \
 group_tiles");
 
@@ -484,11 +490,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={14}x \
 downsample_z={15}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -506,11 +512,11 @@ process_timepoint=[All Timepoints] \
 icp_refinement_type=[Expert ...] \
 global_optimization_strategy=[Two-Round: Handle unconnected tiles, remove wrong links RELAXED (5.0x / 7.0px)] \
 interest_points=beads \
-icp_maximum_error=5 \
+icp_maximum_error={icp_maximum_error} \
 transformation=Rigid \
 regularize_model \
 model_to_regularize_with=Rigid \
-lambda=0.10 \
+lambda={icp_lambda} \
 group_channels=[Do not group] \
 group_tiles");
 
@@ -530,11 +536,11 @@ process_tile=[All tiles] \
 process_timepoint=[All Timepoints] \
 type_of_interest_point_detection=Difference-of-Gaussian \
 label_interest_points=beads \
-subpixel_localization=[3-dimensional quadratic fit] \
+{dog_intensity_first}subpixel_localization=[3-dimensional quadratic fit] \
 interest_point_specification=[Comparable to Sample & small (beads)] \
 downsample_xy={16}x \
 downsample_z={17}x \
-compute_on=[CPU (Java)]");
+{dog_intensity_sub}compute_on=[CPU (Java)]");
 
 print("");
 print("----------------------------------------------------------------------------------------");
@@ -552,11 +558,11 @@ process_timepoint=[All Timepoints] \
 icp_refinement_type=[Expert ...] \
 global_optimization_strategy=[Two-Round: Handle unconnected tiles, remove wrong links RELAXED (5.0x / 7.0px)] \
 interest_points=beads \
-icp_maximum_error=5 \
+icp_maximum_error={icp_maximum_error} \
 transformation=Rigid \
 regularize_model \
 model_to_regularize_with=Rigid \
-lambda=0.10 \
+lambda={icp_lambda} \
 group_channels=[Do not group] \
 group_tiles");
 
@@ -1889,3 +1895,16 @@ call("java.lang.System.exit", "0");
 # // hard-exit JVM so Slurm releases resources
 # call("java.lang.System.exit", "0");
 # '''
+
+_OME_TEMPLATE = BIGSTITCHER_ALIGN_OMEZARR_OUT
+_OME_STAGE3_AT = _OME_TEMPLATE.index('// --------------------------------------------------------------------\n// STAGE 3: Image Fusion into OME-Zarr')
+_OME_STAGE1_AT = _OME_TEMPLATE.index('// --------------------------------------------------------------------\n// STAGE 1: Tile alignment using channels=[Average Channels]')
+_EXIT_LINES = '\n// hard-exit JVM so Slurm releases resources\ncall("java.lang.System.exit", "0");\n'
+
+BIGSTITCHER_ALIGN_ONLY_OUT = _OME_TEMPLATE[:_OME_STAGE3_AT] + _EXIT_LINES
+BIGSTITCHER_FUSE_ONLY_OMEZARR_OUT = _OME_TEMPLATE[:_OME_STAGE1_AT] + _OME_TEMPLATE[_OME_STAGE3_AT:]
+
+_HDF_TEMPLATE = BIGSTITCHER_ALIGN_HDF5_OUT
+_HDF_STAGE3_AT = _HDF_TEMPLATE.index('// --------------------------------------------------------------------\n// STAGE 3: Image Fusion into HDF5')
+_HDF_STAGE1_AT = _HDF_TEMPLATE.index('// --------------------------------------------------------------------\n// STAGE 1: Tile alignment using channels=[Average Channels]')
+BIGSTITCHER_FUSE_ONLY_HDF5_OUT = _HDF_TEMPLATE[:_HDF_STAGE1_AT] + _HDF_TEMPLATE[_HDF_STAGE3_AT:]
