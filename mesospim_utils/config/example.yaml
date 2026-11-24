@@ -122,7 +122,7 @@ slurm:
     # Should take less than 1 minute to run
     'PARTITION': 'compute,gpu' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 1
-    'JOB_LABEL': 'dev_depends'
+    'JOB_LABEL': 'depends'
     'RAM_GB': 4
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 1
@@ -132,7 +132,7 @@ slurm:
     # Deconvolution tasks require a CUDA GPU
     'PARTITION': 'gpu' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 1
-    'JOB_LABEL': 'dev_decon'
+    'JOB_LABEL': 'decon'
     'RAM_GB': 1300 # Acts of max RAM allocation based on how it is implemented in rl.py
     'GRES': 'gpu:1' # Specific exactly as it would be in slurm eg. "gpu:1", or shard:4, or None
     'PARALLEL_JOBS': 32 # In a slurm array, how many jobs will run in parallel
@@ -141,7 +141,7 @@ slurm:
   basicpy:
     'PARTITION': 'ai'
     'CPUS': 1
-    'JOB_LABEL': 'dev_basicpy'
+    'JOB_LABEL': 'basicpy'
     'RAM_GB': 512
     'GRES': 'gpu:1'
     'PARALLEL_JOBS': 8
@@ -150,7 +150,7 @@ slurm:
   gain_correction:
     'PARTITION': 'gpu'
     'CPUS': 1
-    'JOB_LABEL': 'dev_gaincorr'
+    'JOB_LABEL': 'gaincorr'
     'RAM_GB': 512
     'GRES':
     'PARALLEL_JOBS': 8
@@ -160,7 +160,7 @@ slurm:
     # MeosSPIM built in alignment tool *align_py.py  ** NOT imaris stitcher **
     'PARTITION': 'compute,gpu' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 24
-    'JOB_LABEL': 'dev_align'
+    'JOB_LABEL': 'align'
     'RAM_GB': 64
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 1
@@ -170,7 +170,7 @@ slurm:
     # WINE-based ImarisConverter for converting MesoSPIM data to ims ** This is not ImarisStitcher **
     'PARTITION': 'compute' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 24
-    'JOB_LABEL': 'dev_ims_conv'
+    'JOB_LABEL': 'ims_conv'
     'RAM_GB': 64
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 20
@@ -180,7 +180,7 @@ slurm:
     # OME-Zarr conversion, uses ome_zarr_multiscale_writer
     'PARTITION': 'compute' #multiple partitions can be specified with comma separation part1,par2
     'CPUS': 24
-    'JOB_LABEL': 'dev_omezarr'
+    'JOB_LABEL': 'omezarr'
     'RAM_GB': 64
     'GRES': # Specific exactly as it would be in slurm eg. "gpu:1" or None
     'PARALLEL_JOBS': 20
@@ -189,7 +189,7 @@ slurm:
   bigstitcher:
     'PARTITION': 'gpu,ai' #multiple partitions can be specified with comma separation part1,par2'
     'CPUS': 56
-    'JOB_LABEL': 'dev_bigstitcher'
+    'JOB_LABEL': 'bigstitcher'
     'RAM_GB': 1000
     'GRES':
     'PARALLEL_JOBS': 4
