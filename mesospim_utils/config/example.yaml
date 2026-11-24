@@ -271,6 +271,6 @@ bigstitcher:
 ########################################################################################################################
 
 dev:
-  slurm_top_priority: true # If true this will run "scontrol top" to set priority above any running jobs
+  slurm_top_priority: false # If true this will run "scontrol top" to set priority above any running jobs
   # This will only apply to job from the user running the mesospim_utils pipeline
   # top will only work if slurm is configured to allow users to change job priority and if the user has permission to do so.
