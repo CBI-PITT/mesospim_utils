@@ -35,7 +35,7 @@ Notes:
 - `uv sync` creates `.venv` in the repo root from `uv.lock`. There is no activate step: every command below runs through `uv run` from the repository root and uses that environment.
 - `psfmodels` ships as the optional extra in `pyproject.toml`; it is only needed on nodes that run CUDA deconvolution.
 - The BaSiCPy CUDA preprocessing environment is a separate uv sub-project at `basicpy_env/` with its own `pyproject.toml` and `uv.lock`; create it with `uv sync --project basicpy_env` before running with `--basicpy` or `--gain-correction`.
-- The main tools run as `uv run --project <repo root> python -u <script>`; the SLURM stages build this same command from `general.location_module` in the config file, so that key must point to `<repo root>/mesospim_utils`.
+- The main tools run as `uv run --project <repo root> python -u <script>`; the SLURM stages build this same command from `general.location_module` in the config file, so that key must point to `<repo root>/mesospim_utils`. The uv binary comes from `general.location_uv` (defaults to bare `uv` on PATH; set an absolute path per machine when SLURM jobs lack PATH access to uv).
 - Fiji with BigStitcher is downloaded and installed automatically on the first run that needs it; the `fiji.py` command above pre-installs it at install time so the first run starts faster. The distribution follows the config key `fiji.distribution` (`stable` or `latest`); the install location defaults to `<repo root>/fiji-linux` and can be overridden with the `FIJI_ROOT` environment variable. Pass `--force` (`uv run python -u mesospim_utils/fiji.py --force`) to reinstall.
 - `requirements.txt` contains only `-e .` and is retained for pip-based development installs; `uv sync` is the documented path.
 
@@ -170,7 +170,7 @@ The only required argument is the directory location of the MesoSPIM data. Every
 | Option | Default | Description |
 |---|---|---|
 | `DIR_LOC` (positional) | required | Directory of the MesoSPIM dataset (acquisition directory for `.btf`, or the directory holding an OME-Zarr collection) |
-| `--file-type` | auto-detect | Input type: `.ome.zarr` or `.btf`; auto-detected from the directory contents when omitted |
+| `--file-type` | auto-detect | Input type: `.ome.zarr` or `.btf`. Auto-detect: `.btf` files win, otherwise a top-level OME-Zarr tile collection is used. An explicit value is validated against the directory contents |
 | `--final-file-type` | `omezarr` | Final output format: `omezarr`, `hdf5`, `ims`, `tiff` |
 | `--decon` / `--no-decon` | on | Run deconvolution. Proceeds only when a refractive index is available from metadata or `--refractive-index`; skipped entirely with `--no-decon` |
 | `--objective` | from metadata/config | Name of the objective profile (from `decon.objectives` in the config) used for PSF parameters. See objective precedence below |
@@ -229,7 +229,8 @@ Re-running the chain on the same dataset skips work that is already complete: ti
 ```bash
 # Processing workflow:
 # 1) Metadata collection: mesospim metadata json files are generated or refreshed in the acquisition directory.
-# 2) If the input is `.btf`, tiles are first converted to OME-Zarr before any downstream processing.
+# 2) Input auto-detect: `.btf` files -> btf format (tiles are first converted to OME-Zarr); otherwise a top-level OME-Zarr tile collection is used directly.
+# 2a) For acquisition-native OME-Zarr collections without a BigStitcher XML, the XML is created locally before processing starts.
 # 3) Optional deconvolution: runs when `--decon` is enabled and a refractive index is available from metadata or `--refractive-index`.
 # 4) Optional preprocessing: if `--basicpy` is enabled, it runs on the current OME-Zarr tiles and rebuilds multiscales.
 # 5) Optional preprocessing: if `--gain-correction` is enabled, it runs after BaSiCPy on the current OME-Zarr tiles and then rebuilds multiscales.
@@ -300,13 +301,16 @@ At runtime, `mesospim_utils` loads `mesospim_utils/config/main.yaml` if present 
 
 SLURM parameters for each subprocess can be edited in the config file.
 
-If using only the metadata module, edit the general parameters: location_module, emission_map, emission_to_rgb, username_pattern, and `location_pyimariswriter_environment` (only needed for `.ims` conversion).
+If using only the metadata module, edit the general parameters: location_module, location_uv, emission_map, emission_to_rgb, username_pattern, and `location_pyimariswriter_environment` (only needed for `.ims` conversion).
 
 ```yaml
 general:
   # Interpreter paths derive from this: main tools run as `uv run --project <repo root> python -u <script>`
   # (uv sync in the repo creates .venv); basicpy runs as `uv run --project <repo root>/basicpy_env python`
   location_module: '<location_of_install>/mesospim_utils/mesospim_utils'
+  # uv binary used to run the project Python; 'uv' relies on PATH, set to an absolute
+  # path per machine when uv is not on PATH for SLURM jobs
+  location_uv: 'uv'
   # conda env supplying the PyImarisWriter Python wrapper and native Linux .so; the converter runs in the project uv environment
   location_pyimariswriter_environment: '<python_install_location>/envs/pyiw/bin/python'
   metadata_filename: 'mesospim_metadata.json'

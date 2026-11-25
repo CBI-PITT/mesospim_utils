@@ -1,5 +1,6 @@
 general:
   location_module: '/h20/home/lab/src/mesospim_utils/mesospim_utils' # interpreter paths derive from this: main tools run as `uv run --project <repo root> python -u <script>` (uv sync in the repo creates .venv); basicpy runs as `uv run --project <repo root>/basicpy_env python`
+  location_uv: 'uv' # uv binary used to run the project Python (UV_PYTHON_PREFIX); 'uv' relies on PATH, set to an absolute path per machine when uv is not on PATH for SLURM jobs, e.g. '/h20/home/lab/miniconda3/bin/uv'
   location_pyimariswriter_environment: '/h20/home/lab/miniconda3/envs/pyiw/bin/python' # conda env supplying the PyImarisWriter wrapper and Linux .so; the converter runs under the project uv Python
   metadata_filename: 'mesospim_metadata.json'
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'

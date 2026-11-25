@@ -34,7 +34,11 @@ slurm = config.get('slurm')
 
 LOCATION_OF_MESOSPIM_UTILS_INSTALL = general.get('location_module')
 REPO_ROOT = Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL).parent
-UV_PYTHON_PREFIX = f'uv run --project {REPO_ROOT} python'
+# uv binary used to run the project Python; falls back to bare 'uv' (PATH lookup)
+# when the config key is absent. Set an absolute path per machine when uv is not
+# on PATH for SLURM jobs.
+UV_LOCATION = general.get('location_uv', 'uv')
+UV_PYTHON_PREFIX = f'{UV_LOCATION} run --project {REPO_ROOT} python'
 BASICPY_PROJECT_DIR = REPO_ROOT / 'basicpy_env'
 LOCATION_PYIMARISWRITER_ENV = general.get('location_pyimariswriter_environment')
 METADATA_FILENAME = general.get('metadata_filename')

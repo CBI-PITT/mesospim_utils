@@ -45,6 +45,7 @@ from bigstitcher import (does_dir_contain_bigstitcher_metadata,
                          get_missing_tiff_planes_by_channel,
                          is_bigstitcher_tiff_series_complete,
                          is_tiff_generation_log_successful,
+                         mesospim_metadata_to_bigstitcher_xml,
                          should_skip_bigstitcher_run)
 from omezarr import OmeZarrV2Multiscale
 
@@ -101,6 +102,20 @@ def get_omezarr_output_directory_for_btf_conversion(dir_loc: Path, file_type: st
         prefix = btf_file_list[0].name
 
     return dir_loc / 'ome_zarr' / f'{prefix}.ome.zarr'
+
+
+def find_omezarr_tile_collection(dir_loc: Path) -> Path | None:
+    '''
+    Return the top-level directory that holds tile OME-Zarr datasets for an
+    acquisition written directly as OME-Zarr (no BigStitcher XML yet), e.g.:
+      {acquisition}/{collection}.ome.zarr/{tile}.ome.zarr
+    Returns None when no such collection is found.
+    '''
+    dir_loc = ensure_path(dir_loc)
+    for candidate in sorted(dir_loc.glob('*.ome.zarr')):
+        if candidate.is_dir() and any(candidate.glob('*.ome.zarr')):
+            return candidate
+    return None
 
 
 def queue_bigstitcher_xml(dir_loc: Path, collection_dir: Path, after_job_number: int = None, supernice: bool = False):
@@ -234,10 +249,34 @@ def automated_method_slurm(dir_loc: Path,
 
     if omezarr_path:
         file_type = '.ome.zarr'
-    elif file_type is None and len(tuple(dir_loc.glob('*.btf'))) > 0:
-        file_type = '.btf'
     else:
-        raise FileNotFoundError(f"Supported file types [.ome.zarr, .btf] were not found: '{dir_loc}'")
+        requested_type = file_type.lower() if file_type else None
+        if requested_type not in (None, '.btf', '.ome.zarr'):
+            raise ValueError(f"Unsupported --file-type: '{file_type}'. Supported: .ome.zarr, .btf")
+
+        btf_present = len(tuple(dir_loc.glob('*.btf'))) > 0
+        omezarr_collection = find_omezarr_tile_collection(dir_loc)
+
+        if requested_type == '.btf' or (requested_type is None and btf_present):
+            if not btf_present:
+                raise FileNotFoundError(f"--file-type .btf was requested but no .btf files were found: '{dir_loc}'")
+            file_type = '.btf'
+        elif omezarr_collection:
+            dir_loc = omezarr_collection
+            file_type = '.ome.zarr'
+        else:
+            raise FileNotFoundError(f"Supported file types [.ome.zarr, .btf] were not found: '{dir_loc}'")
+
+    # Create the BigStitcher XML upfront so it exists before any processing starts
+    if file_type == '.ome.zarr':
+        xml_path = Path(dir_loc.as_posix() + '.xml')
+        if not xml_path.exists():
+            print(f'Creating BigStitcher XML before processing starts: {xml_path}')
+            mesospim_metadata_to_bigstitcher_xml(
+                output_xml_path=xml_path,
+                different_relative_zarr_path=dir_loc.name,
+                modify_filename_in_xml='.ome.zarr',
+            )
 
     job_number = None
     slurm_log_dir = get_slurm_log_location(dir_loc)
