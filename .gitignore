@@ -12,6 +12,8 @@ __pycache__/
 
 # C extensions
 *.so
+!mesospim_utils/_vendor/PyImarisWriter/libbpImarisWriter96.so
+!mesospim_utils/_vendor/PyImarisWriter/linux_x86_64_glibc217/libbpImarisWriter96.so
 
 # Project specific
 */settings.ini
@@ -97,4 +99,3 @@ venv/
 # written by setuptools_scm
 **/_version.py
 !PROJECT_CONTEXT.md
-

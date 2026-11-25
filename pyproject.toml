@@ -38,3 +38,7 @@ psfmodels = [
 
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
+
+[tool.setuptools.package-data]
+"mesospim_utils" = ["config/example.yaml"]
+"mesospim_utils._vendor.PyImarisWriter" = ["libbpImarisWriter96.so", "libhdf5.so.310", "linux_x86_64_glibc217/libbpImarisWriter96.so", "linux_x86_64_glibc217/libhdf5.so.310", "LICENSE.*.txt", "BUILD.md"]

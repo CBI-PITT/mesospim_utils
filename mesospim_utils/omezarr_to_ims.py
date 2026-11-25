@@ -4,32 +4,16 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import datetime
 from pathlib import Path
 import argparse
-import ctypes
 import math
-import os
-import sys
 import time
-
-# PyImarisWriter's Linux wrapper is pure Python, but its native library lives in
-# the separate conda environment. Load that library before NumPy/Zarr so its
-# C++ dependencies are resolved from the PyImarisWriter environment.
-pyiw_site_packages = os.environ.get('MESOSPIM_PYIW_SITE_PACKAGES')
-if pyiw_site_packages:
-    library = Path(pyiw_site_packages) / 'PyImarisWriter' / 'libbpImarisWriter96.so'
-    if not library.is_file():
-        raise FileNotFoundError(f'PyImarisWriter library not found: {library}')
-    try:
-        ctypes.CDLL(str(library))
-    except OSError as error:
-        raise RuntimeError(f'Could not load PyImarisWriter library {library}: {error}') from error
-    # Append, rather than prepend: the reader must use this interpreter's Zarr 3,
-    # not the Zarr 2 installed alongside PyImarisWriter.
-    sys.path.append(pyiw_site_packages)
 
 import numpy as np
 import zarr
 
-from PyImarisWriter import PyImarisWriter as PW
+if __package__:
+    from ._vendor.PyImarisWriter import PyImarisWriter as PW
+else:
+    from _vendor.PyImarisWriter import PyImarisWriter as PW
 
 
 DEFAULT_CHANNEL_COLORS = [

@@ -147,7 +147,7 @@ Dependencies:
 1) SLURM: Used to manage processing tasks
 2) CUDA-capable GPU nodes: Required only when deconvolution runs
 3) Fiji with BigStitcher: Used for alignment and fusion of OME-Zarr datasets - downloaded and installed automatically on the first run if not present (see `mesospim_utils/fiji.py`)
-4) PyImarisWriter conda environment: supplies the Linux native writer library and Python wrapper (`general.location_pyimariswriter_environment`). The `.ims` converter runs with the project's uv Python so it can read both Zarr v2 and v3.
+4) Linux x86-64 for `.ims` output: the PyImarisWriter runtime is included under `mesospim_utils/_vendor/PyImarisWriter/`. The default native library targets glibc 2.17+ and `GLIBCXX_3.4.30` (compatible with the cluster's glibc 2.35 / GCC 11 compute nodes); the newer login-node build is retained alongside it. Build instructions and licenses are in that directory. The converter uses the project's uv Python and reads both Zarr v2 and v3.
 
 Wine and ImarisFileConverter_wine are no longer used by `automated-method-slurm`: the `.ims` conversion reads the fused OME-Zarr directly through PyImarisWriter. They are retained only for legacy workflows (`imaris.py`, `resample_ims.py`).
 
@@ -206,7 +206,7 @@ uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of
 # Re-stitch an existing OME-Zarr collection (e.g. a deconved output)
 uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_omezarr_collection> --file-type .ome.zarr
 
-# Final output as Imaris .ims (converted directly from the fused OME-Zarr via PyImarisWriter in the conda env; no Wine)
+# Final output as Imaris .ims (converted directly from the fused OME-Zarr via the bundled PyImarisWriter; no Wine)
 uv run python -u mesospim_utils/automated.py automated-method-slurm <location_of_mesospim_acquisition_directory> --final-file-type ims
 
 # Final output as a TIFF series
@@ -240,7 +240,7 @@ Re-running the chain on the same dataset skips work that is already complete: ti
 
 When `--final-file-type tiff`, BigStitcher still fuses to a montage OME-Zarr first, then the fused dataset is extracted as a TIFF series and processing stops there.
 
-When `--final-file-type ims`, BigStitcher fuses to a montage OME-Zarr first and then builds the final IMS directly from that fused OME-Zarr. The project's uv Python reads Zarr v2 or v3 and uses the PyImarisWriter library from the configured `general.location_pyimariswriter_environment` on Linux. TIFF extraction is only used for the `tiff` final-output path.
+When `--final-file-type ims`, BigStitcher fuses to a montage OME-Zarr first and then builds the final IMS directly from that fused OME-Zarr. The project's uv Python reads Zarr v2 or v3 and loads the bundled Linux PyImarisWriter library. TIFF extraction is only used for the `tiff` final-output path.
 
 If `--decon`, `--basicpy`, and `--gain-correction` are all enabled, execution order is always:
 
@@ -300,15 +300,13 @@ At runtime, `mesospim_utils` loads `mesospim_utils/config/main.yaml` if present 
 
 SLURM parameters for each subprocess can be edited in the config file.
 
-If using only the metadata module, edit the general parameters: location_module, emission_map, emission_to_rgb, username_pattern, and `location_pyimariswriter_environment` (only needed for `.ims` conversion).
+If using only the metadata module, edit the general parameters: location_module, emission_map, emission_to_rgb, and username_pattern.
 
 ```yaml
 general:
   # Interpreter paths derive from this: main tools run as `uv run --project <repo root> python -u <script>`
   # (uv sync in the repo creates .venv); basicpy runs as `uv run --project <repo root>/basicpy_env python`
   location_module: '<location_of_install>/mesospim_utils/mesospim_utils'
-  # conda env supplying the PyImarisWriter Python wrapper and native Linux .so; the converter runs in the project uv environment
-  location_pyimariswriter_environment: '<python_install_location>/envs/pyiw/bin/python'
   metadata_filename: 'mesospim_metadata.json'
   metadata_annotated_filename: 'mesospim_annotated_metadata.json'
   montage_name: 'auto_montage.ims'

@@ -34,9 +34,8 @@ slurm = config.get('slurm')
 
 LOCATION_OF_MESOSPIM_UTILS_INSTALL = general.get('location_module')
 REPO_ROOT = Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL).parent
-UV_PYTHON_PREFIX = f'uv run --project {REPO_ROOT} python'
+UV_PYTHON_PREFIX = f'/h20/home/lab/miniconda3/bin/uv run --project {REPO_ROOT} python'
 BASICPY_PROJECT_DIR = REPO_ROOT / 'basicpy_env'
-LOCATION_PYIMARISWRITER_ENV = general.get('location_pyimariswriter_environment')
 METADATA_FILENAME = general.get('metadata_filename')
 METADATA_ANNOTATED_FILENAME = general.get('metadata_annotated_filename')
 MONTAGE_NAME = general.get('montage_name')
@@ -162,7 +161,6 @@ IMS_STITCHER_COMPRESSION_LEVEL = imaris_stitcher.get('compression_level')
 
 ### Format constants ###  DO NOT CHANGE
 LOCATION_OF_MESOSPIM_UTILS_INSTALL = Path(LOCATION_OF_MESOSPIM_UTILS_INSTALL)
-LOCATION_PYIMARISWRITER_ENV = Path(LOCATION_PYIMARISWRITER_ENV)
 WINE_INSTALL_LOC = Path(WINE_INSTALL_LOC)
 IMARIS_CONVERTER_LOC = Path(IMARIS_CONVERTER_LOC)
 

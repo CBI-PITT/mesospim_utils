@@ -7,7 +7,7 @@ from xml.etree import ElementTree as ET
 
 from numpy.f2py.auxfuncs import throw_error
 
-from constants import UV_PYTHON_PREFIX, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY, LOCATION_PYIMARISWRITER_ENV
+from constants import UV_PYTHON_PREFIX, LOCATION_OF_MESOSPIM_UTILS_INSTALL, ALIGNMENT_DIRECTORY
 from constants import (
     BIGSTITCHER_LINK_RELATIVE,
     BIGSTITCHER_LINK_ABSOLUTE,
@@ -60,16 +60,8 @@ def shell_double_quote(value: str | Path) -> str:
 
 
 def get_pyimariswriter_root_application() -> str:
-    pyimaris_python = LOCATION_PYIMARISWRITER_ENV
     converter_script = LOCATION_OF_MESOSPIM_UTILS_INSTALL / 'omezarr_to_ims.py'
-
-    cmd = f'PYIW_PYTHON={shell_double_quote(pyimaris_python)}; '
-    cmd += 'PYIW_ENV_ROOT="$(dirname \"$(dirname \"$PYIW_PYTHON\")\")"; '
-    cmd += 'PYIW_SITE_PACKAGES="$("$PYIW_PYTHON" -c "import sysconfig; print(sysconfig.get_paths()[\\"purelib\\"])")"; '
-    cmd += 'export LD_LIBRARY_PATH="$PYIW_SITE_PACKAGES/PyImarisWriter:$PYIW_ENV_ROOT/lib:${LD_LIBRARY_PATH:-}"; '
-    cmd += 'export MESOSPIM_PYIW_SITE_PACKAGES="$PYIW_SITE_PACKAGES"; '
-    cmd += f'{UV_PYTHON_PREFIX} -u {shell_double_quote(converter_script)}'
-    return cmd
+    return f'{UV_PYTHON_PREFIX} -u {shell_double_quote(converter_script)}'
 
 
 def get_ims_channel_names_and_colors(metadata_by_channel: dict) -> tuple[list[str], list[tuple[float, float, float]]]:
